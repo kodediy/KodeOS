@@ -1,0 +1,40 @@
+## kgui is its own deliverable: an app that wants the launcher pins this as
+## well as the SDK. Two pins because they are two things - the SDK runs
+## headless firmwares perfectly well, and used to make them carry LVGL anyway.
+##
+## The SDK entries are git sources, not override_path, and that is forced
+## rather than chosen: the SDK is a submodule now, and a path-limited checkout
+## of this repo cannot reach inside a gitlink. Verified - the manager fails
+## with "pathspec 'sdk/components/kode' did not match any file(s) known to
+## git". Building in-tree compiles the submodule on disk - the component
+## manager prefers a component it finds placed under EXTRA_COMPONENT_DIRS -
+## but it does NOT build offline: resolving these entries still fetches the
+## SDK into the manager's own git cache, so a build with no key for
+## kode-sdk hangs on the host prompt or fails outright. A workstation hides
+## that behind an ssh-agent and an existing dependencies.lock; a clean CI
+## checkout does not, which is how it went unnoticed until a release ran.
+##
+## They carry a version, which is the one per-release edit in the tree: bump
+## the four together when the SDK is tagged. It is not cosmetic - the
+## version here is what a clean resolve actually fetches, so leaving it
+## behind means building a different SDK than the submodule pins.
+## Between two releases they may name the commit the sdk gitlink pins
+## instead, so main builds the SDK it carries; the tag puts a version back.
+dependencies:
+  lvgl/lvgl: "9.6.0~1"
+  kodediy/kui:
+    git: https://github.com/kodediy/kode-sdk.git
+    path: components/kui
+    version: v0.1.0
+  kodediy/kode:
+    git: https://github.com/kodediy/kode-sdk.git
+    path: components/kode
+    version: v0.1.0
+  kodediy/kbsp:
+    git: https://github.com/kodediy/kode-sdk.git
+    path: components/kbsp
+    version: v0.1.0
+  kodediy/kdrv:
+    git: https://github.com/kodediy/kode-sdk.git
+    path: components/kdrv
+    version: v0.1.0

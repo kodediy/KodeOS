@@ -1,0 +1,140 @@
+name: hil
+
+# The last step of a release. release.yml leaves a DRAFT; this tests the files
+# that draft carries on a real Kode Dot, on the rig, and publishes the draft
+# only when every block passed. An admin starts it with the tag, and the `hil`
+# environment asks for an admin's approval before the rig is touched.
+#
+# Until the rig exists, or when it cannot be used, an admin publishes with a
+# written exception instead: the reason goes into the release notes, so a
+# release that hardware never saw says so.
+#
+# Never on a pull request: the rig is a machine wired to hardware, and a pull
+# request is code nobody has reviewed yet. The runner serves this repository
+# only, through workflow_dispatch only (design, section 11).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag whose draft is tested, e.g. v00.00.24
+        required: true
+      exception:
+        description: Publish WITHOUT the rig - the reason, written into the release. Empty runs the rig.
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# One rig, one pass at a time; a pass is never cancelled halfway through a
+# flash.
+concurrency:
+  group: hil-rig
+  cancel-in-progress: false
+
+jobs:
+  rig:
+    if: inputs.exception == ''
+    runs-on: [self-hosted, hil]
+    environment: hil
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sums: ${{ steps.files.outputs.sums }}
+    steps:
+      # The console tools of the tag under test: the console's grammar moves
+      # with the firmware, so the rig reads it with the release's own parser.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          sparse-checkout: tools
+          path: kodeos
+
+      # The files the release build produced, from that run's artifact - the
+      # same bytes it uploaded to the draft; publish checks that below.
+      - name: Fetch the release's files
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list --repo "$REPO" --workflow release.yml --branch "$TAG" \
+                      --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          if [ -z "$run_id" ]; then
+            echo "::error::no successful release run for $TAG; is there a draft to test?" >&2
+            exit 1
+          fi
+          rm -rf dist
+          gh run download "$run_id" --repo "$REPO" --name release-dist --dir dist
+          echo "sums=$(sha256sum dist/SHA256SUMS.txt | awk '{ print $1 }')" >> "$GITHUB_OUTPUT"
+
+      # The suite is provisioned on the rig (kodediy/kode-hil, in $KODE_HIL),
+      # with the unit's port named by udev from its MAC.
+      - name: Run the rig
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="$(kodeos/tools/validate_release_tag.sh "$TAG")"
+          PYTHONPATH="$KODE_HIL" python3 -m hil run --port /dev/kode-dot \
+            --tools kodeos/tools --assets dist --version "$version" --flash \
+            --out hil-report.json
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hil-report
+          path: hil-report.json
+          if-no-files-found: warn
+
+  # Publishes the draft when the rig passed, or when an admin gave a reason
+  # not to run it. `rig` skipped for any other reason - an offline runner,
+  # a cancelled approval - publishes nothing. It asks the `hil` environment
+  # again, so an exception is approved like a rig run; a rig run is approved
+  # twice, once to touch the rig and once to publish.
+  publish:
+    needs: rig
+    if: >-
+      always() &&
+      (needs.rig.result == 'success' ||
+       (needs.rig.result == 'skipped' && inputs.exception != ''))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: hil
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          EXCEPTION: ${{ inputs.exception }}
+          TESTED_SUMS: ${{ needs.rig.outputs.sums }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft)" != "true" ]; then
+            echo "::error::$TAG has no draft release to publish" >&2
+            exit 1
+          fi
+          # Every file of the draft must match its sum, and the sums must be
+          # the ones the rig tested: a file swapped by hand on the draft is
+          # caught by the first, a sums file swapped with it by the second.
+          gh release download "$TAG" --repo "$REPO" --dir draft
+          ( cd draft && sha256sum -c SHA256SUMS.txt )
+          if [ -n "$TESTED_SUMS" ] &&
+             [ "$(sha256sum draft/SHA256SUMS.txt | awk '{ print $1 }')" != "$TESTED_SUMS" ]; then
+            echo "::error::the draft's files are not the ones the rig tested" >&2
+            exit 1
+          fi
+          if [ -n "$EXCEPTION" ]; then
+            gh release view "$TAG" --repo "$REPO" --json body --jq .body > notes.md
+            printf '\n\n**Published without the hardware-in-the-loop rig.** %s\n' "$EXCEPTION" >> notes.md
+            gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
+          fi
+          gh release edit "$TAG" --repo "$REPO" --draft=false --latest

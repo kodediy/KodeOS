@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Final test</title>
+<style>
+:root{--bg:#0b0b0d;--pn:#16161a;--pn2:#1f1f24;--ln:#2c2c33;--tx:#f3f3f5;--tx2:#8f8f99;--tx3:#5c5c66;
+ --amb:#ffac00;--pass:#2fc15a;--fail:#e5383f;--nov:#ff7a1a;--run:#3d8bfd;--blue:#1f8fe0;--red:#e0343f;--pend:#3a3a42}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--tx);font:18px/1.3 -apple-system,system-ui,"Helvetica Neue",Arial,sans-serif;overflow:hidden;display:flex;-webkit-user-select:none;user-select:none}
+#app{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;container-type:size}
+button{font:inherit;color:inherit;cursor:pointer}
+/* top bar */
+#top{display:flex;align-items:center;gap:clamp(12px,2cqw,32px);padding:0 clamp(14px,2cqw,28px);height:clamp(64px,9cqh,92px);background:var(--pn);border-bottom:1px solid var(--ln);flex:none}
+#serial{font:600 clamp(14px,1.7cqh,18px)/1.2 ui-monospace,Menlo,monospace;color:var(--tx2);min-width:9em}
+#phases{display:flex;align-items:center;flex:1;justify-content:center;gap:0}
+.fz{display:flex;align-items:center;justify-content:center;width:clamp(46px,6.4cqh,64px);height:clamp(46px,6.4cqh,64px);border-radius:50%;border:3px solid var(--pend);color:var(--tx3);flex:none;transition:all .2s}
+.fz svg{width:62%;height:62%}
+.fzl{width:clamp(28px,4.5cqw,80px);height:3px;background:var(--pend);flex:none}
+.fz.on{border-color:var(--amb);color:var(--amb);background:rgba(255,172,0,.12);transform:scale(1.12)}
+.fz.ok{border-color:var(--pass);color:#0b0b0d;background:var(--pass)}
+.fz.ko{border-color:var(--fail);color:#fff;background:var(--fail)}
+.fz.nv{border-color:var(--nov);color:#0b0b0d;background:var(--nov)}
+.fzl.ok{background:var(--pass)}
+#clock{font:700 clamp(30px,5cqh,52px)/1 -apple-system,system-ui,sans-serif;font-variant-numeric:tabular-nums;min-width:4.3em;text-align:right}
+.ib{width:clamp(48px,6.4cqh,64px);height:clamp(48px,6.4cqh,64px);border-radius:14px;border:2px solid var(--ln);background:var(--pn2);display:flex;align-items:center;justify-content:center;flex:none;padding:0}
+.ib svg{width:50%;height:50%}
+#bStop{color:var(--fail);border-color:#5a2226}#bStop.confirm{background:var(--fail);color:#fff;border-color:var(--fail);width:auto;padding:0 18px;gap:10px;font-weight:800;font-size:22px}
+#bStop[hidden]{display:none}
+#bTech{color:var(--tx2)}
+/* progress bar, one cell per row */
+#prog{display:flex;gap:2px;height:clamp(8px,1.2cqh,12px);padding:0;background:var(--bg);flex:none}
+#prog i{flex:1;background:var(--pend)}#prog i.running{background:var(--run);animation:blink 1s infinite}
+#prog i.PASS{background:var(--pass)}#prog i.FAIL,#prog i.TIMEOUT{background:var(--fail)}#prog i.NOVERDICT,#prog i.NOT_RUN{background:var(--nov)}
+@keyframes blink{50%{opacity:.45}}
+#notice{display:none;padding:10px 24px;font-weight:700;font-size:clamp(18px,2.4cqh,24px);align-items:center;gap:14px;flex:none;background:#2a1013;color:#ffb3b6;border-bottom:2px solid var(--fail)}
+#notice svg{width:1.4em;height:1.4em;flex:none}
+/* the stage: the big instruction */
+#stage{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(8px,2cqh,24px);padding:clamp(10px,2cqh,24px);position:relative;overflow:hidden}
+.row{display:flex;align-items:center;justify-content:center;gap:clamp(24px,5cqw,80px);min-height:0;max-width:100%}
+.fig{height:clamp(200px,44cqh,560px);width:auto;max-width:58cqw;display:block}
+.fig.wide{height:clamp(180px,40cqh,500px)}
+.fig.tall{height:clamp(220px,50cqh,640px)}
+.msg{font-weight:800;font-size:clamp(28px,min(8.4cqh,6.4cqw),140px);line-height:1.05;text-align:center;letter-spacing:-.01em}
+.msg .k{display:inline-block;padding:0 .28em;border-radius:.18em;color:#111}
+.msg.amb{color:var(--amb)}.msg.run{color:var(--run)}.msg.ok{color:var(--pass)}.msg.bad{color:var(--nov)}
+.dots{display:flex;gap:clamp(10px,1.4cqh,16px)}
+.dots i{width:clamp(18px,2.6cqh,28px);height:clamp(18px,2.6cqh,28px);border-radius:50%;background:var(--pend);display:block}
+.dots i.cur{background:var(--amb);box-shadow:0 0 0 5px rgba(255,172,0,.28)}.dots i.pass{background:var(--pass)}
+.dots i.timeout,.dots i.fail,.dots i.held,.dots i.no_release,.dots i.noverdict{background:var(--fail)}
+.ring{position:relative;width:clamp(84px,min(22cqh,17cqw),250px);height:clamp(84px,min(22cqh,17cqw),250px);flex:none}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring .num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:clamp(32px,min(9cqh,7cqw),110px);font-variant-numeric:tabular-nums}
+.ring.low .num{color:var(--fail)}.ring.low circle.arc{stroke:var(--fail)}
+.ring.spin svg{animation:spin 1.4s linear infinite}
+@keyframes spin{to{transform:rotate(270deg)}}
+#stage.fl-miss,#stage.fl-repeat{box-shadow:inset 0 0 0 14px var(--fail);background:rgba(229,56,63,.16)}
+/* start */
+.go{width:clamp(140px,min(34cqh,30cqw),380px);height:clamp(140px,min(34cqh,30cqw),380px);border-radius:50%;border:none;background:var(--pass);color:#06210f;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 0 rgba(47,193,90,.5);animation:pulse 2s infinite}
+.go svg{width:44%;height:44%;margin-left:8%}
+.go:active{transform:scale(.97)}
+@keyframes pulse{70%{box-shadow:0 0 0 34px rgba(47,193,90,0)}100%{box-shadow:0 0 0 0 rgba(47,193,90,0)}}
+/* the end */
+#stage.final{color:#fff}
+#stage.PASS{background:var(--pass);color:#04210d}#stage.FAIL{background:var(--fail)}#stage.NOV{background:var(--nov);color:#2a1200}
+.ver{display:flex;align-items:center;gap:clamp(16px,3cqw,48px);max-width:96cqw}
+.ver svg{width:clamp(56px,min(20cqh,13cqw),320px);height:clamp(56px,min(20cqh,13cqw),320px);flex:none}
+.ver b{font-size:clamp(46px,min(21cqh,17cqw),340px);line-height:.9;font-weight:900;letter-spacing:-.02em}
+.ver b.long{font-size:clamp(30px,min(13cqh,8.4cqw),220px)}
+.why{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;max-width:100%}
+.why span{background:rgba(0,0,0,.28);padding:.2em .6em;border-radius:12px;font-weight:800;font-size:clamp(16px,min(4.2cqh,3cqw),60px);white-space:normal;max-width:100%;text-align:center}
+.foot{display:flex;align-items:center;gap:clamp(16px,3cqw,40px);margin-top:clamp(4px,1cqh,12px)}
+.next{height:clamp(52px,min(10cqh,8cqw),140px);padding:0 clamp(26px,3cqw,44px);border-radius:999px;border:none;background:#fff;color:#111;font-weight:800;font-size:clamp(20px,min(4cqh,3.2cqw),56px);display:flex;align-items:center;gap:.45em}
+.next.rep{background:#111;color:#fff;box-shadow:0 0 0 4px rgba(255,255,255,.9)}.next.sec{background:rgba(255,255,255,.75)}
+.next svg{height:.9em;width:.9em}
+.doc{height:clamp(52px,min(10cqh,8cqw),140px);width:clamp(52px,min(10cqh,8cqw),140px);border-radius:50%;border:3px solid rgba(255,255,255,.7);background:transparent;display:flex;align-items:center;justify-content:center;color:inherit}
+#stage.PASS .doc{border-color:rgba(0,0,0,.35)}
+.doc svg{width:46%;height:46%}
+#stage>*{animation:pop .28s ease-out}
+@keyframes pop{from{transform:scale(.94);opacity:.3}}
+.station{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:100%}
+.station span{background:rgba(0,0,0,.16);color:inherit;opacity:.85;padding:.15em .6em;border-radius:10px;font-weight:700;font-size:clamp(12px,min(2.3cqh,1.7cqw),32px);white-space:normal;max-width:100%}
+.shots{display:flex;gap:14px;justify-content:center}
+.shots figure{margin:0;background:#0b0b0d;border-radius:12px;overflow:hidden;cursor:zoom-in;border:3px solid rgba(255,255,255,.85)}
+.shots img{display:block;height:clamp(80px,min(18cqh,16cqw),320px);width:auto;max-width:28cqw;object-fit:contain}
+.shots img.px{width:clamp(80px,min(18cqh,16cqw),320px);image-rendering:pixelated}
+.shots .fi{position:relative;width:fit-content;margin:0 auto;line-height:0}.shots .halo{position:absolute;left:50%;top:50%;width:26%;height:26%;transform:translate(-50%,-50%);border:3px solid #ff3b47;border-radius:50%}
+.shots figcaption{color:#fff;text-align:center;font-size:clamp(13px,1.7cqh,18px);font-weight:700;padding:4px 8px}
+#stage.withshots{gap:clamp(6px,1.4cqh,18px)}
+#stage.withshots .ver svg{width:clamp(50px,min(13cqh,10cqw),250px);height:clamp(50px,min(13cqh,10cqw),250px)}
+#stage.withshots .ver b{font-size:clamp(42px,min(14cqh,14cqw),260px)}
+#stage.withshots .ver b.long{font-size:clamp(28px,min(9.5cqh,8.4cqw),180px)}
+.unplug{display:flex;align-items:center;gap:.4em;font-weight:800;font-size:clamp(18px,min(4cqh,3cqw),44px);padding:.25em .7em;border-radius:999px;background:rgba(0,0,0,.22)}
+.unplug svg{width:1.3em;height:1.3em;animation:down 1.2s ease-in-out infinite}@keyframes down{50%{transform:translateY(5px)}}
+.bench{font-weight:800;letter-spacing:.08em;font-size:clamp(14px,2cqh,22px);padding:.2em .7em;border-radius:8px;background:rgba(0,0,0,.25)}
+.last{display:inline-flex;align-items:center;gap:6px;margin-left:12px;padding:3px 10px;border-radius:999px;font:800 13px/1.4 -apple-system,system-ui,sans-serif;color:#111;cursor:pointer;vertical-align:middle}
+.last.PASS{background:var(--pass)}.last.FAIL{background:var(--fail);color:#fff}.last.NOV{background:var(--nov)}
+.detail{display:flex;align-items:center;justify-content:center;gap:clamp(12px,2.5cqw,36px);max-width:94cqw;flex-wrap:wrap}
+.txts{display:flex;flex-direction:column;align-items:center;gap:10px;min-width:0;max-width:100%}
+@container (max-width:900px){#serial{display:none}.fzl{width:clamp(14px,3cqw,40px)}}
+/* the rows in the background: secondary */
+#rows{flex:none;display:flex;flex-wrap:wrap;gap:6px 8px;padding:10px clamp(14px,2cqw,28px) 12px;background:var(--pn);border-top:1px solid var(--ln);max-height:24cqh;overflow:hidden}
+.ch{display:flex;align-items:center;gap:6px;padding:3px 9px 3px 6px;border-radius:8px;background:var(--pn2);color:var(--tx3);font-size:clamp(12px,1.55cqh,16px);white-space:nowrap;cursor:pointer}
+.ch i{width:12px;height:12px;border-radius:50%;background:var(--pend);flex:none}
+.ch.running{color:var(--tx2)}.ch.running i{background:var(--run);animation:blink 1s infinite}
+.ch.PASS i{background:var(--pass)}.ch.PASS{color:var(--tx2)}
+.ch.FAIL i,.ch.TIMEOUT i{background:var(--fail)}.ch.FAIL,.ch.TIMEOUT{color:#fff;background:#4a1a1d}
+.ch.NOVERDICT i,.ch.NOT_RUN i{background:var(--nov)}.ch.NOVERDICT{color:#fff;background:#4a2a10}
+/* the technician's panel */
+#tech{flex:none;width:0;height:100%;overflow:hidden;background:#111114;border-left:1px solid var(--ln);transition:width .2s;display:flex;flex-direction:column;-webkit-user-select:text;user-select:text}
+#tech>*{width:min(620px,44vw);flex:none}
+#tech.open{width:min(620px,44vw)}
+#tech header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--ln)}
+#tech .body{overflow:auto;padding:12px 16px 30px;flex:1;min-height:0;font-size:15px}
+#tech h3{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--tx2);margin:18px 0 8px}
+.tb{border:1px solid var(--ln);background:var(--pn2);border-radius:8px;padding:6px 12px;font-size:15px;font-weight:600}
+.tb:disabled{opacity:.4;cursor:default}
+.portin{font:14px ui-monospace,Menlo,monospace;width:200px;padding:6px 8px;border:1px solid var(--ln);border-radius:8px;background:var(--pn2);color:var(--tx)}
+#tech .vers{color:var(--tx2);font-size:13px;width:100%}
+.step{display:grid;grid-template-columns:1fr 96px 64px auto;gap:4px 10px;align-items:center;border-bottom:1px solid var(--ln);padding:6px 0}
+.step .nm{font-weight:600}.step .id{color:var(--tx3);font-size:12px;margin-left:6px}
+.step .vals{grid-column:1/-1;color:var(--tx2);font-size:13px}.step .vals:empty{display:none}
+.step .rsn{color:#ff9a9e}
+.badge{font-weight:800;font-size:13px;text-align:center;border-radius:6px;padding:2px 4px;background:var(--pn2);color:var(--tx2)}
+.s-running .badge{background:var(--run);color:#fff}.s-PASS .badge{color:var(--pass)}
+.s-FAIL .badge,.s-TIMEOUT .badge{background:var(--fail);color:#fff}.s-NOVERDICT .badge,.s-NOT_RUN .badge{background:var(--nov);color:#111}
+.step .t{font-variant-numeric:tabular-nums;text-align:right;color:var(--tx2)}
+.th{width:72px;height:54px;object-fit:cover;border-radius:4px;border:1px solid var(--ln);cursor:zoom-in}
+#camimg{display:none;width:240px;max-height:300px;object-fit:contain;background:#000;border-radius:8px;border:2px solid var(--ln);cursor:zoom-in}
+#camtxt{color:var(--tx2);font-size:13px}
+.h{display:block;width:100%;text-align:left;margin-bottom:6px;border:1px solid var(--ln);background:var(--pn2);border-radius:8px;padding:6px 10px;font-size:14px}
+.h .v{float:right;font-weight:800}.v-PASS{color:var(--pass)}.v-FAIL{color:var(--fail)}.v-NO{color:var(--nov)}.v-BENCH{color:var(--tx2)}
+#log{color:var(--tx2);font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+#portbox{display:none;padding:10px;border:2px solid var(--fail);border-radius:8px;color:#ffb3b6;margin-bottom:8px}
+#lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:40;align-items:center;justify-content:center;cursor:zoom-out}
+#lb img{max-width:94vw;max-height:94vh;border-radius:8px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head><body data-phase="start">
+<div id="app">
+<div id="top">
+  <div id="serial"></div>
+  <div id="phases"></div>
+  <div id="clock">0:00</div>
+  <button class="ib" id="bStop" title="Stop the test" hidden><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></svg></button>
+  <button class="ib" id="bTech" title="Technician"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+</div>
+<div id="prog"></div>
+<div id="notice"></div>
+<main id="stage"></main>
+<div id="rows"></div>
+</div>
+
+<aside id="tech">
+  <header>
+    <input class="portin" id="port" title="The Kode's USB port" spellcheck="false">
+    <button class="tb" id="bAll">Start</button>
+    <button class="tb" id="bRuns">Runs</button>
+    <button class="tb" id="bSound">Sound off</button>
+    <button class="tb" id="bClose" style="margin-left:auto">Close</button>
+    <div class="vers" id="vers"></div>
+  </header>
+  <div class="body">
+    <div id="portbox"></div>
+    <div id="cam"><img id="camimg" alt=""><div id="camtxt">No camera picture yet</div></div>
+    <div id="end"></div>
+    <h3>Steps</h3><div id="list"></div>
+    <h3>Last runs</h3><div id="hist"></div>
+    <h3>Log</h3><div id="log"></div>
+  </div>
+</aside>
+<div id="lb"><img id="lbimg" alt=""></div>
+<script>
+"use strict";
+/* The station's page. It draws the run from the program's events alone
+   (EVENTS.md); test_dot_ui.py hands them over as server-sent events. */
+const $=id=>document.getElementById(id);
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+/* ---------- words (the fewest) ---------- */
+const SHORT={place:"Placement",info:"Identification",pmic:"Charger",gauge:"Battery",ioexp:"Expander",clocks:"Crystals",imu:"IMU",mag:"Compass",
+ haptic:"Vibration",audio:"Audio",sd:"microSD",nfc:"NFC",rfid:"RFID",ir:"Infrared",c5:"C5",wifi_24:"Wi-Fi 2.4",wifi_5:"Wi-Fi 5",ble_rx:"BLE",
+ cam_framing:"Camera framing",cam_pixels:"Camera pixels",cam_lines:"Camera lines",cam_zones:"Camera zones",cam_colour:"Camera colour",cam_straight:"Screen straight",
+ led:"LED",pads_charge:"Pads charge",pads_delivery:"Pads delivery",pads_gnd:"GND pad",pads_loop:"Pads data",buttons:"Buttons",tp:"Touch",mem:"Memory",
+ exit_record:"Record",certificate:"Certificate",factory_reset:"Factory reset",lock:"Lock"};
+/* The buttons by the Kode's names, as the Kode asks for them. */
+const BUTTON={"pad-left":["LEFT","var(--amb)"],"bottom":["RED","var(--red)"],"pad-down":["DOWN","var(--amb)"],
+ "top":["BLUE","var(--blue)"],"pad-right":["RIGHT","var(--amb)"],"pad-up":["UP","var(--amb)"]};
+const PLACE={usb:"Plug in the USB",waiting:"Put the Kode in",searching:"Searching",misplaced:"Adjust the Kode",no_camera:"Check the camera board"};
+const PLACE_WHY={no_usb:"Kode not connected on USB",badly_seated:"Kode badly seated in the fixture",
+ j3_failed:"The station's camera does not answer (J3 connector)",panel_failed:"The screen does not answer"};
+/* defaults while an event does not carry its own time */
+const OP_LIMIT_S=20, PLACED_MS=1500, FLASH_MS=1200;
+/* a miss (a touch off the target) and a repeat (another button, or two at once) ask the same step again */
+const FORGIVEN=["miss","repeat"];
+/* What fails, in the operator's words. The same rules as ui/reports.py (change one, change the other).
+   Station: faults of the station and not of the Kode, from the reasons test_dot_final.py writes. */
+const OP_NAME={info:"Identification",place:"Placement",pmic:"Charger",gauge:"Battery (gauge)",ioexp:"Input expander",clocks:"Clock",
+ imu:"Motion sensor",mag:"Compass",haptic:"Vibration",audio:"Audio",sd:"microSD card",nfc:"NFC",rfid:"RFID",ir:"Infrared",c5:"Wi-Fi chip",
+ wifi_24:"Wi-Fi 2.4 GHz",wifi_5:"Wi-Fi 5 GHz",ble_rx:"Bluetooth",cam_framing:"Screen: not seen whole",cam_pixels:"Screen: pixels",
+ cam_lines:"Screen: dead line",cam_zones:"Screen: dark zone",cam_colour:"Screen: colour",cam_straight:"Screen crooked",led:"LED",
+ pads_charge:"Rear pads: charging",pads_delivery:"Rear pads: delivery",pads_gnd:"Rear pads: GND",pads_loop:"Rear pads: data",
+ buttons:"Buttons",tp:"Touch",mem:"Memory",exit_record:"Exit record",certificate:"Certificate",factory_reset:"Factory reset",
+ lock:"Not locked: do not ship this Kode"};
+const STATION=[[/^pads_/,/^station: /,"Rear pads: the station's relays or its 5 V"],[/^nfc$/,/the write found no tag/,"NFC: the station's test tag was not read"]];
+const NOT_JUDGED=["exit_record"];
+const BNAME={"pad-left":"LEFT","pad-right":"RIGHT","pad-up":"UP","pad-down":"DOWN",top:"BLUE",bottom:"RED"};
+function buttonPhrases(){const by={};for(const b in btnHist){const r=btnHist[b];(by[r]=by[r]||[]).push(BNAME[b]||b)}
+  const o=[];(by.held||[]).forEach(b=>o.push(`Button ${b} stuck down`));(by.no_release||[]).forEach(b=>o.push(`Button ${b} does not come back up`));
+  (by.fail||[]).forEach(b=>o.push(`Button ${b} fails`));const t=by.timeout||[];
+  if(t.length>=6)o.push("No button pressed in time");else if(t.length)o.push((t.length>1?"Buttons ":"Button ")+t.join(", ")+" not pressed in time");
+  if(doubleSeen)o.push("The pad presses two buttons at once");return o.length?o:["Buttons"]}
+function phrases(p){const m=(p.reason||"")+" "+((p.values||[]).map(v=>v.name+"="+v.value).join(" "));
+  for(const[a,b,t]of STATION)if(a.test(p.id)&&b.test(m))return[[t],"station"];
+  const n=OP_NAME[p.id]||p.name;
+  if(p.state==="NOT_RUN")return[[n],"notrun"];
+  if(p.state==="NOVERDICT")return[[n+" (could not be measured)"],"unmeasured"];
+  if(p.id==="audio")return[[/sample|ADC/.test(m)?"Microphone":"Audio"],"kode"];
+  if(p.id==="cam_pixels"){const d=/dead=(\d+)/.exec(m),o=/stuck=(\d+)/.exec(m),out=[];
+    if(d&&+d[1])out.push("Screen: dead pixel"+(+d[1]>1?` (${d[1]})`:""));if((o&&+o[1])||/at=on:/.test(m))out.push("Screen: pixel lit on black");
+    return[out.length?out:[n],"kode"]}
+  if(p.id==="buttons")return[buttonPhrases(),"kode"];
+  if(p.id==="tp")return[[p.state==="TIMEOUT"?"Touch: did not answer in time":"Touch"],"kode"];
+  return[[n],"kode"]}
+function faultSummary(){const r={kode:[],station:[],unmeasured:[],notrun:0,shots:[]};
+  steps.filter(p=>!NOT_JUDGED.includes(p.id)&&p.state!=="PASS"&&p.state!=="pending"&&p.state!=="running").forEach(p=>{
+    const[fs,t]=phrases(p);if(t==="notrun"){r.notrun++;return}fs.forEach(x=>{if(!r[t].includes(x))r[t].push(x)});
+    if(t==="kode"&&p.image&&!r.shots.some(f=>f.src===p.image))r.shots.push({src:p.image,txt:fs[0]})});return r}
+/* short sounds: right, wrong and the verdict (live events only, never on a reload) */
+let actx=null,sound=false;
+function beep(kind,rx){if(!sound||(rx&&Date.now()-rx>2500))return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+  const N={ok:[[880,.09]],bad:[[196,.28,"square"]],pass:[[660,.14],[990,.22]],fail:[[330,.2,"square"],[220,.35,"square"]]}[kind];let t=actx.currentTime;
+  N.forEach(([f,d,w])=>{const o=actx.createOscillator(),g=actx.createGain();o.type=w||"sine";o.frequency.value=f;g.gain.setValueAtTime(.0001,t);
+    g.gain.exponentialRampToValueAtTime(.25,t+.01);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(g).connect(actx.destination);o.start(t);o.stop(t+d+.02);t+=d+.03})}catch(e){}}
+/* an event's time: the program's `t` when it agrees with the arrival, else the arrival */
+function tEv(e,rx){return e.t&&Math.abs(e.t*1000-rx)<5000?e.t*1000:rx}
+
+/* ---------- state ---------- */
+let launched=false,run0=null,runEnd=null,steps=[],runIds=[],serial="",vers={},repeatOf=null;
+let place=null,placedT=null,op=null,flash=null,btnHist={},btnHistStep={},tchHist=[],opDone={buttons:false,tp:false},phaseEv=null;
+let end=null,cut=null,logs=[],notice=null,running=false,photos=null;
+let doubleSeen=false,removed=false,last=null,repeatPending=false;
+
+const byId=id=>steps.find(p=>p.id===id);
+
+/* The one function that decides what the operator is asked. Precedence:
+   the end > an operator step > a placement not finished > a short "placed" > after the operator (wait) > hands off. */
+function derivePhase(now){
+  if(!launched)return"start";
+  if(end||cut)return"final";
+  const fz=phaseEv&&phaseEv.name;
+  if(fz==="rest"||fz==="result")return"wait";
+  if(op&&!(op.kind==="touch"?opDone.tp:(opDone.buttons&&!runIds.includes("tp"))))return op.kind==="button"?"buttons":"touch";
+  if(opDone.tp||(opDone.buttons&&!runIds.includes("tp")))return"wait";
+  if(placedT==null&&(place||runIds.includes("place")||!runIds.length))return"place";
+  if(placedT!=null&&now-placedT<PLACED_MS)return"placed";
+  return"hands";
+}
+function base(v){return String(v||"").replace(/^BENCH /,"")}
+function verdict(){
+  if(cut)return"NOV";
+  const m=base(end&&end.verdict);
+  if(m==="PASS")return"PASS";
+  if(m==="FAIL")return"FAIL";
+  return"NOV";
+}
+
+/* ---------- drawings ---------- */
+const G="#2fc15a",R="#e5383f",A="#ffac00",N="#ff7a1a";
+function ico(n){return{
+ tick:`<path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>`,
+ cross:`<path d="M7.5 7.5l9 9M16.5 7.5l-9 9" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>`,
+ play:`<path d="M6 3.8v16.4c0 .8.9 1.3 1.6.8l12.3-8.2c.6-.4.6-1.2 0-1.6L7.6 3c-.7-.5-1.6 0-1.6.8z" fill="currentColor"/>`,
+ doc:`<path d="M6 2.8h8l4 4v14.4H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 12h6M9 16h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`,
+ warn:`<path d="M12 3L2 21h20z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v5M12 18v.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>`,
+ bang:`<path d="M12 6v7M12 17v.6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>`,
+ place:`<rect x="6" y="3" width="12" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 15v4.5h18V15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>`,
+ eye:`<path d="M2 12s3.8-6.5 10-6.5S22 12 22 12s-3.8 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/>`,
+ hand:`<path d="M8 12V5.5a1.5 1.5 0 013 0V11m0-6.5V4a1.5 1.5 0 013 0v7m0-5.5a1.5 1.5 0 013 0V14c0 4-2.6 7-6.5 7S7 18.5 5.6 16.3L3.8 13.4a1.5 1.5 0 012.5-1.6L8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+ flag:`<path d="M5 21V4m0 0h11l-2 4 2 4H5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/>`,
+ unplug:`<rect x="8" y="2.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.5 2.5v-1M13.5 2.5v-1M12 10.5v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 16v6M8.5 18.5L12 22l3.5-3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`,
+ again:`<path d="M20 12a8 8 0 1 1-2.6-5.9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M20 3.5v5h-5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`}[n]}
+function svgI(n,extra){return`<svg viewBox="0 0 24 24" ${extra||""}>${ico(n)}</svg>`}
+
+/* The Kode seen from the front (a 410x502 glass with the printed bands above and below) in the fixture. */
+function kode(x,y,w,opt){
+  opt=opt||{};const h=w*1.32,r=w*.2,c=opt.color||"#5d5d68";
+  const win=`<rect x="${x+w*.07}" y="${y+h*.25}" width="${w*.86}" height="${h*.5}" rx="${w*.04}" fill="#000" stroke="#2a2a30" stroke-width="2"/>`;
+  return `<g ${opt.attr||""}><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="#1b1b20" stroke="${c}" stroke-width="5"/>`+
+   `<rect x="${x+w*.3}" y="${y+h*.1}" width="${w*.4}" height="${h*.06}" rx="${h*.03}" fill="#33333b"/>`+win+
+   `<rect x="${x+w*.2}" y="${y+h*.83}" width="${w*.6}" height="${h*.035}" rx="${h*.017}" fill="#2b2b33"/>`+(opt.inside||"")+`</g>`}
+function fixture(x,y,w,h){return `<path d="M${x} ${y}v${h}h${w}v${-h}" fill="none" stroke="#6b6b76" stroke-width="10" stroke-linejoin="round" stroke-linecap="round"/><rect x="${x+8}" y="${y+h-26}" width="${w-16}" height="18" rx="4" fill="#2e2e35"/>`}
+function hand(x,y,s,col){return `<g transform="translate(${x} ${y}) scale(${s})" fill="${col||"#d6d6de"}"><rect x="10" y="0" width="15" height="52" rx="7.5"/><rect x="27" y="-8" width="15" height="58" rx="7.5"/><rect x="44" y="-3" width="15" height="54" rx="7.5"/><rect x="61" y="8" width="14" height="44" rx="7"/><rect x="8" y="34" width="67" height="58" rx="20"/><rect x="-14" y="46" width="15" height="42" rx="7.5" transform="rotate(-38 -6 67)"/></g>`}
+/* a hand pointing with the index finger; the fingertip at (0,0), the finger up */
+function finger(){return `<g fill="#e4e4ea" stroke="#0b0b0d" stroke-width="4" stroke-linejoin="round"><rect x="-9" y="0" width="18" height="70" rx="9"/><rect x="-12" y="48" width="66" height="58" rx="20"/><rect x="7" y="42" width="16" height="30" rx="8"/><rect x="22" y="44" width="16" height="28" rx="8"/><rect x="37" y="48" width="15" height="26" rx="7.5"/></g>`}
+function forbidden(cx,cy,r){return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${R}" stroke-width="${r*.16}"/><path d="M${cx-r*.7} ${cy+r*.7}L${cx+r*.7} ${cy-r*.7}" stroke="${R}" stroke-width="${r*.16}" stroke-linecap="round"/>`}
+function badge(cx,cy,r,col,n){return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${col}"/><g transform="translate(${cx-r*.75} ${cy-r*.75}) scale(${r*1.5/24})" color="#0b0b0d">${ico(n)}</g>`}
+
+function figPlace(st){
+  const V='viewBox="0 0 360 330" class="fig"';
+  if(st==="usb")return `<svg ${V}>${kode(110,10,140)}
+   <g><animateTransform attributeName="transform" type="translate" values="0 40;0 40;0 0;0 0" keyTimes="0;.2;.6;1" dur="1.8s" repeatCount="indefinite"/>
+   <rect x="164" y="208" width="32" height="34" rx="8" fill="${A}"/><rect x="172" y="200" width="16" height="12" rx="3" fill="${A}"/><path d="M180 242v90" stroke="${A}" stroke-width="12" stroke-linecap="round"/></g></svg>`;
+  if(st==="waiting")return `<svg ${V}>${fixture(80,120,200,200)}
+   <g><animateTransform attributeName="transform" type="translate" values="0 -110;0 -110;0 0;0 0" keyTimes="0;.15;.65;1" dur="2.2s" repeatCount="indefinite"/>
+   <animate attributeName="opacity" values="0;1;1;1" keyTimes="0;.2;.65;1" dur="2.2s" repeatCount="indefinite"/>${kode(110,120,140,{color:A})}</g></svg>`;
+  if(st==="searching"){let m="";[[118,135],[242,135],[118,286],[242,286]].forEach(([cx,cy],k)=>{m+=`<circle cx="${cx}" cy="${cy}" r="9" fill="#3d8bfd"><animate attributeName="opacity" values=".2;1;.2" dur="1.2s" begin="${k*.3}s" repeatCount="indefinite"/></circle>`});
+   return `<svg ${V}>${fixture(80,120,200,200)}${kode(110,120,140,{color:"#3d8bfd"})}${m}
+   <rect x="120" y="166" width="120" height="6" rx="3" fill="#3d8bfd"><animate attributeName="y" values="166;252;166" dur="1.6s" repeatCount="indefinite"/></rect>
+   <g transform="translate(150 6)"><circle cx="30" cy="30" r="24" fill="none" stroke="#3d8bfd" stroke-width="9"/><path d="M48 48l20 20" stroke="#3d8bfd" stroke-width="11" stroke-linecap="round"/></g></svg>`}
+  if(st==="misplaced")return `<svg ${V}>${fixture(80,120,200,200)}${kode(110,120,140,{color:A,attr:'transform="rotate(9 180 212)"'})}
+   <path d="M300 160a120 120 0 0 1 0 110" fill="none" stroke="${A}" stroke-width="10" stroke-linecap="round"/><path d="M286 262l14 16 12-18" fill="none" stroke="${A}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+   <path d="M180 18v62M156 58l24 24 24-24" fill="none" stroke="${A}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><animateTransform attributeName="transform" type="translate" values="0 0;0 12;0 0" dur="1s" repeatCount="indefinite"/></path></svg>`;
+  if(st==="no_camera")return `<svg ${V}>${fixture(80,120,200,200)}${kode(110,120,140,{color:N})}
+   <g transform="translate(130 20)"><rect x="0" y="16" width="100" height="70" rx="14" fill="none" stroke="${N}" stroke-width="9"/><circle cx="50" cy="51" r="20" fill="none" stroke="${N}" stroke-width="9"/><path d="M-6 96L106 6" stroke="${N}" stroke-width="9" stroke-linecap="round"/></g></svg>`;
+  return `<svg ${V}>${fixture(80,120,200,200)}${kode(110,120,140)}</svg>`;
+}
+function figPlaced(){return `<svg viewBox="0 0 360 330" class="fig">${fixture(80,120,200,200)}${kode(110,120,140,{color:G})}${badge(180,110,62,G,"tick")}</svg>`}
+function figHands(){return `<svg viewBox="0 0 400 330" class="fig">${fixture(60,120,200,200)}${kode(90,120,140)}
+  <g transform="translate(8 0)">${hand(262,48,1.35)}${forbidden(318,120,92)}</g></svg>`}
+function figWait(){return `<svg viewBox="0 0 360 330" class="fig">${fixture(80,120,200,200)}${kode(110,120,140,{color:"#3d8bfd"})}
+  <circle cx="180" cy="60" r="44" fill="none" stroke="#2a3a5a" stroke-width="12"/><circle cx="180" cy="60" r="44" fill="none" stroke="#3d8bfd" stroke-width="12" stroke-linecap="round" stroke-dasharray="80 200"><animateTransform attributeName="transform" type="rotate" values="0 180 60;360 180 60" dur="1.1s" repeatCount="indefinite"/></circle></svg>`}
+
+/* The buttons as the Kode draws them on its glass: the pad on the left, BLUE big top right, RED below. */
+/* fixed = held down or not coming back up: the button solid red. cross = the operator just missed this step and it is asked again. */
+const FIXED=["held","no_release"],REPEAT_IF=["cam_pixels","cam_lines","cam_zones"];
+function figButtons(cur,hist,cross){
+  const K={"pad-up":[95,20],"pad-left":[25,90],"pad-right":[165,90],"pad-down":[95,160]};
+  const FL={"pad-up":"M-12 6l12-12 12 12","pad-down":"M-12 -6l12 12 12-12","pad-left":"M6 -12l-12 12 12 12","pad-right":"M-6 -12l12 12-12 12"};
+  let s=`<svg viewBox="0 0 420 260" class="fig wide"><rect x="95" y="90" width="70" height="70" rx="12" fill="#26262c"/>`;
+  for(const id in K){const[x,y]=K[id],st=hist[id],on=id===cur;
+    const ko=st&&st!=="pass"&&!on,fixed=ko&&FIXED.includes(st),f=on?A:st==="pass"?G:fixed?R:ko?"#3a1a1d":"#34343b";
+    s+=`<rect x="${x}" y="${y}" width="70" height="70" rx="14" fill="${f}" ${ko?`stroke="${R}" stroke-width="5"`:""}/>`;
+    if(on)s+=`<rect x="${x-9}" y="${y-9}" width="88" height="88" rx="20" fill="none" stroke="${A}" stroke-width="5"><animate attributeName="opacity" values="1;.25;1" dur=".9s" repeatCount="indefinite"/></rect>`;
+    if(on&&cross)s+=badge(x+70,y,22,R,"cross");
+    s+=ko?`<g transform="translate(${x+11} ${y+11}) scale(2)" color="${fixed?"#fff":R}">${ico("cross")}</g>`:st==="pass"&&!on?`<g transform="translate(${x+11} ${y+11}) scale(2)" color="#0b0b0d">${ico("tick")}</g>`:`<path transform="translate(${x+35} ${y+35})" d="${FL[id]}" fill="none" stroke="${on?"#111":"#e6e6ea"}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`}
+  const C={"top":[335,70,52,"#1f8fe0","#0d3b5c"],"bottom":[300,190,40,"#e0343f","#5c1a1f"]};
+  for(const id in C){const[cx,cy,r,lit,dark]=C[id],st=hist[id],on=id===cur;
+    const ko=st&&st!=="pass"&&!on,fixed=ko&&FIXED.includes(st),f=on?lit:st==="pass"?G:fixed?R:ko?"#3a1a1d":dark;
+    s+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${f}" ${ko?`stroke="${fixed?"#fff":R}" stroke-width="5"`:""}/>`;
+    if(ko)s+=`<g transform="translate(${cx-r*.7} ${cy-r*.7}) scale(${r*1.4/24})" color="${fixed?"#fff":R}">${ico("cross")}</g>`;
+    if(on&&cross)s+=badge(cx+r*.75,cy-r*.75,22,R,"cross");
+    if(on)s+=`<circle cx="${cx}" cy="${cy}" r="${r+11}" fill="none" stroke="${A}" stroke-width="6"><animate attributeName="r" values="${r+8};${r+16};${r+8}" dur=".9s" repeatCount="indefinite"/></circle>`;
+    if(st==="pass"&&!on)s+=`<g transform="translate(${cx-r*.7} ${cy-r*.7}) scale(${r*1.4/24})" color="#0b0b0d">${ico("tick")}</g>`}
+  return s+`</svg>`}
+/* The Kode's glass (410x502) with the printed bands; the point to touch pulses. */
+function figTouch(target,hist){
+  let s=`<svg viewBox="-20 -20 450 542" class="fig tall"><rect x="-14" y="-14" width="438" height="530" rx="70" fill="#1b1b20" stroke="#5d5d68" stroke-width="6"/>
+   <rect x="0" y="0" width="410" height="502" rx="56" fill="#000"/><rect x="0" y="0" width="410" height="125" rx="56" fill="#17171b"/><rect x="0" y="60" width="410" height="65" fill="#17171b"/>
+   <rect x="0" y="380" width="410" height="122" rx="56" fill="#17171b"/><rect x="0" y="380" width="410" height="60" fill="#17171b"/><rect x="150" y="50" width="110" height="26" rx="13" fill="#2b2b33"/>`;
+  hist.forEach(h=>{if(h.target===target||!h.target)return;const[x,y]=h.target.split(",").map(Number);s+=badge(x,y,30,h.res==="pass"?G:R,h.res==="pass"?"tick":"cross")});
+  if(target){const[x,y]=target.split(",").map(Number);
+    s+=`<circle cx="${x}" cy="${y}" r="34" fill="none" stroke="${A}" stroke-width="5"><animate attributeName="r" values="34;70" dur="1.1s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0" dur="1.1s" repeatCount="indefinite"/></circle><circle cx="${x}" cy="${y}" r="32" fill="${A}"/>`;
+    const sx=x<205?1:-1,sy=y<251?1:-1;s+=`<g transform="translate(${x+sx*12} ${y+sy*14}) scale(${sx*1.25} ${sy*1.25}) rotate(-22)">${finger()}</g>`}
+  return s+`</svg>`}
+function ringHtml(){return `<div class="ring" id="ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="none" stroke="#2a2a31" stroke-width="9"/><circle class="arc" cx="50" cy="50" r="44" fill="none" stroke="${A}" stroke-width="9" stroke-linecap="round" pathLength="100" stroke-dasharray="100 100" stroke-dashoffset="0"/></svg><div class="num" id="ringn"></div></div>`}
+function dotsHtml(n,cur,res){let s='<div class="dots">';for(let k=1;k<=n;k++)s+=`<i class="${k===cur?"cur":(res[k]||"")}"></i>`;return s+"</div>"}
+
+/* ---------- the stage ---------- */
+let stageKey="";
+function stageHtml(f,now){
+  const S=$("stage");S.className="";
+  if(f==="start")return[`<button class="go" id="bGo" title="Start">${svgI("play")}</button><div class="msg">Start</div>`,"start"];
+  if(f==="place"){const e=(place&&PLACE[place.state])?place.state:"usb";
+    const cl={usb:"amb",waiting:"amb",searching:"run",misplaced:"amb",no_camera:"bad"}[e];
+    return[`${figPlace(e)}<div class="msg ${cl}">${PLACE[e]}</div>`,"pl"+e]}
+  if(f==="placed")return[`${figPlaced()}<div class="msg ok">Placed</div>`,"placed"];
+  if(f==="hands"){const cd=phaseEv&&phaseEv.name==="camera"&&phaseEv.dur;
+    return[`<div class="row">${figHands()}${cd?ringHtml():""}</div><div class="msg" style="color:${R}">Do not touch</div>`,"hands"+(cd?"c":"")]}
+  if(f==="wait")return[`${figWait()}<div class="msg run">Wait</div>`,"wait"];
+  if(f==="buttons"){const[nm,col]=BUTTON[op.what]||[op.what,"var(--amb)"];
+    const res={};Object.keys(btnHistStep).forEach(k=>res[k]=btnHistStep[k]);
+    const fl=flash&&FORGIVEN.includes(flash.res)&&now-flash.t<FLASH_MS?flash:null;   /* only while the same step is asked again */
+    if(fl)S.className="fl-"+fl.res;
+    const fixed=FIXED.includes(op.res),light=fixed||op.what==="top"||op.what==="bottom";
+    const word=fixed?`<span style="color:var(--fail)">${op.res==="no_release"?"Not coming back up":"Stuck down"}</span>`:op.again?'<span style="color:var(--fail)">Again</span>':"Press";
+    return[`<div class="row">${figButtons(op.res&&!FORGIVEN.includes(op.res)?null:op.what,btnHist,!!fl)}${ringHtml()}</div>
+      <div class="msg">${word} <span class="k" style="background:${fixed?"var(--fail)":col};color:${light?"#fff":"#111"}">${esc(nm)}</span></div>${dotsHtml(op.of,fixed?0:op.step,res)}`,
+      "b"+op.step+op.what+op.again+JSON.stringify(btnHist)+(fl?fl.res+fl.t:"")]}
+  if(f==="touch"){const res={};tchHist.forEach((h,k)=>{res[k+1]=h.res});
+    const fl=flash&&FORGIVEN.includes(flash.res)&&now-flash.t<FLASH_MS?flash:null;
+    if(fl)S.className="fl-"+fl.res;
+    return[`<div class="row">${figTouch(op.what,tchHist)}${ringHtml()}</div><div class="msg amb">${op.again?'<span style="color:var(--fail)">Again:</span> t':"T"}ouch the point</div>${dotsHtml(op.of,op.step,res)}`,
+      "t"+op.step+op.what+op.again+JSON.stringify(tchHist)+(fl?fl.res+fl.t:"")]}
+  if(f==="final"){const v=verdict();
+    const icon=v==="PASS"?"tick":v==="FAIL"?"cross":"bang";const txt=v==="PASS"?"PASS":v==="FAIL"?"FAIL":"NO VERDICT";
+    const bench=!!(end&&/^BENCH /.test(end.verdict||""));
+    let bad=[],station=[],shots=[];
+    if(cut)bad=[cut];
+    else if(place&&PLACE_WHY[place.state])bad=[PLACE_WHY[place.state]];
+    else{const r=faultSummary();bad=v==="FAIL"?r.kode.concat(r.unmeasured):r.unmeasured.concat(r.kode);station=r.station;shots=r.shots.slice(0,3);
+      if(!bad.length&&r.notrun&&v!=="PASS")bad=[r.notrun+" tests not done"]}
+    if(bad.length>8)bad=bad.slice(0,7).concat(["+"+(bad.length-7)]);
+    S.className="final "+v+(shots.length?" withshots":"");
+    const stationOnly=v==="FAIL"&&!bad.length&&station.length;
+    /* after the end the program stays alive until the Kode leaves the USB (the removed event): meanwhile, ask to unplug */
+    /* a screen fault (pixels, lines or zones) is repeated with the same Kode, without taking it out */
+    const again=v==="FAIL"&&!cut&&steps.some(p=>REPEAT_IF.includes(p.id)&&(p.state==="FAIL"||p.state==="TIMEOUT"));
+    const foot=(again?`<button class="next rep" id="bRep"${repeatPending?" disabled":""}>${svgI("again")}${repeatPending?"Repeating":"Repeat"}</button>`:"")+
+      (running?`<div class="unplug">${svgI("unplug")}<span>Unplug the Kode</span></div>`:`<button class="next${again?" sec":""}" id="bGo">${svgI("play")}Next</button>`);
+    return[`<div class="ver"><svg viewBox="0 0 24 24" style="color:currentColor"><circle cx="12" cy="12" r="11" fill="none" stroke="currentColor" stroke-width="1.8"/>${ico(icon)}</svg><b class="${txt.length>4?"long":""}">${txt}</b>${bench?'<span class="bench">BENCH</span>':""}</div>
+      <div class="detail">${shots.length?`<div class="shots">${shots.map(x=>`<figure data-big="${esc(img(x.src))}"><div class="fi"><img src="${esc(img(x.src))}" alt=""${/img_cam_(dead|on|stuck)_/.test(x.src)?' class="px"':""}>${/img_cam_(dead|on|stuck)_/.test(x.src)?'<i class="halo"></i>':""}</div><figcaption>${esc(x.txt)}</figcaption></figure>`).join("")}</div>`:""}<div class="txts">
+      ${v!=="PASS"&&bad.length?`<div class="why">${bad.map(x=>`<span>${esc(x)}</span>`).join("")}</div>`:""}
+      ${stationOnly?`<div class="why"><span>Only the station fails</span></div>`:""}
+      ${station.length?`<div class="station">${station.map(x=>`<span>Station · ${esc(x)}</span>`).join("")}</div>`:""}</div></div>
+      <div class="foot">${foot}${end&&end.report?`<button class="doc" id="bDoc" title="Report">${svgI("doc")}</button>`:""}</div>`,
+      "final"+v+bench+bad.join("|")+station.join("|")+shots.length+(end?1:0)+running+again+repeatPending]}
+  return["",""];
+}
+
+function fmt(s){if(s==null||isNaN(s))return"";s=Math.max(0,s);const m=Math.floor(s/60);return m+":"+String(Math.floor(s-m*60)).padStart(2,"0")}
+
+function renderPhases(f){
+  const idx={start:-1,place:0,placed:1,hands:1,buttons:2,touch:2,wait:3,final:4}[f];
+  const nodes=[["place","place"],["hands","eye"],["op","hand"],["end","flag"]];
+  /* at the end, only the phases really passed are green; the first one that was not takes the verdict's colour */
+  const done=[placedT!=null||(runIds.length&&!runIds.includes("place")),
+    steps.some(p=>p.id.startsWith("cam_")&&p.state!=="pending"&&p.state!=="NOT_RUN")||!!op,opDone.buttons||opDone.tp,true];
+  const v=f==="final"?verdict():null,vc=v==="PASS"?"ok":v==="FAIL"?"ko":"nv";
+  let h="",stop=false;nodes.forEach(([k,i],n)=>{let c="";
+    if(f==="final"){if(!stop&&(done[n]&&n<3))c="ok";else if(!stop){c=vc;stop=true}}
+    else{if(idx>n)c="ok";if(idx===n)c="on"}
+    if(n)h+=`<i class="fzl ${(f==="final"?!!c:idx>=n)?"ok":""}"></i>`;
+    h+=`<span class="fz ${c}">${svgI(i)}</span>`});
+  $("phases").innerHTML=h;
+}
+function renderRows(){
+  $("prog").innerHTML=steps.map(p=>`<i class="${p.state}"></i>`).join("");
+  $("rows").innerHTML=steps.map(p=>`<span class="ch ${p.state}" title="${esc(p.name)}${p.reason?" · "+esc(p.reason):""}"><i></i>${esc(SHORT[p.id]||p.name)}</span>`).join("");
+}
+let lastPhase="";
+function render(){
+  const now=Date.now(),f=derivePhase(now);
+  document.body.dataset.phase=f;
+  if(f!=="start"&&notice&&notice.startsWith("The Kode's port is busy"))banner(null);   /* it matters only before starting */
+  const[html,key]=stageHtml(f,now);
+  if(key!==stageKey){stageKey=key;$("stage").innerHTML=html}
+  const fk=f+(f==="final"?verdict()+placedT+opDone.buttons:"");if(fk!==lastPhase){lastPhase=fk;renderPhases(f)}
+  $("serial").innerHTML=esc(serial&&serial!=="-"?serial:"")+(last&&!end&&!cut?`<span class="last ${last.v}" id="bLast" title="Last run ${esc(last.serial||"")}">${last.v==="NOV"?"NO VERDICT":last.v}</span>`:"");
+  $("bStop").hidden=!running;
+  renderRows();renderTech();tick();
+}
+function tick(){
+  const now=Date.now();
+  const f=derivePhase(now);
+  if(f!==document.body.dataset.phase){render();return}
+  if(f==="buttons"||f==="touch"){
+    const k=stageHtml(f,now)[1];if(k!==stageKey){render();return}}
+  $("clock").textContent=run0?fmt(((runEnd||now)-run0)/1000):"0:00";
+  const ring=$("ring");
+  if(ring){let lim=null,t0=null,stopped=false;
+    if((f==="buttons"||f==="touch")&&op){lim=op.lim;t0=op.t0;stopped=!!op.res}
+    else if(f==="hands"&&phaseEv&&phaseEv.name==="camera"&&phaseEv.dur){lim=phaseEv.dur;t0=phaseEv.t0}
+    const arc=ring.querySelector(".arc"),n=$("ringn");
+    if(lim){const rest=Math.min(lim,Math.max(0,lim-(now-t0)/1000));arc.setAttribute("stroke-dashoffset",String(100-100*rest/lim));
+      n.textContent=Math.ceil(rest);ring.classList.toggle("low",rest<=3&&!stopped);ring.classList.remove("spin")}
+    else{arc.setAttribute("stroke-dashoffset","72");n.textContent="";ring.classList.add("spin")}}
+}
+setInterval(tick,100);
+
+/* ---------- events ---------- */
+function reset(){if(end||cut)last={v:verdict(),serial,report:end&&end.report,t:runEnd};
+  steps=[];runIds=[];serial="";vers={};repeatOf=null;place=null;placedT=null;op=null;flash=null;btnHist={};btnHistStep={};tchHist=[];
+  opDone={buttons:false,tp:false};phaseEv=null;end=null;cut=null;logs=[];runEnd=null;doubleSeen=false;removed=false;photos=null}
+function opEv(e,rx){
+  if(e.kind==="answer"){
+    if(!op||op.step!==e.step)return;
+    /* a fail for a button held down or not coming back up keeps its reason: the button is drawn solid red */
+    const res=e.result==="fail"&&FIXED.includes(e.reason)?e.reason:e.result;
+    op.res=res;flash={res,t:rx};
+    if(e.reason==="double")doubleSeen=op.step;else if(e.result==="pass"&&doubleSeen===op.step)doubleSeen=false;   /* a double later pressed well is no fault */
+    beep(e.result==="pass"?"ok":"bad",rx);
+    if(FORGIVEN.includes(res))return;     /* the same step again: red tint, a cross and "Again" */
+    if(op.kind==="button"){btnHist[op.what]=res;btnHistStep[op.step]=res}
+    else tchHist.push({target:op.what,res});
+    return}
+  const kind=e.kind==="press"?"button":"touch";
+  if(op&&op.kind!==kind&&kind==="touch")opDone.buttons=true;
+  const lim=e.limit_s||OP_LIMIT_S;
+  const again=!!(op&&op.step===e.step&&op.kind===kind&&FORGIVEN.includes(op.res));
+  op={kind,step:e.step,of:e.of,what:e.what,t0:tEv(e,rx),lim,res:null,again};
+}
+function ev(e){
+  const rx=e.rx?e.rx*1000:Date.now();
+  switch(e.type){
+  case"camera":camera(e);return;
+  case"operator":opEv(e,rx);break;
+  case"place":place={state:e.state,text:e.text,t:rx};if(e.state==="ok")placedT=rx;break;
+  case"phase":phaseEv={name:e.name,text:e.text,t0:tEv(e,rx),dur:e.limit_s||null};break;
+  case"system":
+    if(e.kind==="launched"){reset();launched=true;running=true;run0=rx;banner(null)}
+    else if(e.kind==="port_busy"||e.kind==="error"){banner(e.text);running=false;if(!launched)break;cut=e.kind==="port_busy"?"Port busy":"Could not start";runEnd=rx}
+    else if(e.kind==="stopped"||e.kind==="died"){if(!end){cut=e.kind==="stopped"?"Test stopped":"The test was cut short";runEnd=rx}running=false;
+      steps.forEach(p=>{if(p.state==="running"){p.state="NOT_RUN";p.reason="Interrupted"}})}
+    else if(e.kind==="finished"){running=false;if(!runEnd)runEnd=rx;
+      if(repeatPending){repeatPending=false;setTimeout(()=>{if(!running)launch()},400)}}
+    break;
+  case"start":{serial=e.serial||"";vers=e.versions||{};repeatOf=e.repeat_of||null;const fresh=e.steps||[];runIds=fresh.map(n=>n.id);
+    steps=fresh.map(n=>Object.assign({state:"pending",values:[],image:null,reason:"",step_s:null},n));
+    if(!launched){launched=true;run0=rx}break}
+  case"step":{const p=byId(e.id);if(p)p.state="running";break}
+  case"result":{let p=byId(e.id);if(!p){p={id:e.id,name:SHORT[e.id]||e.id};steps.push(p)}
+    Object.assign(p,{state:e.state,values:e.values||[],image:e.image,reason:e.reason||"",step_s:e.step_s});
+    if(e.id==="buttons")opDone.buttons=true;if(e.id==="tp")opDone.tp=true;
+    if(e.id==="place"&&e.state==="PASS"&&placedT==null)placedT=rx;break}
+  case"log":logs.push(e.text);if(logs.length>200)logs.shift();break;
+  case"photos":photos=e;logs.push(`photos: ${e.n} saved, ${e.retries} asked again`+((e.missing||[]).length?`, missing ${e.missing.join(",")}`:""));break;
+  case"end":end=e;runEnd=rx;loadHist();beep(verdict()==="PASS"?"pass":"fail",rx);break;
+  case"removed":removed=true;break;
+  case"lock":if(e.state==="failed"){logs.push("lock: failed: "+(e.reason||""));banner("The Kode was not locked: do not ship it")}break;
+  }
+  render();
+}
+
+/* ---------- the technician ---------- */
+const STATE_TXT={pending:"·",running:"RUNNING",PASS:"PASS",FAIL:"FAIL",TIMEOUT:"TIMEOUT",NOVERDICT:"NO VERD.",NOT_RUN:"NOT RUN"};
+function img(r){return r?"/file?path="+encodeURIComponent(r):""}
+function renderTech(){
+  if(!$("tech").classList.contains("open"))return;
+  $("vers").textContent=[serial].concat(Object.keys(vers).map(k=>k+" "+vers[k])).concat(repeatOf?["repeat of "+(repeatOf.folder||"")]:[]).filter(Boolean).join("  ·  ");
+  $("bAll").disabled=running;
+  $("list").innerHTML=steps.map(p=>{
+    const vals=(p.values||[]).map(v=>`${esc(v.name)} <b>${esc(v.value)}${v.unit?" "+esc(v.unit):""}</b>${v.range?` (${esc(v.range)})`:""}`).join(" · ")+(p.reason?`<div class="rsn">${esc(p.reason)}</div>`:"");
+    return `<div class="step s-${p.state}"><div class="nm">${esc(p.name)}<span class="id">${esc(p.id)}</span></div><div class="badge">${STATE_TXT[p.state]||esc(p.state)}</div>
+     <span class="t">${p.step_s!=null?Number(p.step_s).toFixed(1)+" s":""}</span>
+     <div>${p.image?`<img class="th" src="${img(p.image)}" data-big="${esc(img(p.image))}" alt="">`:""}</div>
+     <div class="vals">${vals}</div></div>`}).join("")||`<p style="color:var(--tx2)">No steps yet.</p>`;
+  $("end").innerHTML=end&&end.report?`<p><button class="tb" id="bDoc2">Open the report</button></p>`:"";
+  $("log").textContent=logs.slice(-40).join("\n");
+}
+function banner(t){notice=t;const b=$("notice");b.style.display=t?"flex":"none";b.innerHTML=t?svgI("warn")+`<span>${esc(t)}</span>`:""}
+function camera(e){if(!e.image)return;$("camimg").src=img(e.image);$("camimg").dataset.big=img(e.image);$("camimg").style.display="block";
+  $("camtxt").textContent="Camera: "+(e.pattern||"picture")}
+let simulator=false;
+async function pollPort(){
+  if(simulator)return;    /* the simulator does not use the Kode's port */
+  try{const r=await (await fetch("/port?p="+encodeURIComponent($("port").value.trim()))).json();const b=$("portbox");
+    if(r.busy){b.style.display="block";b.innerHTML=`<b>Port busy (${esc(r.port)})</b>`+r.others.map(x=>`<div>${esc(x.cmd)} · pid ${x.pid}<br><small>${esc(x.line)}</small></div>`).join("");
+      if(!running&&!notice&&document.body.dataset.phase==="start")banner("The Kode's port is busy: call the technician")}
+    else{b.style.display="none";if(notice&&notice.startsWith("The Kode's port is busy"))banner(null)}}catch(e){}
+}
+async function post(u,b){try{const r=await fetch(u,{method:"POST",body:JSON.stringify(b||{})});return await r.json()}catch(e){banner("No link with test_dot_ui.py");return{ok:false}}}
+function launch(){post("/launch",{port:$("port").value.trim()}).then(r=>{if(!r.ok&&r.msg&&!notice)banner(r.msg)})}
+let stopT=null;const SQUARE=`<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></svg>`;
+function stopPlain(){const b=$("bStop");clearTimeout(stopT);b.classList.remove("confirm");b.innerHTML=SQUARE}
+/* stopping asks for a second touch within 3 s: a brush does not cut the test */
+$("bStop").onclick=()=>{const b=$("bStop");
+  if(b.classList.contains("confirm")){stopPlain();post("/stop");return}
+  b.classList.add("confirm");b.innerHTML=SQUARE.replace("<svg",`<svg style="width:28px;height:28px"`)+"Stop";stopT=setTimeout(stopPlain,3000)};
+$("bTech").onclick=()=>{$("tech").classList.toggle("open");loadHist();render()};
+$("bClose").onclick=()=>$("tech").classList.remove("open");
+function bigImage(src){$("lbimg").src=src;$("lb").style.display="flex"}
+$("stage").addEventListener("click",e=>{const t=e.target.closest("button");
+  if(t){if(t.id==="bGo"&&!running){beep("ok");launch()}
+    else if(t.id==="bRep"&&!repeatPending){beep("ok");
+      /* the program is still alive waiting for the Kode to leave: it is closed and, once it ends, run again with the same Kode */
+      if(running){repeatPending=true;post("/stop");render()}else launch()}
+    else if(t.id==="bDoc"&&end&&end.report)openReport(end.report);return}
+  const f=e.target.closest("[data-big]");if(f)bigImage(f.dataset.big)});
+$("serial").addEventListener("click",e=>{if(e.target.id==="bLast"&&last&&last.report)openReport(last.report)});
+/* the simple report (reports.py) through /reports/, else the technical one */
+async function openReport(path){const dir=path.replace(/\/[^/]*$/,""),folder=dir.split("/").pop();
+  const u="/reports/"+encodeURIComponent(folder)+"/simple.html";
+  try{const r=await fetch(u);if(r.ok){window.open(u,"_blank");return}}catch(e){}
+  window.open("/file?path="+encodeURIComponent(path),"_blank")}
+$("rows").addEventListener("click",()=>{$("tech").classList.add("open");render()});
+$("bAll").onclick=()=>launch();
+$("tech").addEventListener("click",e=>{const t=e.target;
+  if(t.dataset&&t.dataset.big)bigImage(t.dataset.big);
+  else if(t.id==="bDoc2"&&end)openReport(end.report)});
+$("hist").addEventListener("click",e=>{const b=e.target.closest("[data-rep]");if(b)openReport(b.dataset.rep)});
+$("bRuns").onclick=()=>window.open("/reports/","_blank");
+$("bSound").onclick=()=>{sound=!sound;$("bSound").textContent=sound?"Sound on":"Sound off";if(sound)beep("ok")};
+$("lb").onclick=()=>{$("lb").style.display="none"};
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){$("lb").style.display="none";$("tech").classList.remove("open")}
+  if((e.key==="Enter"||e.key===" ")&&!running&&!$("tech").classList.contains("open")&&!(e.target instanceof HTMLInputElement)){e.preventDefault();launch()}});
+async function loadHist(){
+  try{const r=await (await fetch("/history")).json();
+  $("hist").innerHTML=r.length?r.map(x=>{const f=x.date||"";const d=f.length>=15?`${f.slice(6,8)}/${f.slice(4,6)} ${f.slice(9,11)}:${f.slice(11,13)}:${f.slice(13,15)}`:f;
+   const vv=(x.verdict||"?").split(" ")[0];
+   return `<button class="h" ${x.report?`data-rep="${esc(x.report)}"`:"disabled"}><span class="v v-${esc(vv)}">${esc(x.verdict||"?")}</span><b>${esc(d)}</b> ${esc(x.serial)}${x.fails.length?" · "+esc(x.fails.join(", ")):""}</button>`}).join(""):`<p style="color:var(--tx2)">No runs.</p>`}catch(e){}
+}
+setInterval(pollPort,2000);
+fetch("/info").then(r=>r.json()).then(i=>{$("port").value=i.port;running=!!i.running;pollPort();if(i.simulator){simulator=true;banner(null);document.title+=" (simulator)"}render()}).catch(()=>{});
+const es=new EventSource("/events");
+es.onmessage=m=>{try{ev(JSON.parse(m.data))}catch(err){console.error(err)}};
+es.onerror=()=>{if(running)banner("No link with test_dot_ui.py; trying again")};
+es.onopen=()=>{if(notice&&notice.startsWith("No link"))banner(null)};
+render();
+</script></body></html>

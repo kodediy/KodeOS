@@ -1,0 +1,134 @@
+name: Bug report
+description: Something on the Kode Dot does not behave as it should - a crash, a hang, a wrong reading, a screen that looks wrong.
+type: Bug
+assignees:
+  - jbenedictocenteno
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One issue per problem, please. If the fault is in a driver, an Active Object or the `kode` facade and it also shows from an SDK app, file it in [kode-sdk](https://github.com/kodediy/kode-sdk/issues/new/choose) instead.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before you file
+      options:
+        - label: I have searched the [open and closed issues](https://github.com/kodediy/KodeOS/issues?q=is%3Aissue) and found nothing that covers this.
+          required: true
+        - label: I have reproduced it on the latest release, or on `main`.
+          required: true
+        - label: If the board kept coming up in a user app instead of kodeOS, I held BOT+LEFT for a second to clear the sticky boot request first.
+
+  - type: textarea
+    id: info
+    attributes:
+      label: Board and firmware
+      description: |
+        Run `info` on the console (USB-C) and paste the whole answer. It names the board's serial and the version held in every kodeOS slot and in the C5.
+      placeholder: |
+        >|serial=KODE78YR5EEV0XX product=KODE-DOT board=DVT
+        >|mac_p4=e8:f6:0a:e7:6c:1d
+        >|slot=factory addr=0x020000 size_kb=4096 state=running project=kodeos version=00.00.19 idf=v6.1
+        ...
+        >ok
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Where the problem shows. Pick the closest one; "Not sure" is a fine answer.
+      options:
+        - Boot and updates (OTA, install dst=os, rescue)
+        - Launcher and settings sheet
+        - Apps (install, run, apps region, mailbox)
+        - Console (USB or BLE)
+        - Display and touch
+        - Buttons and LED
+        - Audio and haptics
+        - Power, battery and sleep
+        - Storage (microSD or internal FAT)
+        - Radio (WiFi, BLE, ESP32-C5)
+        - Network (HTTP, UDP, MQTT, ping)
+        - Sensors (IMU, magnetometer, NFC, RFID, infrared)
+        - Production test (test component=...)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: power
+    attributes:
+      label: Power source
+      description: Several faults only show on one of these. On USB the board cannot switch off, by design.
+      options:
+        - USB from a computer
+        - USB charger
+        - Battery only
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: What you saw, as precisely as you can. Quote messages exactly.
+      placeholder: After tapping the pill the spinner stays up and the buttons stop answering.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      placeholder: The app installs and launches, as it does from the console.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Start from a known state (a cold boot is the best one) and list every step, including button presses and console commands.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does it happen?
+      options:
+        - Every time
+        - Often (more than half the attempts)
+        - Sometimes
+        - Once, and not since
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console log
+      description: |
+        The serial output around the failure. For a crash, paste from the `Guru Meditation` line down to the next boot banner: the backtrace and the reset reason are what matter. `boot_info` after the reset says why the board last booted.
+      render: text
+
+  - type: textarea
+    id: capture
+    attributes:
+      label: Screenshots or video
+      description: |
+        For anything on the glass, a capture beats a description: `tools/kcli.py -p PORT screenshot -o shot.png`, or the BLE screenshot task. Opening the cable port resets the board, so use BLE when the state on screen is the thing you want to show. Drag images or a video here.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Installed apps, SD card in or out, what changed since it last worked, anything you already ruled out.

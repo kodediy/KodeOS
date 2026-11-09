@@ -1,0 +1,4 @@
+# The rig's self-hosted runner (kodediy/kode-hil), which hil.yml targets.
+self-hosted-runner:
+  labels:
+    - hil

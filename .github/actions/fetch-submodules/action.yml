@@ -1,0 +1,68 @@
+name: Fetch the private submodules
+description: >
+  The SDK and, inside it, the C5's firmware, each with its own read-only
+  deploy key; the SDK key is also staged in .ci-ssh/ for the component
+  manager inside the ESP-IDF container. Every job that fetches them uses this,
+  so the arrangement lives in one place.
+
+# A deploy key is scoped to one repository, so each gets an SSH alias of its
+# own and its URL is rewritten onto that alias - git chooses a key by
+# hostname. The main checkout stays on the workflow's token.
+inputs:
+  sdk-key:
+    description: SDK_DEPLOY_KEY, read-only on kodediy/kode-sdk
+    required: true
+  c5-key:
+    description: C5_DEPLOY_KEY, read-only on kodediy/kode_slave_c5
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SDK_DEPLOY_KEY: ${{ inputs.sdk-key }}
+        C5_DEPLOY_KEY: ${{ inputs.c5-key }}
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.ssh
+        # A fresh runner has no known_hosts, and ssh in a non-interactive
+        # shell refuses an unknown host rather than asking about it.
+        ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+        install_key() {   # install_key <file> <secret> <ssh-alias>
+          printf '%s\n' "$2" > ~/.ssh/"$1"
+          chmod 600 ~/.ssh/"$1"
+          ssh-keygen -y -f ~/.ssh/"$1" >/dev/null || {
+            echo "::error::$1 is empty or not a valid OpenSSH private key" >&2
+            exit 1
+          }
+          printf 'Host %s\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/%s\n  IdentitiesOnly yes\n' \
+                 "$3" "$1" >> ~/.ssh/config
+        }
+        install_key sdk_deploy_key "$SDK_DEPLOY_KEY" sdk.github.com
+        install_key c5_deploy_key "$C5_DEPLOY_KEY" c5.github.com
+        chmod 600 ~/.ssh/config
+
+        git config --global url."git@sdk.github.com:kodediy/kode-sdk.git".insteadOf \
+                                "https://github.com/kodediy/kode-sdk.git"
+        git config --global url."git@c5.github.com:kodediy/kode_slave_c5.git".insteadOf \
+                                "https://github.com/kodediy/kode_slave_c5.git"
+
+        # Recursive: the C5's host tests run, and its image ships in every
+        # factory FAT.
+        git submodule update --init --recursive
+
+        # The build runs in a Docker container with its own HOME, so none of
+        # the above reaches it. The workspace is what both share, so the SDK
+        # key is staged there and copied inward by the build step; the job's
+        # last step removes it, whatever happens.
+        #
+        # It is the component manager that needs it, not git: kgui pins the
+        # SDK as a git dependency, and resolving that fetches kode-sdk into the
+        # manager's cache even though the submodule is already on disk. What
+        # gets COMPILED is the submodule - the manager prefers a component it
+        # finds under EXTRA_COMPONENT_DIRS.
+        mkdir -p .ci-ssh
+        cp ~/.ssh/sdk_deploy_key .ci-ssh/sdk_key
+        chmod 600 .ci-ssh/sdk_key

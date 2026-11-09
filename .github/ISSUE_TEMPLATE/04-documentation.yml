@@ -1,0 +1,47 @@
+name: Documentation
+description: A page of the documentation at docs.kode.diy is wrong, missing, unclear or broken.
+type: Task
+labels:
+  - documentation
+assignees:
+  - jbenedictocenteno
+body:
+  - type: markdown
+    attributes:
+      value: |
+        When a page and the code disagree, the code is the truth and the page is the bug. Say what the page claims, what is actually true, and how you know.
+
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: The page's URL. For a missing page, where you looked for it.
+      placeholder: https://docs.kode.diy/sdk/kaos/power
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is wrong
+      options:
+        - Wrong - it does not match the code or the board
+        - Missing - nothing covers it
+        - Unclear - it is there but hard to follow
+        - Broken link or formatting
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What the page says, what is true, and the evidence - a `file:line`, a console answer, a measurement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording
+      description: Optional. If you know what it should say, write it here.

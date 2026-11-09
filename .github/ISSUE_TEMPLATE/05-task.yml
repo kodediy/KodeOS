@@ -1,0 +1,30 @@
+name: Task
+description: A planned piece of work for the team - a slice, a chore, a bench check, a release step.
+type: Task
+assignees:
+  - jbenedictocenteno
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What is true once this is done, in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: The checks that close this issue. A GUI change is verified on the glass; a hardware change on a board.
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Links to the spec, the related issues and pull requests, the docs pages it touches.

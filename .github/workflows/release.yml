@@ -1,0 +1,289 @@
+name: release
+
+# A tag builds a release and leaves it as a DRAFT; nothing here publishes.
+# hil.yml tests the draft's own files on the rig and publishes them when they
+# pass, or an admin publishes them with a written exception. Four jobs, so
+# that each holds only what it needs: a tag off main is refused before
+# anything is built; the gate and the build hold the deploy keys and no write
+# permission; the draft holds write permission and no key.
+#
+# The same build also runs as a rehearsal, with no tag: on a pull request that
+# touches what a release is made of, and by hand. A release path that only runs
+# on release day is first tested on release day - that is how v00.00.23 came to
+# be published by hand, and the C5 step added after it had never once run here.
+#
+# Tag format is enforced inside the job (tools/validate_release_tag.sh),
+# not here - GitHub Actions tag filters are globs, not regex, so this stays
+# permissive and the strict vMAJOR.MINOR.PATCH check runs where a real
+# regex is available.
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'components/kgui/idf_component.yml'
+      - 'tools/assemble_release.sh'
+      - 'tools/build_c5.sh'
+      - 'tools/build_welcome.sh'
+      - 'tools/mkapps.py'
+      - 'apps_image/welcome.pin'
+      - 'tools/check_on_main.sh'
+      - 'tools/release/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a release: a second push of the same tag must not abort the
+# first one halfway through its upload. A rehearsal on a pull request is the
+# exception, for the same reason as in tests.yml.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # First, and cheap: a tag that is not on main is refused before the gate
+  # spends its build on it.
+  on-main:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: The tag is on main
+        run: |
+          git fetch -q --no-tags origin main || exit 1
+          tools/check_on_main.sh "$GITHUB_SHA" origin/main
+
+  # The commit a tag names passes the whole of tests.yml again, here. Looking
+  # up main's earlier run for it would not do: a tip commit that touched only
+  # docs has no run, and a run cancelled by a later push has no verdict.
+  gate:
+    needs: on-main
+    if: github.ref_type == 'tag'
+    # A called workflow may hold no more than its caller grants, and GitHub
+    # checks that when it loads the file, before any `if:`. tests.yml's report
+    # and notify jobs ask for these two; neither runs on a tag.
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: ./.github/workflows/tests.yml
+    secrets:
+      SDK_DEPLOY_KEY: ${{ secrets.SDK_DEPLOY_KEY }}
+      C5_DEPLOY_KEY: ${{ secrets.C5_DEPLOY_KEY }}
+
+  build:
+    needs: gate
+    # Runs after a green gate, or with no gate at all on a rehearsal.
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/fetch-submodules
+        with:
+          sdk-key: ${{ secrets.SDK_DEPLOY_KEY }}
+          c5-key: ${{ secrets.C5_DEPLOY_KEY }}
+
+      # kgui pins the SDK by tag and the gitlink pins it by commit, and the
+      # two have to name the same tree or this is not the release that was
+      # tested. The component manager compiles the submodule for every name
+      # the tag's manifests resolve to and the tag's own copy for any name they
+      # do not, so a pin left behind builds a mixture, and builds it without a
+      # word. Four pins, one version, one commit - an error on a tag, where it
+      # is final. On a rehearsal it is a warning: between releases the
+      # submodule runs ahead of the last tag, which is not a fault.
+      - name: The SDK pin is the submodule
+        env:
+          SEVERITY: ${{ github.ref_type == 'tag' && 'error' || 'warning' }}
+        run: |
+          refuse() {
+            echo "::$SEVERITY::$1" >&2
+            if [ "$SEVERITY" = "error" ]; then
+              exit 1
+            fi
+            exit 0
+          }
+          pin="$(grep -E '^[[:space:]]+version:[[:space:]]+v[0-9.]+' components/kgui/idf_component.yml \
+                 | awk '{ print $2 }' | sort -u)"
+          if [ -z "$pin" ] || [ "$(printf '%s\n' "$pin" | wc -l)" -ne 1 ]; then
+            refuse "kgui must pin exactly one SDK version, it pins: $(printf '%s ' "$pin")"
+          fi
+          git -C sdk fetch -q --no-tags origin "+refs/tags/$pin:refs/tags/$pin" || exit 1
+          if [ "$(git -C sdk rev-parse HEAD)" != "$(git -C sdk rev-parse "refs/tags/$pin^{commit}")" ]; then
+            refuse "the sdk submodule is not at $pin"
+          fi
+
+      # The C5 image a release ships must have been through the C5's own main,
+      # and so its own CI, before the SDK pinned it.
+      - name: The C5 the SDK pins is on the C5's main
+        run: |
+          pinned="$(git -C sdk ls-tree HEAD c5 | awk '{ print $3 }')"
+          git -C sdk/c5 fetch -q --no-tags origin main || exit 1
+          cd sdk/c5 && ../../tools/check_on_main.sh "$pinned" origin/main
+
+      # A rehearsal builds as 00.00.00: a version no release will ever carry,
+      # in the format every script downstream expects.
+      - name: Validate tag and derive PROJECT_VER
+        id: ver
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$(tools/validate_release_tag.sh "$GITHUB_REF_NAME")" || exit 1
+          else
+            version="00.00.00"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Two ESP-IDF images (6.0.2 for the C5, 6.1 for kodeOS) and both build
+      # trees do not fit the runner's free disk: the first rehearsal died
+      # pulling the second image with 98 MB left. The runner ships SDKs this
+      # job never uses, and they go first.
+      - name: Free the runner's disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      # The C5's firmware builds with IDF 6.0.2 for esp32c5, before kodeOS, so
+      # its image and stamp are in storage_image/ when kodeOS's FAT is made.
+      # The action itself marks the workspace a safe git directory.
+      - name: Build the C5 image
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v6.0.2
+          target: esp32c5
+          command: |
+            tools/build_c5.sh
+
+      # The C5's image is in storage_image/ now; its build tree and its
+      # ESP-IDF image are not needed again in this job.
+      - name: Drop the C5's build and image
+        run: |
+          sudo rm -rf sdk/c5/build_c5
+          docker image rm espressif/idf:v6.0.2 || true
+          df -h /
+
+      # The welcome app's source, at the commit apps_image/welcome.pin names,
+      # cloned here on the runner with its own read-only deploy key: the build
+      # container below has the SDK's key alone, which is all the app's build
+      # needs once its source is on disk.
+      - name: Fetch the welcome app's source
+        env:
+          WELCOME_DEPLOY_KEY: ${{ secrets.WELCOME_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          read -r repo _ pinned < apps_image/welcome.pin
+          printf '%s\n' "$WELCOME_DEPLOY_KEY" > ~/.ssh/welcome_deploy_key
+          chmod 600 ~/.ssh/welcome_deploy_key
+          ssh-keygen -y -f ~/.ssh/welcome_deploy_key >/dev/null || {
+            echo "::error::WELCOME_DEPLOY_KEY is empty or not a valid OpenSSH private key" >&2
+            exit 1
+          }
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/welcome_deploy_key -o IdentitiesOnly=yes -o IdentityAgent=none"
+          git clone -q "$repo" build_welcome/src
+          git -C build_welcome/src -c advice.detachedHead=false checkout -q "$pinned"
+
+      - name: Build kodeOS
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v6.1
+          target: esp32p4
+          # The key is copied out of the workspace before use: ssh refuses a
+          # private key whose owner is not the user running it, and the
+          # workspace files belong to the runner while this container is its
+          # own user. IdentityAgent=none because there is no agent here and an
+          # inherited one would only mask which key actually works - the
+          # mistake that cost this release a run. accept-new rather than a
+          # keyscan: same trust as the fetch step above, one less dependency
+          # on what the image happens to ship.
+          command: |
+            mkdir -p /tmp/ci-ssh
+            cp .ci-ssh/sdk_key /tmp/ci-ssh/sdk_key
+            chmod 600 /tmp/ci-ssh/sdk_key
+            export GIT_SSH_COMMAND="ssh -i /tmp/ci-ssh/sdk_key -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/ci-ssh/known_hosts"
+            ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/ci-ssh/known_hosts -o IdentitiesOnly=yes -o IdentityAgent=none -i /tmp/ci-ssh/sdk_key -T git@github.com || true
+            idf.py -DPROJECT_VER=${{ steps.ver.outputs.version }} build
+            tools/build_welcome.sh
+
+      # Never leaves the runner, but it does not linger either: every key goes
+      # before anything is packed or uploaded.
+      - name: Remove the keys
+        if: always()
+        run: rm -rf .ci-ssh ~/.ssh/sdk_deploy_key ~/.ssh/c5_deploy_key ~/.ssh/welcome_deploy_key
+
+      - name: Assemble release artifacts
+        run: tools/assemble_release.sh "${{ steps.ver.outputs.version }}"
+
+      # What this build resolved, beside what it produced. dependencies.lock
+      # is gitignored, so the components a release was built from exist
+      # nowhere else once the runner is gone.
+      - name: Record what the build was made of
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "kodeOS $VERSION"
+            echo "kodeos commit  $(git rev-parse HEAD)"
+            echo "sdk commit     $(git -C sdk rev-parse HEAD)"
+            echo "c5 stamp       $(cat build/c5_slave.commit 2>/dev/null || cat storage_image/c5_slave.commit)"
+            echo "welcome pin    $(cat apps_image/welcome.pin)"
+            echo "welcome stamp  $(cat apps_image/*.commit)"
+            echo "ESP-IDF        $(python3 -c 'import json; print(json.load(open("build/project_description.json"))["git_revision"])')"
+            echo
+            echo "--- dependencies.lock"
+            cat dependencies.lock
+          } > dist/BUILD_INFO.txt
+
+      # What the draft job publishes, and what a rehearsal leaves to be
+      # downloaded and flashed by hand.
+      - name: Keep the release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: |
+            dist/kodeos-factory-v${{ steps.ver.outputs.version }}.zip
+            dist/kodeos-v${{ steps.ver.outputs.version }}.bin
+            dist/SHA256SUMS.txt
+            dist/BUILD_INFO.txt
+          if-no-files-found: error
+          retention-days: 90
+
+  # A draft, never a published release: hil.yml publishes it. Plain gh rather
+  # than a third-party action, so nothing but GitHub's own CLI holds the write
+  # token.
+  draft:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --repo "$REPO" --draft --verify-tag \
+             --title "kodeOS v$VERSION" --generate-notes \
+             "dist/kodeos-factory-v$VERSION.zip" \
+             "dist/kodeos-v$VERSION.bin" \
+             dist/SHA256SUMS.txt dist/BUILD_INFO.txt

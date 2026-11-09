@@ -1,0 +1,314 @@
+name: tests
+
+# Every pull request and every push to main, against the SDK this repo has
+# PINNED rather than the SDK's own tip: the submodule is the version kodeOS is
+# built from, and a suite that passed upstream says nothing about the commit
+# here. A tag is not a trigger of its own: release.yml calls this file as its
+# gate (workflow_call), so the commit a tag names passes it again before any
+# binary is built. Looking up main's earlier run would not do: a tip commit
+# that touched only docs has no run to find. The Markdown, the
+# issue forms and the assign workflow compile nothing and run nothing here.
+# workflow_dispatch is for a branch that has no pull request yet.
+#
+# Once a week main runs again with no commit: the manifests float on purpose
+# (dependencies.lock is gitignored, kgui pins the SDK by tag, lvgl by a
+# range), so main can break with nothing pushed, and the day to find that out
+# is not release day. A failure there opens an issue.
+#
+# Three jobs side by side - the cheap checks, the host suites, the firmware -
+# so a red suite says so in seconds, and the build's minutes are not waited
+# on for it. On a pull request a fourth writes the build's numbers into one
+# comment.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/workflows/assign.yml'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/workflows/assign.yml'
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      SDK_DEPLOY_KEY:
+        required: true
+      C5_DEPLOY_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+# A newer push to a pull request makes the older run worthless and cancels it.
+# On main a running run is left to finish: every commit there is one somebody
+# may tag. GitHub still drops a run that is only queued when a newer one
+# queues behind it; the release's gate runs the suite again, so a tag never
+# depends on that run.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Everything that needs neither ESP-IDF nor a board: seconds.
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/fetch-submodules
+        with:
+          sdk-key: ${{ secrets.SDK_DEPLOY_KEY }}
+          c5-key: ${{ secrets.C5_DEPLOY_KEY }}
+
+      - name: The kit's tokens match their header
+        run: python3 sdk/components/kui/tools/gen_tokens.py --check
+
+      # tools/tests/test_kappdata.py builds its test PNG with Pillow, and the
+      # runner's python3 does not carry it. Ubuntu's own package rather than
+      # pip, because the system python refuses pip installs (PEP 668).
+      - name: Install Pillow for the tools' tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil
+
+      # Every one of them was written for a real regression; tools/tool_tests.sh
+      # fails a test file that exists and is not in its list.
+      - name: Run the tools' own tests
+        run: tools/tool_tests.sh
+
+      # The C5's pure parts, plain C. Its own repository runs them on every
+      # change too; here they run against the commit the SDK pins, which is
+      # the one a release ships.
+      - name: Run the C5's host tests
+        run: sh sdk/c5/test/run.sh
+
+      # Both copies of each wire header are in the SDK, one under sdk/c5; the
+      # SDK's own CI cannot see the C5's, this checkout can.
+      - name: The P4 and the C5 speak the same wire
+        env:
+          KODE_REQUIRE_C5: '1'
+        run: sdk/tools/check_wire_twins.sh
+
+      # A grep over the tree, no compiler: the include rules of every layer.
+      - name: The layer rules hold
+        run: tools/check_layers.sh
+
+      - name: Every new to-do marker names its issue
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: tools/check_todo_refs.sh "$BASE"
+
+      - name: Remove the staged key
+        if: always()
+        run: rm -rf .ci-ssh
+
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/fetch-submodules
+        with:
+          sdk-key: ${{ secrets.SDK_DEPLOY_KEY }}
+          c5-key: ${{ secrets.C5_DEPLOY_KEY }}
+
+      - name: Run the host suites
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v6.1
+          target: esp32p4
+          # Every step ends in `|| exit 1`, and that is not belt and braces.
+          # This block's status is its LAST command's, so a bare list reports
+          # the last check and throws the suites' result away - which is
+          # exactly what the first version of this file did.
+          #
+          # `target` above is harmless because tools/host_tests.sh unsets
+          # IDF_TARGET itself. The ruby line stays because CMock is a ruby
+          # generator, and without it the mocks are silently not produced.
+          command: |
+            ruby --version || { echo "::error::CMock needs ruby; the IDF image did not provide it" >&2; exit 1; }
+            tools/host_tests.sh || exit 1
+
+      - name: Remove the staged key
+        if: always()
+        run: rm -rf .ci-ssh
+
+  firmware:
+    runs-on: ubuntu-24.04
+    # The longest green build so far took 16 minutes; without a ceiling a hung
+    # build bills the default six hours.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/fetch-submodules
+        with:
+          sdk-key: ${{ secrets.SDK_DEPLOY_KEY }}
+          c5-key: ${{ secrets.C5_DEPLOY_KEY }}
+
+      # The cppcheck the MISRA baseline was taken with, kept between runs. The
+      # container's own package is whatever its distribution froze, so the
+      # build step compiles the baseline's version into .ci-cppcheck the first
+      # time and finds it there afterwards. cppcheck compiles the path of its
+      # data files into the binary, and the workspace is mounted at the same
+      # path in every run, which is what lets a cache of it work.
+      - name: Read the cppcheck version off the MISRA baseline
+        id: cppcheck
+        run: echo "version=$(awk 'NR == 1 { print $2 }' tools/misra_baseline.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cppcheck
+        uses: actions/cache@v4
+        with:
+          path: .ci-cppcheck
+          key: cppcheck-${{ steps.cppcheck.outputs.version }}-idf-v6.1
+
+      - name: Build kodeOS for the board
+        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
+        with:
+          esp_idf_version: v6.1
+          target: esp32p4
+          # The key is copied out of the workspace before use: ssh refuses a
+          # private key whose owner is not the user running it, and the
+          # workspace files belong to the runner while this container is its
+          # own user. IdentityAgent=none because there is no agent here and an
+          # inherited one would only mask which key actually works.
+          #
+          # dependencies.lock is gitignored, so the build re-resolves from the
+          # manifests every time - the pin in kgui's is the only thing deciding
+          # what a clean checkout fetches.
+          #
+          # After the build, four checks, each saved for the report:
+          # the size against the mailbox ceiling (KAPPS_PENDING_INTENT_OFF, not
+          # the 4 MB slot IDF checks - see tools/check_os_size.sh); internal
+          # RAM taken at link time against tools/ram_budget.txt (a build that
+          # takes too much still links and fails on a board - see
+          # sdk/tools/check_ram.sh); every Active Object compiled is in the
+          # image and the OS role names each start strongly, so kodeOS parks
+          # none of its own owners (sdk/tools/check_starts.sh); MISRA, cppcheck
+          # and its addon over the first-party C against
+          # tools/misra_baseline.txt. All four run even when one fails, so the
+          # report is whole; the step fails after.
+          #
+          # Nothing inside `command` may contain a single quote, comments
+          # included: the action runs it as bash -c '...', so one apostrophe
+          # ends the string and the step dies with "unexpected EOF".
+          command: |
+            mkdir -p /tmp/ci-ssh ci-report
+            cp .ci-ssh/sdk_key /tmp/ci-ssh/sdk_key || exit 1
+            chmod 600 /tmp/ci-ssh/sdk_key
+            export GIT_SSH_COMMAND="ssh -i /tmp/ci-ssh/sdk_key -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/ci-ssh/known_hosts"
+            ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/ci-ssh/known_hosts -o IdentitiesOnly=yes -o IdentityAgent=none -i /tmp/ci-ssh/sdk_key -T git@github.com || true
+            idf.py build || exit 1
+            ok=0
+            tools/check_os_size.sh build/kodeos.bin > ci-report/size.txt 2>&1 || ok=1
+            sdk/tools/check_ram.sh build/kodeos.elf tools/ram_budget.txt > ci-report/ram.txt 2>&1 || ok=1
+            sdk/tools/check_starts.sh build --all > ci-report/starts.txt 2>&1 || ok=1
+            sdk/tools/build_cppcheck.sh tools/misra_baseline.txt .ci-cppcheck || exit 1
+            export PATH="$PWD/.ci-cppcheck/bin:$PATH"
+            sdk/tools/check_misra.sh build/compile_commands.json tools/misra_baseline.txt sdk/components components/kgui > ci-report/misra.txt 2>&1 || ok=1
+            cat ci-report/size.txt ci-report/ram.txt ci-report/starts.txt ci-report/misra.txt
+            exit $ok
+
+      # The build regenerates nothing that is committed. A file it does change
+      # is one somebody regenerated by hand and forgot to commit, or a
+      # generator that no longer agrees with what is in the tree.
+      - name: The build left the tree as it was
+        if: success() || failure()
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git diff --exit-code --stat
+
+      - name: Write the report
+        if: success() || failure()
+        run: tools/ci_report.sh ci-report >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the report
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-report
+          path: ci-report/
+          retention-days: 7
+
+      # A pull request's build, downloadable, so a reviewer can flash it on
+      # the bench without building it again.
+      - name: Keep the image
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kodeos-pr-${{ github.event.pull_request.number }}
+          path: |
+            build/kodeos.bin
+            build/kodeos.elf
+          retention-days: 7
+
+      # Never leaves the runner, but it does not linger either.
+      - name: Remove the staged key
+        if: always()
+        run: rm -rf .ci-ssh
+
+  # One comment per pull request, edited in place: the build's numbers where
+  # the reviewer already is.
+  report:
+    needs: firmware
+    if: github.event_name == 'pull_request' && (success() || failure())
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The build may have died before it wrote a report; the table then
+      # says "did not run" rather than this job failing on top.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ci-report
+          path: ci-report
+
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          mkdir -p ci-report
+          tools/ci_report.sh ci-report > body.md
+          marker="$(head -1 body.md)"
+          id="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                  --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@body.md > /dev/null
+          else
+            gh api "repos/$REPO/issues/$PR/comments" -F body=@body.md > /dev/null
+          fi
+
+  # The weekly run has nobody watching it: a failure opens an issue.
+  notify:
+    needs: [static, host, firmware]
+    if: github.event_name == 'schedule' && failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$REPO" \
+            --title "The weekly run of main failed" \
+            --body "Nothing was pushed: what main resolves to changed under it. The run: $RUN"

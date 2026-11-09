@@ -1,0 +1,1030 @@
+THIRD-PARTY NOTICES FOR KODEOS
+===============================
+
+This file lists the third-party software compiled into the kodeOS firmware
+image (kodeos.bin) that ships in the factory pack for the Kode Dot
+(ESP32-P4). The factory pack is five files - bootloader.bin,
+partition-table.bin, ota_data_initial.bin, kodeos.bin and storage.bin -
+flashed at fixed offsets by flash.sh / esptool. storage.bin, the internal FAT,
+also carries the ESP32-C5 radio-coprocessor firmware (c5_slave.bin, built
+from kodediy/kode_slave_c5: Espressif's esp-hosted-mcu slave, Apache-2.0, on
+ESP-IDF v6.0.2). Its own third-party components are not listed in this
+notice.
+
+kodeOS is built with ESP-IDF v6.1.0 (Apache-2.0, Espressif Systems) for the
+ESP32-P4 target. What follows covers every third-party component whose
+object code is present in the linked kodeos.elf, plus three components
+stated plainly whatever their licensing status (QP/C, RFAL, and the
+Proxmark3 key dictionary). A
+"not in this firmware" section at the end lists components that are present
+in the source tree or the dependency lock file but were confirmed NOT to
+contribute any linked object code to this image.
+
+Where a source header gives a copyright line, it is reproduced exactly as
+written. Where none could be found, this file says "copyright: see
+upstream" rather than inventing one.
+
+
+CONTENTS
+--------
+ 1. ESP-IDF (Espressif Systems) - Apache-2.0
+ 2. FreeRTOS-Kernel - MIT
+ 3. NimBLE (Apache Mynewt) - Apache-2.0
+ 4. Mbed TLS - Apache-2.0
+ 5. lwIP - BSD-style
+ 6. picolibc - BSD-style (multiple contributors)
+ 7. FatFs - FatFs licence (BSD-style)
+ 8. argtable3 (+ bundled getopt / Tcl / hash-table / bstrlib text) - BSD-style
+ 9. linenoise - BSD-2-Clause
+10. LVGL - MIT
+11. esp_hosted (+ bundled protobuf-c) - Apache-2.0 / BSD-2-Clause
+12. esp_wifi_remote - Apache-2.0
+13. esp_lcd_co5300 - Apache-2.0
+14. esp_codec_dev - Apache-2.0
+15. espressif/mqtt (esp-mqtt) - Apache-2.0
+16. QP/C - GPL-3.0 (special case, see note)
+17. RFAL / ST25R3916 driver - STMicroelectronics terms (special case, see note)
+18. Proxmark3 Mifare Classic key dictionary - GPL-3.0 (data, see note)
+19. Outfit - OFL-1.1
+    Components confirmed NOT compiled into this image
+    Licence texts (reproduced once per distinct text)
+
+
+================================================================================
+1. ESP-IDF (Espressif Systems) - original source code
+================================================================================
+Version:   6.1.0
+Upstream:  https://github.com/espressif/esp-idf
+SPDX:      Apache-2.0
+
+This covers Espressif's own original ESP-IDF source that is linked into
+kodeos.elf: the HAL and driver layers (esp_hal_*, esp_driver_*, driver,
+soc, hal), esp_system, esp_common, esp_event, esp_netif, esp_timer,
+esp_partition, esp_bootloader_format, esp_app_format, bootloader_support,
+spi_flash, esp_psram, esp_pm, esp_hw_support, esp_mm, esp_phy, esp_coex,
+esp_wifi (the wrapper that esp_wifi_remote patches, see #12), the RISC-V
+port, nvs_flash, nvs_sec_provider, wear_levelling, the vfs and esp_stdio
+layers, esp_driver_usb_serial_jtag / esp_hal_usb / esp_usb_cdc_rom_console
+(the native USB-Serial/JTAG console transport), and the console component's
+own glue code (commands.c, split_argv.c - the third-party parts of that
+component, argtable3 and linenoise, are listed separately as #8 and #9).
+
+Copyright: SPDX-FileCopyrightText: 2015-2025 Espressif Systems (Shanghai)
+           CO LTD
+           (the exact year range varies file to file; this is the range
+           found in the sampled driver/HAL sources for this build)
+
+Licence text: see "Apache License 2.0" in the licence-text section below.
+
+
+================================================================================
+2. FreeRTOS-Kernel (vendored inside ESP-IDF's freertos component)
+================================================================================
+Version:   V10.5.1 (ESP-IDF SMP modified)
+Upstream:  https://github.com/FreeRTOS/FreeRTOS-Kernel
+SPDX:      MIT
+
+Copyright (C) 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-FileContributor: 2023-2025 Espressif Systems (Shanghai) CO LTD
+
+Licence text: see "MIT License" in the licence-text section below.
+
+
+================================================================================
+3. NimBLE (Apache Mynewt NimBLE, vendored inside ESP-IDF's bt component)
+================================================================================
+Version:   as vendored in ESP-IDF v6.1.0's bt/host/nimble component
+           (CONFIG_BT_NIMBLE_ENABLED=y in this build)
+Upstream:  https://github.com/apache/mynewt-nimble
+SPDX:      Apache-2.0
+
+Copyright (C) 2015-2018 The Apache Software Foundation
+(source headers: "Licensed to the Apache Software Foundation (ASF) under
+one or more contributor license agreements.")
+
+Licence text: see "Apache License 2.0" in the licence-text section below.
+
+
+================================================================================
+4. Mbed TLS (vendored inside ESP-IDF's mbedtls component)
+================================================================================
+Version:   4.1.0
+Upstream:  https://github.com/Mbed-TLS/mbedtls
+SPDX:      Apache-2.0
+           (Mbed TLS is dual-licensed Apache-2.0 OR GPL-2.0-or-later;
+           kodeOS is built and distributed under the Apache-2.0 option)
+
+Copyright (C) 2006-2018 ARM Limited
+(individual files carry additional/later years; this is the line ESP-IDF's
+own COPYRIGHT.rst gives for the component as a whole)
+
+Licence text: see "Apache License 2.0" in the licence-text section below.
+
+
+================================================================================
+5. lwIP (vendored inside ESP-IDF's lwip component)
+================================================================================
+Version:   2.x, as vendored in ESP-IDF v6.1.0 (Espressif-maintained fork;
+           this tree does not carry a separate lwIP point-release tag)
+Upstream:  https://savannah.nongnu.org/projects/lwip/
+SPDX:      BSD-3-Clause (see exact wording below - it differs slightly
+           from the canonical three-clause template)
+
+Copyright (c) 2001, 2002 Swedish Institute of Computer Science.
+All rights reserved.
+
+Licence text: see "lwIP licence" in the licence-text section below.
+
+
+================================================================================
+6. picolibc (vendored inside ESP-IDF's esp_libc component)
+================================================================================
+Version:   as vendored in ESP-IDF v6.1.0's esp_libc component
+           (CONFIG_LIBC_PICOLIBC=y in this build - kodeOS links picolibc,
+           not newlib, as its C library)
+Upstream:  https://github.com/picolibc/picolibc
+SPDX:      BSD-style (aggregate of many per-file licences; see note)
+
+Copyright: 2019 Keith Packard (picolibc itself)
+Copyright: 2020 The Newlib Project (the bulk of the inherited C library code)
+           and a long list of further per-file copyright holders
+
+Note: picolibc's own attribution file (COPYING.picolibc, Debian
+copyright-format) runs to several thousand lines and lists dozens of
+distinct copyright holders and BSD/MIT-family licence variants, one per
+group of files. Reproducing all of them here would dwarf the rest of this
+notice without adding anything a reader could act on, so this entry points
+to that file (esp-idf/components/esp_libc/COPYING.picolibc in the ESP-IDF
+v6.1.0 tree) rather than reproducing it. This is the same treatment the
+RFAL special case below gets, for the same reason: point at the text
+rather than paste it.
+
+
+================================================================================
+7. FatFs (vendored inside ESP-IDF's fatfs component)
+================================================================================
+Version:   R0.16
+Upstream:  http://elm-chan.org/fsw/ff/00index_e.html
+SPDX:      BSD-1-Clause-style (FatFs's own licence, not a standard
+           multi-clause BSD text - see below)
+
+Copyright (C) 2025, ChaN, all right reserved.
+
+Licence text: see "FatFs licence" in the licence-text section below.
+
+
+================================================================================
+8. argtable3, and the text it bundles (vendored inside ESP-IDF's console component)
+================================================================================
+Version:   as vendored in ESP-IDF v6.1.0's console component
+Upstream:  https://github.com/argtable/argtable3
+SPDX:      BSD-3-Clause, plus (bundled in the same upstream LICENSE file)
+           a BSD-2-Clause-style FreeBSD/NetBSD getopt text, the Tcl
+           licence, and two further BSD-3-Clause texts (C Hash Table
+           library, The Better String library)
+
+Copyright (C) 1998-2001,2003-2011,2013 Stewart Heitmann (argtable3 itself)
+Copyright (c) 2000 The NetBSD Foundation, Inc. (bundled getopt)
+Copyrighted by the Regents of the University of California, Sun
+  Microsystems, Inc., Scriptics Corporation, ActiveState Corporation and
+  other parties (bundled Tcl-licensed text)
+Copyright (c) 2002, Christopher Clark (bundled C Hash Table library)
+Copyright (c) 2014, Paul Hsieh (bundled Better String library)
+
+Licence text: see "argtable3 licence bundle" in the licence-text section
+below - reproduced as one block because that is how argtable3's own
+LICENSE file presents it upstream.
+
+
+================================================================================
+9. linenoise (vendored inside ESP-IDF's console component)
+================================================================================
+Version:   as vendored in ESP-IDF v6.1.0's console component
+Upstream:  https://github.com/antirez/linenoise
+SPDX:      BSD-2-Clause
+
+Copyright (c) 2010-2016, Salvatore Sanfilippo <antirez at gmail dot com>
+Copyright (c) 2010-2013, Pieter Noordhuis <pcnoordhuis at gmail dot com>
+All rights reserved.
+
+Licence text: see "linenoise licence" in the licence-text section below.
+
+
+================================================================================
+10. LVGL
+================================================================================
+Version:   9.6.0
+Upstream:  https://github.com/lvgl/lvgl
+SPDX:      MIT
+
+Copyright (c) 2025 LVGL Kft
+
+Licence text: see "MIT License" in the licence-text section below (same
+text as FreeRTOS-Kernel's).
+
+
+================================================================================
+11. esp_hosted, and the protobuf-c copy it bundles
+================================================================================
+Version:   2.12.9
+Upstream:  https://components.espressif.com/components/espressif/esp_hosted
+           (upstream project: https://github.com/espressif/esp-hosted)
+SPDX:      Apache-2.0
+
+Copyright: SPDX-FileCopyrightText: 2025-2026 Espressif Systems (Shanghai)
+           CO LTD
+           (individual files in the package range from 2015 to 2026; this
+           is the line on esp_hosted's own host-side API source,
+           host/api/src/esp_hosted_api.c)
+
+esp_hosted carries its own bundled copy of protobuf-c
+(common/protobuf-c/, used for its RPC framing to the ESP32-C5). One object
+file from that bundled copy (protobuf-c.c.obj) is present in the linked
+kodeos.elf - note that the linker's dead-code elimination reduced its
+actual contributed code size to effectively nothing (it was pulled in to
+resolve a single compiler-helper symbol reference), but the object is
+linked, so its licence is listed here rather than under "not in this
+firmware".
+
+Copyright (c) 2008-2022, Dave Benson and the protobuf-c authors.
+All rights reserved.
+SPDX: BSD-2-Clause
+Upstream (protobuf-c itself): https://github.com/protobuf-c/protobuf-c
+
+Licence text: esp_hosted itself - see "Apache License 2.0" below.
+              protobuf-c - see "protobuf-c licence" below.
+
+
+================================================================================
+12. esp_wifi_remote
+================================================================================
+Version:   1.6.4
+Upstream:  https://components.espressif.com/components/espressif/esp_wifi_remote
+SPDX:      Apache-2.0
+
+Copyright: SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai)
+           CO LTD
+           (from esp_wifi_remote.c, the file that is actually linked - it
+           is compiled as part of ESP-IDF's own esp_wifi archive rather
+           than under its own component name, which is why it does not
+           show up as a separate libespressif__esp_wifi_remote.a in the
+           link map)
+
+Licence text: see "Apache License 2.0" in the licence-text section below.
+
+
+================================================================================
+13. esp_lcd_co5300
+================================================================================
+Version:   2.2.0
+Upstream:  https://components.espressif.com/components/espressif/esp_lcd_co5300
+SPDX:      Apache-2.0
+
+Copyright: SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
+
+Licence text: see "Apache License 2.0" in the licence-text section below.
+
+
+================================================================================
+14. esp_codec_dev
+================================================================================
+Version:   1.5.10
+Upstream:  https://components.espressif.com/components/espressif/esp_codec_dev
+SPDX:      Apache-2.0
+
+Copyright: SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+
+Licence text: see "Apache License 2.0" in the licence-text section below.
+
+
+================================================================================
+15. espressif/mqtt (esp-mqtt)
+================================================================================
+Version:   1.1.0
+Upstream:  https://components.espressif.com/components/espressif/mqtt
+           (upstream project: https://github.com/espressif/esp-mqtt)
+SPDX:      Apache-2.0
+
+Copyright 2016 Tuan PM (original author, per the component's LICENSE file)
+Copyright: SPDX-FileCopyrightText: 2025-2026 Espressif Systems (Shanghai)
+           CO LTD (current maintainer, per the source headers)
+
+Licence text: see "Apache License 2.0" in the licence-text section below.
+
+
+================================================================================
+16. QP/C - special case
+================================================================================
+Version:   8.1.4
+Upstream:  https://www.state-machine.com/qpc (https://github.com/QuantumLeaps/qpc)
+Location:  sdk/components/qpc/qpc/
+SPDX:      GPL-3.0-or-later OR LicenseRef-QL-commercial (dual-licensed)
+
+QP/C Real-Time Event Framework (RTEF)
+Copyright (C) 2005-2025 Quantum Leaps, LLC. All rights reserved.
+
+kodeOS uses QP/C under the GPL-3.0 option of its dual licence. The
+project's position is that kodeOS will be released as open source at
+1.0 and is not commercialised before then. The full GNU General Public
+License, version 3, text is not reproduced in this file; it is available
+at sdk/components/qpc/LICENSE in this repository and at
+https://www.gnu.org/licenses/gpl-3.0.txt.
+
+
+================================================================================
+17. RFAL / ST25R3916 driver - special case
+================================================================================
+Version:   RFAL v4.0.2 (RFAL_VERSION in rfal/Inc/rfal_rf.h); chip driver
+           files dated 2021
+Upstream:  STMicroelectronics (https://www.st.com), the RFAL middleware
+           for the ST25R3916/ST25R3916B NFC reader
+Location:  sdk/components/kdrv/rfal/
+SPDX:      LicenseRef-SLA0051 (not an open source licence)
+
+Copyright (c) 2021 STMicroelectronics. All rights reserved.
+
+Every RFAL and ST25R3916 source file in this tree carries the same
+header: "This software is licensed under terms that can be found in the
+LICENSE file in the root directory of this software component." That file
+is sdk/components/kdrv/rfal/LICENSE.txt: SLA0051 of STMicroelectronics, as
+ST ships it with RFAL 4.0.2.
+
+
+================================================================================
+18. Proxmark3 Mifare Classic key dictionary - special case
+================================================================================
+Location:  sdk/components/kdrv/nfc/src/knfc_mfc_dict.c
+Upstream:  https://github.com/RfidResearchGroup/proxmark3
+SPDX:      GPL-3.0 (data, not code)
+
+This file is a list of hexadecimal Mifare Classic authentication keys,
+not Proxmark3 source code - none of Proxmark3's code is in this tree.
+The keys themselves were collected by the RFID community and published
+by the Proxmark3 project for exactly this kind of reuse (the file's own
+comment: the project's header says "contribute to this list, sharing is
+caring"). Attribution: this key list is sourced from the Proxmark3
+project (github.com/RfidResearchGroup/proxmark3), licensed GPL-3.0.
+
+copyright: see upstream (no individual copyright line is carried in the
+Proxmark3 dictionary itself; it is a community-maintained, continuously
+merged list)
+
+
+================================================================================
+19. Outfit
+================================================================================
+Version:   the Medium 500, SemiBold 600 and Bold 700 static cuts, as bitmap faces
+Upstream:  https://github.com/Outfitio/Outfit-Fonts
+SPDX:      OFL-1.1
+
+Copyright 2021 The Outfit Project Authors (https://github.com/Outfitio/Outfit-Fonts)
+
+Licence text: see "SIL Open Font License 1.1" in the licence-text section below.
+
+
+================================================================================
+COMPONENTS CONFIRMED NOT COMPILED INTO THIS IMAGE
+================================================================================
+The following are present in the source tree, in dependencies.lock,
+and/or in managed_components/, but were confirmed - either by Kconfig or
+by inspecting the final link map (build/kodeos.map) for linked object
+files from their archives - to contribute NO object code to this
+release's kodeos.elf. They are listed here for completeness, not because
+they need a notice in this firmware.
+
+  - cmake_utilities 0.5.3, eppp_link 1.1.6, wifi_remote_over_eppp 0.3.3,
+    esp_serial_slave_link 1.1.2 (all Espressif; Apache-2.0, except
+    wifi_remote_over_eppp which is Unlicense OR CC0-1.0). These are
+    transitive dependencies of esp_wifi_remote's alternative "EPPP"
+    transport backend. kodeOS talks to the ESP32-C5 over esp_hosted's
+    SDIO transport instead, so this backend is never selected. Zero
+    object files from any of their archives appear in build/kodeos.map.
+
+  - protobuf-c, as vendored directly under ESP-IDF's own protobuf-c
+    component (distinct from the copy esp_hosted bundles - see #11
+    above, which IS linked). Zero objects from ESP-IDF's own
+    libprotobuf-c.a are linked; esp_hosted uses its own bundled copy.
+
+  - wpa_supplicant (ESP-IDF component). Zero objects linked. WiFi/WPA
+    negotiation happens on the ESP32-C5 radio coprocessor's own
+    firmware, not in this P4 image.
+
+  - esp_hid, protocomm, esp_local_ctrl, esp_https_server, spiffs (all
+    ESP-IDF components). All appear in the build's component graph
+    (each gets compiled to its own static library because something in
+    the Kconfig/dependency chain configures it), but zero object files
+    from any of them are pulled into the final linked kodeos.elf.
+
+  - Xtensa-only ROM notices from ESP-IDF's own COPYRIGHT.rst (Tensilica
+    libhal, TinyBasic Plus, TJpgDec mask-ROM code, the Zephyr-derived
+    USB device stack). These apply only to Xtensa-based ESP chips; the
+    Kode Dot's ESP32-P4 is dual RISC-V, so none of it is in this image.
+
+
+================================================================================
+LICENCE TEXTS
+================================================================================
+Each distinct text below is reproduced once and covers every component
+listed above that cites it.
+
+
+--------------------------------------------------------------------------
+Apache License 2.0
+--------------------------------------------------------------------------
+Covers: ESP-IDF (#1), NimBLE (#3), Mbed TLS (#4), esp_hosted (#11),
+esp_wifi_remote (#12), esp_lcd_co5300 (#13), esp_codec_dev (#14),
+espressif/mqtt (#15).
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+
+--------------------------------------------------------------------------
+MIT License
+--------------------------------------------------------------------------
+Covers: FreeRTOS-Kernel (#2), LVGL (#10).
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+--------------------------------------------------------------------------
+lwIP licence
+--------------------------------------------------------------------------
+Covers: lwIP (#5).
+
+Copyright (c) 2001, 2002 Swedish Institute of Computer Science.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+OF SUCH DAMAGE.
+
+
+--------------------------------------------------------------------------
+FatFs licence
+--------------------------------------------------------------------------
+Covers: FatFs (#7).
+
+Copyright (C) 2025, ChaN, all right reserved.
+
+FatFs module is an open source software. Redistribution and use of FatFs in
+source and binary forms, with or without modification, are permitted provided
+that the following condition is met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this condition and the following disclaimer.
+
+This software is provided by the copyright holder and contributors "AS IS"
+and any warranties related to this software are DISCLAIMED.
+The copyright owner or contributors be NOT LIABLE for any damages caused
+by use of this software.
+
+
+--------------------------------------------------------------------------
+argtable3 licence bundle
+--------------------------------------------------------------------------
+Covers: argtable3, and the getopt / Tcl / C Hash Table / Better String
+text it bundles in its own upstream LICENSE file (#8).
+
+Copyright (C) 1998-2001,2003-2011,2013 Stewart Heitmann
+<sheitmann@users.sourceforge.net>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of STEWART HEITMANN nor the  names of its contributors
+      may be used to endorse or promote products derived from this software
+      without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL STEWART HEITMANN BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+FreeBSD getopt library
+=======================
+
+Copyright (c) 2000 The NetBSD Foundation, Inc.
+All rights reserved.
+
+This code is derived from software contributed to The NetBSD Foundation
+by Dieter Baron and Thomas Klausner.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+Tcl library
+============
+
+This software is copyrighted by the Regents of the University of
+California, Sun Microsystems, Inc., Scriptics Corporation, ActiveState
+Corporation and other parties.  The following terms apply to all files
+associated with the software unless explicitly disclaimed in
+individual files.
+
+The authors hereby grant permission to use, copy, modify, distribute,
+and license this software and its documentation for any purpose, provided
+that existing copyright notices are retained in all copies and that this
+notice is included verbatim in any distributions. No written agreement,
+license, or royalty fee is required for any of the authorized uses.
+Modifications to this software may be copyrighted by their authors
+and need not follow the licensing terms described here, provided that
+the new terms are clearly indicated on the first page of each file where
+they apply.
+
+IN NO EVENT SHALL THE AUTHORS OR DISTRIBUTORS BE LIABLE TO ANY PARTY
+FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES
+ARISING OUT OF THE USE OF THIS SOFTWARE, ITS DOCUMENTATION, OR ANY
+DERIVATIVES THEREOF, EVEN IF THE AUTHORS HAVE BEEN ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+THE AUTHORS AND DISTRIBUTORS SPECIFICALLY DISCLAIM ANY WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.  THIS SOFTWARE
+IS PROVIDED ON AN "AS IS" BASIS, AND THE AUTHORS AND DISTRIBUTORS HAVE
+NO OBLIGATION TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR
+MODIFICATIONS.
+
+GOVERNMENT USE: If you are acquiring this software on behalf of the
+U.S. government, the Government shall have only "Restricted Rights"
+in the software and related documentation as defined in the Federal
+Acquisition Regulations (FARs) in Clause 52.227.19 (c) (2).  If you
+are acquiring the software on behalf of the Department of Defense, the
+software shall be classified as "Commercial Computer Software" and the
+Government shall have only "Restricted Rights" as defined in Clause
+252.227-7014 (b) (3) of DFARs.  Notwithstanding the foregoing, the
+authors grant the U.S. Government and others acting in its behalf
+permission to use and distribute the software in accordance with the
+terms specified in this license.
+
+C Hash Table library
+======================
+
+Copyright (c) 2002, Christopher Clark
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the original author; nor the names of any contributors
+  may be used to endorse or promote products derived from this software
+  without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The Better String library
+===========================
+
+Copyright (c) 2014, Paul Hsieh
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of bstrlib nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+--------------------------------------------------------------------------
+linenoise licence
+--------------------------------------------------------------------------
+Covers: linenoise (#9).
+
+Copyright (c) 2010-2016, Salvatore Sanfilippo <antirez at gmail dot com>
+Copyright (c) 2010-2013, Pieter Noordhuis <pcnoordhuis at gmail dot com>
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+ *  Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+ *  Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+--------------------------------------------------------------------------
+protobuf-c licence
+--------------------------------------------------------------------------
+Covers: protobuf-c, as bundled inside esp_hosted (#11).
+
+Copyright (c) 2008-2022, Dave Benson and the protobuf-c authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+--------------------------------------------------------------------------
+SIL Open Font License 1.1
+--------------------------------------------------------------------------
+Covers: Outfit (#19).
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+
+
+================================================================================
+END OF THIRD-PARTY NOTICES
+================================================================================

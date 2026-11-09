@@ -1,0 +1,27 @@
+menu "kodeOS interface"
+
+    # Set when kgui is in the build; the launcher needs AO_AppMgr and AO_Autotest. (kgui)
+    config KODEOS_GUI
+        bool
+        default y
+        select KODEOS_APPMGR
+        select KODEOS_AUTOTEST
+
+    config KGUI_ASSETS_URL
+        string "Where kodeOS fetches Kody's official pack"
+        default "https://assets.kode.diy/kody/v1/kode.json"
+        help
+            The manifest of the pack About's Kody row updates from. The files it
+            names are fetched from the same folder. At most 127 characters, and a
+            file's URL - this folder plus its name - must fit them too.
+
+    config KGUI_ASSETS_WAIT_MS
+        int "How long the face waits for the pack at boot, ms"
+        range 0 5000
+        default 1000
+        help
+            Kody's wake-up at boot waits this long for the pack to be read; past
+            it he wakes in the built-in scene and moves to the pack's when it is
+            ready. The time and the date paint at once either way.
+
+endmenu

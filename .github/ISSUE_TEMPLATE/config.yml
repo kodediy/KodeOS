@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: SDK bug or API proposal
+    url: https://github.com/kodediy/kode-sdk/issues/new/choose
+    about: Drivers, Active Objects, the kode facade, the C5 firmware and the app examples live in kode-sdk. A bug that reproduces from an SDK app belongs there.
+  - name: Launcher design
+    url: https://github.com/kodediy/KodeOS/issues/new
+    about: "Layout, colours and screens: the screens live in kgui here, the kit they are drawn with in kode-sdk."
+  - name: kodeOS documentation
+    url: https://docs.kode.diy/internals/overview
+    about: The boot model, the console command set, the bench workflow and every Active Object.

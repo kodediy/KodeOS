@@ -1,0 +1,98 @@
+# kodeOS's own settings; the board's are in sdk/components/kbsp/sdkconfig.board.
+# Each comment ends with the component that declares the option.
+
+# The shared partition table, by a path ESP-IDF resolves against this project.
+# (ESP-IDF)
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="sdk/components/kbsp/partitions.csv"
+
+# An app that never confirms itself falls back to kodeOS. (ESP-IDF)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# This image is kodeOS, so every boot comes back to it. (kdefs)
+CONFIG_KODEOS_BOOT_ROLE_OS=y
+
+# The app a board leaves the factory with, by project name (kodediy/
+# kode-app-onboarding): the factory reset keeps it and runs it at the first
+# power-on after ship mode. (kdefs)
+CONFIG_KODEOS_WELCOME_APP="onboarding"
+
+# Shorter erase bursts so the GUI keeps running during a flash write. (ESP-IDF)
+CONFIG_SPI_FLASH_ERASE_YIELD_DURATION_MS=10
+CONFIG_SPI_FLASH_ERASE_YIELD_TICKS=5
+
+# The startup's own lines (the PSRAM's registers, the heap's regions) stay off
+# the console: kodeOS says what came up. ESP-IDF's tags still reach debug
+# with `config key="log" value=d`. (ESP-IDF)
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+
+# Lets `tasks` report every task's priority and unused stack. (ESP-IDF)
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
+# Optimise for size: 11 % less flash than -Og. (ESP-IDF)
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# LVGL's PPA draw unit stays off: it draws partial-opacity fills opaque. (LVGL)
+
+# ThorVG and Lottie, for Kody. (LVGL)
+CONFIG_LV_USE_THORVG=y
+CONFIG_LV_USE_LOTTIE=y
+
+# A screen rendered into a buffer: the pictures the settings curtain slides. (LVGL)
+CONFIG_LV_USE_SNAPSHOT=y
+
+# A panic leaves a core dump in flash for `info` and coredump-info. (ESP-IDF)
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+# Core dump logs off: they print outside the console and break `info`.
+# (ESP-IDF)
+CONFIG_ESP_COREDUMP_LOGS=n
+# No checksum of a dump on every boot: 56 ms, measured, to print one line nobody
+# reads. `info` and coredump-info read the dump when asked. (ESP-IDF)
+CONFIG_ESP_COREDUMP_CHECK_BOOT=n
+
+# A core starved of its idle task for 5 s panics instead of printing a
+# warning, so a hang leaves a core dump and the board boots again. (ESP-IDF)
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# The console on the charging base too. (khal)
+CONFIG_KHAL_CONSOLE_DOCK=y
+# Its CDC port, with FIFOs that hold a whole 4 KB window. (esp_tinyusb)
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_RX_BUFSIZE=4096
+CONFIG_TINYUSB_CDC_TX_BUFSIZE=4096
+
+# The C5 stays in reset until WiFi or Bluetooth is wanted. (kaos)
+CONFIG_KODEOS_C5_HOLD=y
+
+# The NimBLE host, which the board file leaves off. (ESP-IDF)
+CONFIG_BT_ENABLED=y
+
+# The three states: awake, asleep (light sleep, the time on the glass) and
+# off (deep sleep). (kdefs)
+CONFIG_KODE_LOWPOWER=y
+# Rest on the face decides when the board rests; AO_LowPower's own idle
+# count and its `sleep_after` setting are left to apps. (kdefs)
+CONFIG_KODE_LOWPOWER_IDLE=n
+# The cron entries: console lines and events at a minute of the epoch clock,
+# and the `mqtt` safety net. It takes the priority level an app would use as
+# KODE_PRIO_USER_HIGH. (kaos)
+CONFIG_KODE_SCHEDULER=y
+# Light sleep keeps the CPU powered: the interface and the radio's link are
+# alive across it. (ESP-IDF)
+CONFIG_PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP=n
+# The pins keep their levels through light sleep, so the expander's interrupt
+# line and the C5's wake line are not reset by it. (ESP-IDF)
+CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND=n
+# A connected console does not stop the P4 from light-sleeping. (ESP-IDF)
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y
+
+# The E5 final test: AO_TestDot, `test component=all` and the `test_dot_*`
+# verbs, dormant until the station speaks on the cable. (kaos)
+CONFIG_KODE_TEST_DOT=y
+# The station's camera on J3, an OV5640 read as RGB565 at 800x600, 10 fps:
+# the one format kdrv_ov5640 takes. (esp_cam_sensor)
+CONFIG_CAMERA_OV5640=y
+CONFIG_CAMERA_OV5640_DVP_RGB565_BE_800X600_10FPS=y
+CONFIG_CAMERA_OV5640_DVP_DEFAULT_FMT_RGB565_BE_800X600_10FPS=y
+
+# kshell, the apocrifa, runs LVGL at 30 fps (ui-dot 04): one refresh every 33 ms.
+CONFIG_LV_DEF_REFR_PERIOD=33
