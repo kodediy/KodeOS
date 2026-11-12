@@ -340,6 +340,14 @@ class ParserTests(unittest.TestCase):
         args = kble.parser().parse_args(["file-get", "notes.txt"])
         self.assertIsNone(args.board_name)
 
+    def test_a_command_s_own_timeout_leaves_the_scan_s_alone(self):
+        args = kble.parser().parse_args(["--timeout", "40", "cmd", "info"])
+        self.assertEqual(40.0, args.timeout)
+        self.assertEqual(15.0, args.cmd_timeout)
+        args = kble.parser().parse_args(["cmd", "--cmd-timeout", "3", "info"])
+        self.assertEqual(25.0, args.timeout)
+        self.assertEqual(3.0, args.cmd_timeout)
+
 
 class PairTests(unittest.TestCase):
     """The wait for a pairing that a person answers on the Mac."""

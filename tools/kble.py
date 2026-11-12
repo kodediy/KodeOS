@@ -764,11 +764,11 @@ def do_term(link, args):
 def do_cmd(link, args):
     line = " ".join(args.line)
     link.send(line)
-    got, term = link.wait_for(is_terminator, args.timeout)
+    got, term = link.wait_for(is_terminator, args.cmd_timeout)
     for l in got:
         show(l)
     if term is None:
-        die(f"no terminator for '{line}' in {args.timeout}s")
+        die(f"no terminator for '{line}' in {args.cmd_timeout}s")
     return 0 if term == ">ok" else 1
 
 
@@ -993,8 +993,9 @@ def do_file_get(link, args):
 
 
 def parser():
-    """The command line. The board's Bluetooth name is `board_name`: `name`
-    belongs to the subcommands that take a file name (screenshot, file-get)."""
+    """The command line. The board's Bluetooth name is `board_name` and the
+    scan's time is `timeout`: `name` belongs to the subcommands that take a
+    file name (screenshot, file-get), and `cmd` waits `cmd_timeout`."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--hold", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--serial", metavar="KODE...",
@@ -1016,7 +1017,9 @@ def parser():
 
     p = sub.add_parser("cmd", help="one command, then its terminator")
     p.add_argument("line", nargs="+")
-    p.add_argument("--cmd-timeout", dest="timeout", type=float, default=15.0)
+    p.add_argument("--cmd-timeout", dest="cmd_timeout", type=float,
+                   default=15.0, metavar="S",
+                   help="how long to wait for the command's terminator")
     p.set_defaults(fn=do_cmd)
 
     p = sub.add_parser("install", help="stream a .bin and install it")
