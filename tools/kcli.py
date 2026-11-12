@@ -44,6 +44,7 @@ import sys
 import time
 import zlib
 
+import kappdata
 from kpayload import (PayloadError, assets_plan, assets_refusal, decode_records,
                       fields, head_fields, project_name, quote, write_capture)
 
@@ -694,9 +695,8 @@ def _appdata_mkdir(board, path):
 
 
 def do_appdata_put(board, args):
-    import kappdata
     try:
-        body, icon = kappdata.load(args.dir)   # the bytes every carrier stores
+        body, icon = kappdata.load(args.dir, args.icon_size)   # the bytes every carrier stores
     except ValueError as exc:
         die(f"appdata put: {exc}")
     base = kappdata.folder(args.name)
@@ -823,6 +823,11 @@ def main():
     q = ad.add_parser("put", help="provision DIR (app.json and an image) for NAME")
     q.add_argument("name")
     q.add_argument("dir")
+    q.add_argument("--icon-size", type=int, choices=kappdata.ICON_SIDES,
+                   default=kappdata.ICON_SIDE, metavar="|".join(str(n) for n in kappdata.ICON_SIDES),
+                   help="the side, in pixels, of an icon made from a picture "
+                        f"(default {kappdata.ICON_SIDE}); {kappdata.ICON_SIDE_HALF} "
+                        "is the form every kodeOS reads")
     q.set_defaults(fn=do_appdata_put)
 
     args = ap.parse_args()

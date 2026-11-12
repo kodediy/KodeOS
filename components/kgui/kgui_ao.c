@@ -701,6 +701,15 @@ _Static_assert(sizeof(SheetOpenEvt) <= sizeof(ButtonEvt),
  * matching. */
 #define GUI_ROWS_MAX    (2U * KODE_APP_LIST_MAX)
 
+/* What GuiFace.icon_parts reads when every piece of an icon has landed: one
+ * bit for each of the KODE_APP_ICON_PIECES, and the mask has to fit its byte. */
+#define GUI_ICON_PARTS_ALL  ((1U << KODE_APP_ICON_PIECES) - 1U)
+_Static_assert(KODE_APP_ICON_PIECES <= 8U, "icon_parts is one byte: a bit for each piece");
+/* kgui_list.h cannot see the SDK's icon: the scale of every disc is a share
+ * of the block's side. */
+_Static_assert((uint32_t)KGUI_ROW_ICON_SRC == KAPP_ICON_W, "KGUI_ROW_ICON_SRC is the icon's own side");
+_Static_assert(KAPP_ICON_W == KAPP_ICON_H, "an icon is square: one number scales both ways");
+
 /* What a row's look, row_lit[], says: the focus is on it (its name is Light
  * Grey), it is any other, or gui_row_paint() has not
  * dressed it yet. */
@@ -1707,7 +1716,7 @@ typedef enum {
  * label and repaint its capsule; the project name behind the row is the
  * binary's and nothing else's (gui_row_name()).
  *
- * The icon is not here: 12 KB does not belong in an entry, and a PSRAM
+ * The icon is not here: 48 KB does not belong in an entry, and a PSRAM
  * slot per entry holds it instead (me->icon_slot). What is here is whether
  * that slot is worth drawing.
  */
@@ -1722,7 +1731,7 @@ typedef struct {
     uint8_t    icon_status;                     /**< AppDataIconStatus, for the log.*/
     uint8_t    json_status;                     /**< kapp_json_status_t, ditto.     */
     bool       asked;                           /**< The folder question went out.  */
-    uint8_t    icon_parts;                      /**< Bitmask of the thirds landed.  */
+    uint8_t    icon_parts;                      /**< Bitmask of the pieces landed.  */
     bool       settled;                         /**< Its folder has answered, busy not counted; kept by a rescan. */
     bool       known;                           /**< Its category is known: all the root asks of a row (gui_meta_release()). */
     bool       shown;                           /**< The list shows this row (gui_meta_release()); kept by a rescan. */
@@ -1898,20 +1907,20 @@ typedef struct {
     uint32_t  list_out_ms;   /**< khal_time_ms() when the last question
                                *   went out. */
 
-    /* THE ICON SLOTS: one 12 KB piece of PSRAM per ENTRY, and a header
+    /* THE ICON SLOTS: one 48 KB piece of PSRAM per ENTRY, and a header
      * pointing at it. Per entry rather than per row, because a row is
      * rebuilt on every repaint while the thing an icon belongs to is not:
      * entries[i] takes slot i, installed[i] takes slot KODE_APP_LIST_MAX+i,
      * and gui_entry_slot() is the one place that arithmetic lives.
      *
      * Taken once in ui_build() for the whole ceiling and never freed. 128
-     * slots is 1.5 MB of the board's 31 MB (the row copies below add 1 MB),
+     * slots is 6 MB of the board's 31 MB (the row copies below add 1 MB),
      * and khal_alloc_psram() never falls back - an allocator whose placement
      * is a decision rather than a race is one you do not churn (khal_system.h
      * says why).
      *
-     * The three chunks of an icon land here by seq as they arrive, so a
-     * slot is a half-built picture for as long as the conversation runs.
+     * The pieces of an icon land here by seq as they arrive, so a slot is a
+     * half-built picture for as long as the conversation runs.
      * face.icon_ok is what says it may be drawn, and only APPDATA_END_SIG
      * sets it. */
     uint8_t        *icon_slot[GUI_ROWS_MAX];
@@ -1919,7 +1928,7 @@ typedef struct {
 
     /* Whose folder is being asked about right now, or empty. One question
      * in flight at a time, exactly as the manifest chain above works, and
-     * for a stronger reason: an icon is three jumbo blocks out of four, so
+     * for a stronger reason: an icon is every block of the icon pool, so
      * two conversations at once would be the pool. It is also what
      * APPDATA_END_SIG reads - the end marker is bare, and this is what says
      * whose end it is. */
@@ -5425,10 +5434,11 @@ static bool ui_build(Gui * const me)
                     "will prompt on the console only");
     }
 
-    /* THE ICON SLOTS, once and for the whole ceiling: 128 entries at 12 KB
-     * is 1.5 MB of PSRAM, taken here and never given back. The header
-     * beside each one is written here too - a .k64 is 64x64 RGB565A8 by
-     * definition (https://docs.kode.diy/sdk/kdrv/apps), so nothing about these
+    /* THE ICON SLOTS, once and for the whole ceiling: 128 entries at 48 KB
+     * is 6 MB of PSRAM, taken here and never given back. The header
+     * beside each one is written here too - the block is 128x128 RGB565A8 by
+     * definition, whichever size the .k64 had when AO_Storage read it
+     * (https://docs.kode.diy/sdk/kdrv/apps), so nothing about these
      * fields ever depends on the file that lands in the block.
      *
      * A failed allocation is not fatal and is not even unusual enough to
@@ -10391,8 +10401,8 @@ static void gui_desc_answer(Gui * const me, GuiEntry * const e,
 }
 
 /**
- * @brief Write the header of one icon block: a .k64 is 64x64 RGB565A8 by
- *        definition, whatever file lands in the block.
+ * @brief Write the header of one icon block: the block is 128x128 RGB565A8
+ *        by definition, whichever size of .k64 landed in it.
  *
  * @param dsc   The header.
  * @param block The block's KAPP_ICON_BYTES.
@@ -10413,7 +10423,7 @@ static void gui_icon_dsc_set(lv_image_dsc_t *dsc, const uint8_t *block)
  *
  * entries[] takes the low half, installed[] the high one, and this is the
  * only place that says so. Keyed by the ENTRY and not by the row, because
- * rows are torn down and rebuilt on every repaint while a 12 KB block that
+ * rows are torn down and rebuilt on every repaint while a 48 KB block that
  * moved with them would have to be refilled each time.
  *
  * @param kind Which model.
@@ -10574,7 +10584,7 @@ static uint8_t gui_slot_by_project(Gui const * const me, const char *project)
  * The second chain, run after the first: gui_ask_next_desc() works through
  * the binaries until none is left, and its last call comes here. One
  * question in flight, for a harder reason than the manifest chain's - an
- * icon is three of the jumbo pool's four blocks, so a second conversation
+ * icon is every block of the icon pool, so a second conversation
  * would BE the pool. AO_Storage enforces the same rule from its side; this
  * is what keeps the two from ever having to disagree.
  *
@@ -11784,10 +11794,13 @@ static void gui_meta_retry(Gui * const me)
  * Layout: the header, the entries, the installed ones, then one icon per row whose
  * face says it has one, in that order. The card's file is the same bytes. Records
  * first, the header last, so a reset in the middle leaves a block that fails its
- * check and is simply not used.
+ * check and is simply not used. The block is KHAL_KEEP_BYTES long and an icon is
+ * 48 KB of it: the rows that come first keep theirs, and a row whose icon does not
+ * fit is kept without it and drawn with its letters until the boot's own question
+ * brings it back.
  */
 #define GUI_KEEP_MAGIC     0x4B47554CUL      /* "KGUL" */
-#define GUI_KEEP_VERSION   2UL
+#define GUI_KEEP_VERSION   3UL   /* The layout's: its icons are KAPP_ICON_BYTES each, and a copy laid out with other icons is not read. */
 #define GUI_KEEP_PATH      "/sdcard/.kode/launcher.keep"
 #define GUI_KEEP_DIR       "/sdcard/.kode"
 #define GUI_KEEP_MAX       KHAL_KEEP_BYTES   /* The list's room: all of the block. */
@@ -11879,7 +11892,7 @@ static void gui_keep_face_take(GuiFace * const f)
     f->known      = true;
     f->shown      = true;
     f->retry      = false;
-    f->icon_parts = f->icon_ok ? (uint8_t)0x07U : (uint8_t)0U;
+    f->icon_parts = f->icon_ok ? (uint8_t)GUI_ICON_PARTS_ALL : (uint8_t)0U;
 }
 
 /**
@@ -12162,22 +12175,33 @@ static bool gui_keep_save(Gui * const me)
     uint32_t const    old_crc  = (GUI_KEEP_MAGIC == h->magic) ? h->crc : 0U;
     uint32_t const    file_crc = (GUI_KEEP_MAGIC == h->magic) ? h->file_crc : 0U;
     uint32_t          icons = 0U;
+    uint32_t const    records = sizeof(GuiKeepHdr) + (me->entry_count * sizeof(GuiEntry))
+                                + (me->installed_count * sizeof(InstalledEntry));
+    uint32_t          room = 0U;   /* icons the block has room for after the records */
 
+    if ( GUI_KEEP_MAX >= records )
+    {
+        room = (GUI_KEEP_MAX - records) / (uint32_t)KAPP_ICON_BYTES;
+    }
     for ( uint8_t i = 0U; i < me->entry_count; ++i )
     {
-        icons += me->entries[i].face.icon_ok ? 1U : 0U;
+        if ( me->entries[i].face.icon_ok && (icons < room) )
+        {
+            ++icons;
+        }
     }
     for ( uint8_t i = 0U; i < me->installed_count; ++i )
     {
-        icons += me->installed[i].face.icon_ok ? 1U : 0U;
+        if ( me->installed[i].face.icon_ok && (icons < room) )
+        {
+            ++icons;
+        }
     }
-    uint32_t const total = sizeof(GuiKeepHdr) + (me->entry_count * sizeof(GuiEntry))
-                           + (me->installed_count * sizeof(InstalledEntry))
-                           + (icons * (uint32_t)KAPP_ICON_BYTES);
+    uint32_t const total = records + (icons * (uint32_t)KAPP_ICON_BYTES);
 
     if ( GUI_KEEP_MAX < total )
     {
-        return false;
+        return false;   /* the records alone do not fit */
     }
     h->magic = 0U;
     khal_keep_sync(0U, sizeof(GuiKeepHdr));
@@ -12188,6 +12212,8 @@ static bool gui_keep_save(Gui * const me)
 
     (void)memcpy(e, me->entries, me->entry_count * sizeof(GuiEntry));
     (void)memcpy(in, me->installed, me->installed_count * sizeof(InstalledEntry));
+    uint32_t kept = 0U;   /* icons laid so far: the same count, in the same order, as above */
+
     for ( uint8_t i = 0U; i < me->entry_count; ++i )
     {
         uint8_t const slot = gui_entry_slot(GUI_ROW_FILE, i);
@@ -12196,22 +12222,27 @@ static bool gui_keep_save(Gui * const me)
         e[i].asked = true;
         e[i].retry = false;
         e[i].tries = 0U;
+        /* A row's icon that has no room is left out, and the row says so. */
+        e[i].face.icon_ok = me->entries[i].face.icon_ok && (kept < icons);
         gui_keep_face_take(&e[i].face);
-        if ( me->entries[i].face.icon_ok )
+        if ( e[i].face.icon_ok )
         {
             (void)memcpy(to, me->icon_slot[slot], KAPP_ICON_BYTES);
             to = &to[KAPP_ICON_BYTES];
+            ++kept;
         }
     }
     for ( uint8_t i = 0U; i < me->installed_count; ++i )
     {
         uint8_t const slot = gui_entry_slot(GUI_ROW_INSTALLED, i);
 
+        in[i].face.icon_ok = me->installed[i].face.icon_ok && (kept < icons);
         gui_keep_face_take(&in[i].face);
-        if ( me->installed[i].face.icon_ok )
+        if ( in[i].face.icon_ok )
         {
             (void)memcpy(to, me->icon_slot[slot], KAPP_ICON_BYTES);
             to = &to[KAPP_ICON_BYTES];
+            ++kept;
         }
     }
     uint32_t const crc = khal_crc32(KHAL_CRC32_INIT, (const uint8_t *)e,
@@ -15022,7 +15053,7 @@ static void gui_write_face_settle(Gui * const me)
     else
     {
         face->icon_ok = ((uint8_t)APPDATA_ICON_OK == face->icon_status)
-                        && (0x07U == face->icon_parts)
+                        && (GUI_ICON_PARTS_ALL == face->icon_parts)
                         && (NULL != me->write_icon);
         face->settled = true;
         KLOG_D(TAG, "write face %s: \"%s\" json=%s icon=%s", me->wface.project,
@@ -35454,27 +35485,29 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             break;
         }
         case APPDATA_ICON_SIG: {
-            /* One third of the picture, straight into the entry's PSRAM
+            /* One piece of the picture, straight into the entry's PSRAM
              * slot at its own offset. Nothing is drawn from it yet: the
              * slot is a half-built image until the end marker says the
-             * three thirds all landed, and face.icon_ok is what a repaint
+             * pieces all landed, and face.icon_ok is what a repaint
              * asks. */
             AppDataIconEvt const * const ic = Q_EVT_CAST(AppDataIconEvt);
             uint8_t const slot = gui_slot_by_project(me, ic->project);
             GuiFace * const face = gui_face_by_project(me, ic->project);
             if ( ((uint8_t)GUI_ROWS_MAX > slot) && (NULL != face)
-                && (NULL != me->icon_slot[slot]) && (3U > ic->seq) )
+                && (NULL != me->icon_slot[slot])
+                && ((uint8_t)KODE_APP_ICON_PIECES > ic->seq) )
             {
                 (void)memcpy(&me->icon_slot[slot][(size_t)ic->seq
-                                                  * KODE_RECV_CHUNK],
-                             ic->data, KODE_RECV_CHUNK);
+                                                  * KODE_APP_ICON_PIECE],
+                             ic->data, KODE_APP_ICON_PIECE);
                 face->icon_parts |= (uint8_t)(1U << ic->seq);
             }
             if ( kgui_wface_is(&me->wface, ic->project)
-                && (NULL != me->write_icon) && (3U > ic->seq) )
+                && (NULL != me->write_icon)
+                && ((uint8_t)KODE_APP_ICON_PIECES > ic->seq) )
             {
-                (void)memcpy(&me->write_icon[(size_t)ic->seq * KODE_RECV_CHUNK],
-                             ic->data, KODE_RECV_CHUNK);
+                (void)memcpy(&me->write_icon[(size_t)ic->seq * KODE_APP_ICON_PIECE],
+                             ic->data, KODE_APP_ICON_PIECE);
                 me->write_face.icon_parts |= (uint8_t)(1U << ic->seq);
             }
             status = Q_HANDLED();
@@ -35509,7 +35542,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             else
             {
                 face->icon_ok = ((uint8_t)APPDATA_ICON_OK == face->icon_status)
-                                && (0x07U == face->icon_parts);
+                                && (GUI_ICON_PARTS_ALL == face->icon_parts);
                 face->settled = true;
                 me->keep_dirty   = true;
                 me->keep_save_ms = khal_time_ms();
