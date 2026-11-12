@@ -49,7 +49,7 @@ const char *kgui_ble_pair_words(bool open, bool wait, bool linked);
 /**
  * @brief Why a join failed, in the hint's words.
  * @param fail kdrv_wifi_fail_t, as WifiStateEvt carries it.
- * @return "Wrong password", "Network not found", or "Could not join".
+ * @return "Wrong password, or signal lost", "Network not found", or "Could not join".
  */
 const char *kgui_wifi_fail_words(uint8_t fail);
 
