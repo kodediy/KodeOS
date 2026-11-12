@@ -327,6 +327,59 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(args.board_name)
 
 
+class PairTests(unittest.TestCase):
+    """The wait for a pairing that a person answers on the Mac."""
+
+    def pair(self, refusals, write_s=0.0):
+        """Run _pair() against a link that refuses the first `refusals`
+        writes, each write taking `write_s`; the clock is this case's own,
+        so a second of waiting takes no time here."""
+        radio = kble.BleakRadio(None, None)
+        clock, tries, said = [0.0], [], []
+
+        class Client:
+            async def write_gatt_char(self, _uuid, _data, response):
+                tries.append(response)
+                clock[0] += write_s
+                if len(tries) <= refusals:
+                    raise RuntimeError("Encryption is insufficient")
+
+        async def no_sleep(seconds):
+            clock[0] += seconds
+
+        radio.client = Client()
+        with mock.patch.object(kble.asyncio, "sleep", no_sleep), \
+                mock.patch.object(kble, "_clock", lambda: clock[0]):
+            ok = asyncio.run(radio._pair(said.append))
+        return ok, len(tries), said, clock[0]
+
+    def test_a_code_typed_twenty_seconds_in_is_waited_for(self):
+        ok, tries, said, _ = self.pair(20)
+        self.assertTrue(ok)
+        self.assertEqual(21, tries)
+        self.assertEqual([], said)
+
+    def test_a_pairing_nobody_answers_ends_and_says_why(self):
+        ok, _, said, took = self.pair(10 ** 6)
+        self.assertFalse(ok)
+        self.assertGreaterEqual(took, kble.PAIR_WAIT_S)
+        self.assertLess(took, kble.PAIR_WAIT_S + 2.0)
+        self.assertTrue(said[-1].startswith("failed to pair:"))
+
+    def test_the_wait_is_time_not_tries_when_a_write_is_slow(self):
+        # A write can sit for seconds while the Mac shows its dialog.
+        ok, tries, _, took = self.pair(10 ** 6, write_s=10.0)
+        self.assertFalse(ok)
+        self.assertLess(took, kble.PAIR_WAIT_S + 11.0)
+        self.assertLess(tries, 6)
+
+    def test_the_wait_outlasts_the_time_the_board_gives_a_pairing(self):
+        self.assertGreater(kble.PAIR_WAIT_S, kble.BOARD_PAIR_S)
+
+    def test_the_client_waits_out_a_scan_and_then_a_pairing(self):
+        self.assertGreaterEqual(kble.attach_wait(25.0), 25.0 + kble.PAIR_WAIT_S)
+
+
 class BridgeCase(unittest.TestCase):
     """A socket path of its own, and the clients to close at the end."""
 
