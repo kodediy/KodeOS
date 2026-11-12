@@ -137,33 +137,34 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # Two ESP-IDF images (6.0.2 for the C5, 6.1 for kodeOS) and both build
-      # trees do not fit the runner's free disk: the first rehearsal died
-      # pulling the second image with 98 MB left. The runner ships SDKs this
-      # job never uses, and they go first.
+      # The runner ships SDKs this job never uses. They go first, to leave
+      # room for the ESP-IDF image and both build trees: a rehearsal once died
+      # pulling an image with 98 MB left.
       - name: Free the runner's disk
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
 
-      # The C5's firmware builds with IDF 6.0.2 for esp32c5, before kodeOS, so
-      # its image and stamp are in storage_image/ when kodeOS's FAT is made.
+      # The C5's firmware builds for esp32c5 before kodeOS, so its image and
+      # stamp are in storage_image/ when kodeOS's FAT is made. It builds with
+      # ESP-IDF v6.1, like kodeOS and like the C5's own repository: a later one
+      # has no Key Manager for the C5's identity (kodediy/kode_slave_c5#4).
       # The action itself marks the workspace a safe git directory.
       - name: Build the C5 image
         uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
         with:
-          esp_idf_version: v6.0.2
+          esp_idf_version: v6.1
           target: esp32c5
           command: |
             tools/build_c5.sh
 
-      # The C5's image is in storage_image/ now; its build tree and its
-      # ESP-IDF image are not needed again in this job.
-      - name: Drop the C5's build and image
+      # The C5's image is in storage_image/ now and its build tree, at the
+      # root, is not needed again in this job. The ESP-IDF image stays:
+      # kodeOS builds with it next.
+      - name: Drop the C5's build
         run: |
-          sudo rm -rf sdk/c5/build_c5
-          docker image rm espressif/idf:v6.0.2 || true
+          sudo rm -rf build_c5
           df -h /
 
       # The welcome app is private and has its own read-only deploy key. Its
