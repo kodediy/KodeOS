@@ -69,7 +69,8 @@ def find_icon(d, obj):
 
 def to_k64(path):
     if path.lower().endswith(".k64"):
-        data = open(path, "rb").read()
+        with open(path, "rb") as f:
+            data = f.read()
         if len(data) != K64_BYTES:
             raise ValueError(f"icon: {os.path.basename(path)} is {len(data)} bytes, "
                              f"a .k64 is {K64_BYTES}")

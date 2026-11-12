@@ -489,7 +489,8 @@ def do_install(board, args):
     """
     if args.no_run and args.dst != "app":
         die("install: --no-run is for --dst app; only an app has a run")
-    data = open(args.binfile, "rb").read()
+    with open(args.binfile, "rb") as f:
+        data = f.read()
     size = len(data)
     crc = zlib.crc32(data)
     cmd = f'install src="terminal" dst={args.dst} size={size} crc32={crc}'
@@ -516,7 +517,8 @@ def do_install(board, args):
 
 
 def do_file_put(board, args):
-    data = open(args.local, "rb").read()
+    with open(args.local, "rb") as f:
+        data = f.read()
     size = len(data)
     crc = zlib.crc32(data)
     cmd = f"file_put path={quote(args.remote)} size={size} crc32={crc}"
