@@ -110,7 +110,21 @@ class Bridge:
 
     def start(self):
         self.thread.start()
-        until(lambda: os.path.exists(self.path), "the bridge never bound")
+        until(self._listening, "the bridge never listened")
+
+    def _listening(self):
+        """Whether the bridge takes a connection. Not whether its path is
+        there: the path appears at bind, a moment before listen, and a client
+        that dials in that moment is refused. A connection that says nothing
+        is closed by the bridge and changes nothing in it."""
+        probe = socket.socket(socket.AF_UNIX)
+        try:
+            probe.connect(self.path)
+        except OSError:
+            return False
+        finally:
+            probe.close()
+        return True
 
     def join(self):
         """The bridge's exit, and that nothing blew up quietly on the way.
@@ -408,6 +422,27 @@ class BridgeCase(unittest.TestCase):
 
 
 class HoldTests(BridgeCase):
+
+    def test_a_bridge_bound_but_not_listening_yet_is_waited_for(self):
+        # The socket's path appears at bind, a moment before listen; a client
+        # that dials in between is refused, and with no_launch that fails the
+        # case. Stretch that moment and the bridge must still be found.
+        real_listen = socket.socket.listen
+        slowed = []
+
+        def slow_listen(sock, *args):
+            slowed.append(sock)
+            time.sleep(0.3)
+            return real_listen(sock, *args)
+
+        with mock.patch.object(socket.socket, "listen", slow_listen):
+            bridge = Bridge(FakeRadio(), self.path)
+            bridge.start()
+        self.assertTrue(slowed, "the bridge never went through listen")
+        a, _ = self.attach()
+        a.close()
+        self.detach()
+        bridge.join()
 
     def test_second_client_attaches_without_a_new_scan(self):
         radio = FakeRadio()
