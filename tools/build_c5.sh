@@ -18,8 +18,14 @@
 # the pinned commit is what keeps that pairing true. Moving the pin is a
 # deliberate, paired change; see https://docs.kode.diy/sdk/kdrv/radio.
 #
+# What the image must be - its size, its name, its configuration and the
+# ESP-IDF it is built with - is the C5 repository's to say, in its own
+# tools/check_image.sh. This script runs that check on the build before the
+# image goes anywhere.
+#
 #   usage: tools/build_c5.sh
-#   exit:  0 on success, 1 if the submodule is missing or the build fails
+#   exit:  0 on success, 1 if the submodule is missing, the build fails or
+#          the C5's check refuses the image
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -58,6 +64,9 @@ if [ ! -f "$image" ]; then
     echo "the build produced no $image" >&2
     exit 1
 fi
+
+# The check works from the C5's own directory, so it gets the build's full path.
+sdk/c5/tools/check_image.sh "$PWD/$build_dir"
 
 mkdir -p storage_image
 cp "$image" storage_image/c5_slave.bin
