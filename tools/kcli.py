@@ -477,8 +477,10 @@ def do_install(board, args):
     and ten or so more when it has to be brought up first, which is why the
     close is a deadline on silence rather than on the whole wait. The `>ok`
     cannot say the C5 is RUNNING the image: esp-hosted builds its link once
-    per boot, so the update ends with it down. Reset the board, then `c5`
-    names what the C5 runs. Cable only: the C5 is the BLE radio.
+    per boot, so the update ends with it down, and the board restarts by
+    itself a few seconds later. The next boot's link reaches the new image,
+    which confirms it; then `c5` names what the C5 runs. Cable only: the C5
+    is the BLE radio.
 
     `pending` parks the bytes undecoded in the mailbox; `install
     src="pending" dst=...` installs them later.
@@ -510,8 +512,8 @@ def do_install(board, args):
         print("installed into the inactive slot; the board is rebooting "
               "into it")
     elif args.dst == "c5":
-        print("installed and activated; the C5 is booting it. Reset the "
-              "board to bring the link back, then `c5` names what it runs")
+        print("installed and activated; the C5 is booting it and the board "
+              "restarts by itself, then `c5` names what it runs")
     else:
         print("parked in the mailbox")
 
