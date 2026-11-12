@@ -32,7 +32,6 @@ import sys
 import tempfile
 import types
 import unittest
-import warnings
 import zlib
 from unittest import mock
 
@@ -232,16 +231,10 @@ class PayloadConversation(unittest.TestCase):
         path = self.local_file(data)
         out = io.StringIO()
         died = None
-        # kcli reads the file to send with a bare open(...).read(), which the
-        # interpreter reports as a leaked handle. The tool exits right after,
-        # so it costs nothing there; here it would bury the results (and the
-        # runner's default filter, set by unittest, would show it every time).
-        with warnings.catch_warnings(), \
-                mock.patch.object(kcli, "time", types.SimpleNamespace(
+        with mock.patch.object(kcli, "time", types.SimpleNamespace(
                 monotonic=clock.monotonic, sleep=clock.sleep)), \
                 mock.patch.object(kcli.serial, "Serial", lambda: fake), \
                 contextlib.redirect_stdout(out):
-            warnings.simplefilter("ignore", ResourceWarning)
             port = kcli.Board(PORT)
             try:
                 if verb == "install":
