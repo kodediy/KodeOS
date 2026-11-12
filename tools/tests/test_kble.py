@@ -304,6 +304,29 @@ class SerialTests(unittest.TestCase):
         self.assertEqual(kble.board_args(None, None), [])
 
 
+class ParserTests(unittest.TestCase):
+    """The board's name and a subcommand's file name are two things."""
+
+    def test_the_board_name_survives_a_subcommand_with_a_name_of_its_own(self):
+        args = kble.parser().parse_args(["--name", "KODE qa one", "screenshot"])
+        self.assertEqual("KODE qa one", args.board_name)
+        self.assertEqual("shot.bmp", args.name)
+
+    def test_a_screenshot_with_no_board_named_asks_for_no_board(self):
+        args = kble.parser().parse_args(["screenshot"])
+        self.assertIsNone(args.board_name)
+        self.assertEqual((None, None),
+                         kble.wanted_board(args.serial, args.board_name, None))
+
+    def test_the_file_to_fetch_is_not_taken_for_the_board(self):
+        args = kble.parser().parse_args(["--name", "KODE qa one",
+                                         "file-get", "notes.txt"])
+        self.assertEqual("KODE qa one", args.board_name)
+        self.assertEqual("notes.txt", args.name)
+        args = kble.parser().parse_args(["file-get", "notes.txt"])
+        self.assertIsNone(args.board_name)
+
+
 class BridgeCase(unittest.TestCase):
     """A socket path of its own, and the clients to close at the end."""
 

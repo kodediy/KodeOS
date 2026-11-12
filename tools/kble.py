@@ -968,7 +968,9 @@ def do_file_get(link, args):
     return 0
 
 
-def main():
+def parser():
+    """The command line. The board's Bluetooth name is `board_name`: `name`
+    belongs to the subcommands that take a file name (screenshot, file-get)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--hold", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--serial", metavar="KODE...",
@@ -976,7 +978,7 @@ def main():
                          f"(default: ${SERIAL_ENV}, else the first Kode "
                          "scanned). A board with a Bluetooth name of its own "
                          "does not advertise its serial: use --name")
-    ap.add_argument("--name", metavar="NAME",
+    ap.add_argument("--name", dest="board_name", metavar="NAME",
                     help="attach only to the board advertising this "
                          'Bluetooth name, as in --name "KODE qa one": the '
                          "whole name, any case")
@@ -1032,11 +1034,15 @@ def main():
 
     sub.add_parser("detach", help="let go of the board; it goes back on "
                                   "the air by itself")
+    return ap
 
+
+def main():
+    ap = parser()
     args = ap.parse_args()
 
     if args.hold:                        # we are the half inside the bundle
-        why = asyncio.run(hold(SOCK, BleakRadio(args.serial, args.name),
+        why = asyncio.run(hold(SOCK, BleakRadio(args.serial, args.board_name),
                                args.timeout))
         print(f"bridge: {why}")           # into bridge.log
         return 0
@@ -1052,7 +1058,7 @@ def main():
         ap.print_help()
         return 2
 
-    serial, name = wanted_board(args.serial, args.name,
+    serial, name = wanted_board(args.serial, args.board_name,
                                 os.environ.get(SERIAL_ENV))
     link = Link(args.timeout, serial=serial, name=name)
     link.start()
