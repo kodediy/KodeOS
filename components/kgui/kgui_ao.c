@@ -2933,7 +2933,7 @@ typedef struct {
     lv_obj_t *deep_digit;    /**< Its figure. */
     lv_obj_t *deep_words;    /**< Its words. */
     bool     deep_fading;    /**< They are going: the glass ends black. */
-    uint32_t deep_ms;        /**< When Rest last saw anybody. */
+    uint32_t deep_ms;        /**< When Rest last saw anybody, or the cable leave. */
     uint32_t deep_ends_ms;   /**< When the count ends. */
     uint32_t deep_asked_ms;  /**< When the rest was asked for. */
     bool     deep_asked;     /**< It has been asked for, and the answer waits. */
@@ -28687,7 +28687,9 @@ static void gui_deep_begin(Gui * const me)
 /**
  * @brief Rest's share of the deep rest: the wait, the count, and asking for it.
  *
- * On the battery only: a cable never sleeps.
+ * On the battery only: a cable never sleeps. The wait is counted from the
+ * entry into Rest, from the last press or touch, and from the cable leaving
+ * (Gui_running's POWER_EVT_SIG), whichever came last.
  *
  * @param me The AO, at Rest.
  */
@@ -34568,6 +34570,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 /* The cable that kept the Lock awake is out: Rest counts from
                  * here, not from an input that was long ago. */
                 gui_idle_rearm(me);
+            }
+            if ( me->at_rest && was_vbus && (!p->vbus) )
+            {
+                /* On a cable Rest counts nothing down, and the time spent on
+                 * one is not time with nobody there: the wait for the count
+                 * to OFF starts as the cable leaves. */
+                me->deep_ms = khal_time_ms();
             }
             me->chg_state = (uint8_t)chg_state;
             {
