@@ -4181,6 +4181,37 @@ static void gui_dump(Gui * const me)
     }
 }
 
+/**
+ * @brief The PSRAM block of a row's icon, taken the first time it is asked for.
+ *
+ * @param[in,out] me    The AO.
+ * @param[in]     slot  The row's slot, under GUI_ROWS_MAX.
+ *
+ * @return The block, or NULL when PSRAM has none left: the row draws the
+ *         apps glyph on its colour.
+ */
+static uint8_t *gui_icon_slot_take(Gui * const me, uint8_t slot)
+{
+    if ( (uint8_t)GUI_ROWS_MAX <= slot )
+    {
+        return NULL;
+    }
+    if ( NULL == me->icon_slot[slot] )
+    {
+        /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
+        me->icon_slot[slot] = (uint8_t *)khal_alloc_psram(64U, KAPP_ICON_BYTES);
+        if ( NULL == me->icon_slot[slot] )
+        {
+            KLOG_W(TAG, "no PSRAM for icon slot %u; the row draws the apps glyph", (unsigned)slot);
+        }
+        else
+        {
+            gui_icon_dsc_set(&me->icon_dsc[slot], me->icon_slot[slot]);
+        }
+    }
+    return me->icon_slot[slot];
+}
+
 /* ---- LVGL plumbing ------------------------------------------------------- */
 
 /** LVGL's clock. Reading the system timer avoids drifting when a repaint
@@ -5438,30 +5469,11 @@ static bool ui_build(Gui * const me)
                     "will prompt on the console only");
     }
 
-    /* THE ICON SLOTS, once and for the whole ceiling: 128 entries at 48 KB
-     * is 6 MB of PSRAM, taken here and never given back. The header
-     * beside each one is written here too - the block is 128x128 RGB565A8 by
-     * definition, whichever size the .k64 had when AO_Storage read it
-     * (https://docs.kode.diy/sdk/kdrv/apps), so nothing about these
-     * fields ever depends on the file that lands in the block.
-     *
-     * A failed allocation is not fatal and is not even unusual enough to
-     * shout about twice: every row from there on draws its colour with the
-     * apps glyph, which is a face the launcher was already going to be able
-     * to wear. The loop stops at the first failure because the next one would
-     * fail too. */
-    for ( uint8_t i = 0U; (uint8_t)GUI_ROWS_MAX > i; ++i )
-    {
-        /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
-        me->icon_slot[i] = (uint8_t *)khal_alloc_psram(64U, KAPP_ICON_BYTES);
-        if ( NULL == me->icon_slot[i] )
-        {
-            KLOG_W(TAG, "no PSRAM for icon slot %u; rows from here draw the "
-                        "apps glyph", (unsigned)i);
-            break;
-        }
-        gui_icon_dsc_set(&me->icon_dsc[i], me->icon_slot[i]);
-    }
+    /* THE ICON SLOTS are taken one by one, the first time a row's icon is
+     * written (gui_icon_slot_take()): 128 entries at 48 KB would be 6 MB of
+     * PSRAM held from boot by a board that may have three apps, and the
+     * factory's final test needs that memory for the camera on J3. A slot
+     * once taken is never given back. */
     /* One more, for the card of a write about no row (gui_write_face_take()).
      * Without it that card wears the app's letters on its colour. */
     /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
@@ -11951,7 +11963,7 @@ static uint32_t gui_keep_apply(Gui * const me)
             gui_keep_face_take(&to->face);
             if ( to->face.icon_ok )
             {
-                if ( ((uint8_t)GUI_ROWS_MAX > slot) && (NULL != me->icon_slot[slot]) )
+                if ( NULL != gui_icon_slot_take(me, slot) )
                 {
                     (void)memcpy(me->icon_slot[slot], icon, KAPP_ICON_BYTES);
                 }
@@ -12001,7 +12013,7 @@ static uint32_t gui_keep_apply(Gui * const me)
             gui_keep_face_take(&to->face);
             if ( to->face.icon_ok )
             {
-                if ( ((uint8_t)GUI_ROWS_MAX > slot) && (NULL != me->icon_slot[slot]) )
+                if ( NULL != gui_icon_slot_take(me, slot) )
                 {
                     (void)memcpy(me->icon_slot[slot], icon, KAPP_ICON_BYTES);
                 }
@@ -35515,7 +35527,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             uint8_t const slot = gui_slot_by_project(me, ic->project);
             GuiFace * const face = gui_face_by_project(me, ic->project);
             if ( ((uint8_t)GUI_ROWS_MAX > slot) && (NULL != face)
-                && (NULL != me->icon_slot[slot])
+                && (NULL != gui_icon_slot_take(me, slot))
                 && ((uint8_t)KODE_APP_ICON_PIECES > ic->seq) )
             {
                 (void)memcpy(&me->icon_slot[slot][(size_t)ic->seq
