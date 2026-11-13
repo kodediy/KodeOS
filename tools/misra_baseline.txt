@@ -193,14 +193,14 @@ sdk/components/kaos/scheduler/src/scheduler_ao.c misra-c2012-5.9 1
 sdk/components/kaos/storage/src/storage_ao.c constParameterPointer 3
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-10.8 15
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-11.5 9
-sdk/components/kaos/storage/src/storage_ao.c misra-c2012-15.7 3
+sdk/components/kaos/storage/src/storage_ao.c misra-c2012-15.7 2
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-17.3 2
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-17.8 3
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-18.4 2
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-2.7 2
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-21.15 1
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-5.9 10
-sdk/components/kaos/storage/src/storage_ao.c misra-c2012-7.3 13
+sdk/components/kaos/storage/src/storage_ao.c misra-c2012-7.3 10
 sdk/components/kaos/storage/src/storage_ao.c misra-c2012-8.9 5
 sdk/components/kaos/storage/src/storage_ao.c variableScope 2
 sdk/components/kaos/storage/src/storage_verbs.c misra-c2012-9.5 1
