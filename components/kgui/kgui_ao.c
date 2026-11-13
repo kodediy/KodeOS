@@ -2940,6 +2940,9 @@ typedef struct {
     kgui_haptic_level_t haptic_pref; /**< What the Vibration row chose; the volume's stops may ask otherwise. */
     char     ble_name[GUI_BLE_NAME_MAX + 1U]; /**< The name chosen for Bluetooth; empty for the serial. */
     bool     first_hold;     /**< The glass stays black: the first thing lit is whole. */
+    lv_obj_t *back_cover;    /**< Back from an app: the black the first frame comes up from, over everything (gui_back_cover_tick()). */
+    bool     back_cover_on;  /**< A pass has drawn it: it is fading. */
+    uint32_t back_cover_ms;  /**< Since when. */
     bool     disp_row;       /**< The `display` row has the glass: no pass draws. */
     uint32_t first_hold_ms;  /**< Since when. */
     bool     rest_hint;      /**< Rest says how to wake: any input but the top button. */
@@ -3238,6 +3241,8 @@ static void gui_ble_name_config(Gui * const me, KodeConfigReqEvt const * const r
 static bool gui_row_cut(Gui const * const me, int32_t cy, kgui_rail_t const *edge);
 static void gui_vol_motor(Gui const * const me);
 static void gui_first_hold_tick(Gui * const me);
+static void gui_back_cover_put(Gui * const me);
+static void gui_back_cover_tick(Gui * const me, bool drew);
 static bool gui_level_back(Gui * const me, const char *source);
 static bool gui_level_grow_start(Gui * const me);
 static void gui_level_grow_cut(Gui * const me);
@@ -29456,7 +29461,8 @@ static bool gui_home_holds(Gui * const me)
  *        way home that waited for it.
  *
  * Not while the first frame is held: that frame is Apps, and his read and his
- * first frame come after it, not in front of it.
+ * first frame come after it, not in front of it. Nor while the glass comes
+ * up from black after an app: drawing him takes two frames' time out of it.
  *
  * @param me The AO.
  */
@@ -29464,7 +29470,7 @@ static void gui_face_ready_tick(Gui * const me)
 {
     if ( (lv_screen_active() != kgui_screen_face) && (!me->first_hold)
         && (!kgui_return_holds(&me->back)) && (!me->curtain_up)
-        && (GUI_SHEET_NONE == me->sheet) )
+        && (NULL == me->back_cover) && (GUI_SHEET_NONE == me->sheet) )
     {
         bool const whole = gui_face_kody_ready(me);
 
@@ -33096,6 +33102,9 @@ void Gui_ctor(void)
     me->face_stood      = KUI_PACK_NONE;
     me->face_woke       = false;
     me->face_wake_up    = true;
+    me->back_cover      = NULL;
+    me->back_cover_on   = false;
+    me->back_cover_ms   = 0U;
     /* The Lock is awake, nobody woke it, and no cable is asked to keep it so;
      * the glass is at the level the store holds, until Rest dims it. */
     me->at_rest         = false;
@@ -33497,8 +33506,12 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                 me->first_hold    = true;
                 me->first_hold_ms = khal_time_ms();
                 /* A cold boot greets with his wake-up; back from an app he
-                 * is found awake. */
+                 * is found awake, and the glass comes up from the app's black. */
                 me->face_wake_up  = (boot_reason() != KBOOT_FROM_APP);
+                if ( !me->face_wake_up )
+                {
+                    gui_back_cover_put(me);
+                }
                 if ( gui_return_begin(me) )
                 {
                     status = Q_TRAN(&Gui_returning);
@@ -33808,11 +33821,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
 
                 next = lv_timer_handler();
                 gui_pass_measure(me, t0, (me->flushes != flushes));
+                gui_back_cover_tick(me, true);
             }
             else
             {
                 /* The first frame after an app waits for the installed list
                  * (Gui_returning): the glass stays black until it may go. */
+                gui_back_cover_tick(me, false);
             }
             /* Reduced motion's frame of fade, once a pass has drawn it. */
             gui_fade_tick(me);
@@ -35747,6 +35762,79 @@ static void gui_first_hold_tick(Gui * const me)
         {
             me->first_hold = false;
             KLOG_D(TAG, "first frame lets go %u ms after boot", (unsigned)khal_time_ms());
+        }
+    }
+}
+
+/** @brief How long the glass takes to come up from black after an app: 12 ticks of 33 ms. */
+#define GUI_BACK_FADE_MS  396U
+
+/**
+ * @brief Back from an app: cover the glass in black, for the first frame to
+ *        come up from.
+ *
+ * The app left the glass black and the boot kept it so. Lit at a stroke, the
+ * first frame is a flash; it comes up from that black instead, as the launch
+ * went down to it. The cover stands on LVGL's system layer, over every screen
+ * and every card, and is in none of their pictures.
+ *
+ * @param me The AO; the display is up.
+ */
+static void gui_back_cover_put(Gui * const me)
+{
+    lv_obj_t * const cover = lv_obj_create(lv_layer_sys());
+
+    if ( NULL != cover )
+    {
+        lv_obj_remove_style_all(cover);
+        lv_obj_set_clickable(cover, false);
+        lv_obj_set_pos(cover, 0, 0);
+        lv_obj_set_size(cover, (int32_t)KBSP_LCD_H_RES, (int32_t)KBSP_LCD_V_RES);
+        lv_obj_set_style_bg_color(cover, KUI_COLOR_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, LV_PART_MAIN);
+    }
+    me->back_cover    = cover;
+    me->back_cover_on = false;
+}
+
+/**
+ * @brief The cover's share of the tick: it fades from the first pass that
+ *        drew, and goes.
+ *
+ * Counted from the first drawn pass and not from the boot, so the wait for
+ * the installed list (Gui_returning) takes nothing off the fade.
+ *
+ * @param me   The AO.
+ * @param drew Whether this tick's pass ran.
+ */
+static void gui_back_cover_tick(Gui * const me, bool drew)
+{
+    if ( NULL != me->back_cover )
+    {
+        uint32_t const now = khal_time_ms();
+
+        if ( !me->back_cover_on )
+        {
+            if ( drew )
+            {
+                me->back_cover_on = true;
+                me->back_cover_ms = now;
+            }
+        }
+        else if ( (now - me->back_cover_ms) >= GUI_BACK_FADE_MS )
+        {
+            lv_obj_delete(me->back_cover);
+            me->back_cover = NULL;
+            KLOG_D(TAG, "back from an app: the glass is up from black, %u ms after its first pass",
+                   (unsigned)(now - me->back_cover_ms));
+        }
+        else
+        {
+            uint32_t const left = GUI_BACK_FADE_MS - (now - me->back_cover_ms);
+
+            lv_obj_set_style_bg_opa(me->back_cover,
+                                    (lv_opa_t)((left * (uint32_t)LV_OPA_COVER) / GUI_BACK_FADE_MS),
+                                    LV_PART_MAIN);
         }
     }
 }
