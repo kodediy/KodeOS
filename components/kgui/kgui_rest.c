@@ -7,26 +7,73 @@
 
 #include <stddef.h>
 
-/** @brief One place of the cycle, in steps of KGUI_REST_SHIFT_PX. */
-typedef struct {
-    int8_t x;  /**< Steps across: -1 left, 0, 1 right. */
-    int8_t y;  /**< Steps down: -1 up, 0, 1 down.      */
-} rest_place_t;
+/** @brief How far the content goes across from home, in pixels. */
+#define REST_REACH_X  ((uint32_t)KGUI_REST_SHIFT_PX)
+
+/** @brief How far it goes down: one less than across, so the two axes drift apart. */
+#define REST_REACH_Y  (REST_REACH_X - 1U)
+
+/** @brief A way out and back has four legs: out, back, out the other way, back. */
+#define REST_LEGS     4U
+
+_Static_assert(((KGUI_REST_CYCLE_LEN % (REST_LEGS * REST_REACH_X)) == 0U)
+               && ((KGUI_REST_CYCLE_LEN % (REST_LEGS * REST_REACH_Y)) == 0U),
+               "the cycle ends where both axes are home again");
+
+/**
+ * @brief One axis of the cycle: out to @p reach, back through home to the
+ *        other side and home again, a pixel a step.
+ *
+ * @param step  The place along the cycle.
+ * @param reach How far from home it turns back, in pixels; above zero.
+ * @return The distance from home, -reach to reach.
+ */
+static int32_t rest_bounce(uint32_t step, uint32_t reach)
+{
+    uint32_t const at  = step % (REST_LEGS * reach);
+    uint32_t       far = at;       /* how far from home */
+    bool           neg = false;    /* on the other side of it */
+
+    if ( at > (3U * reach) )
+    {
+        far = (REST_LEGS * reach) - at;
+        neg = true;
+    }
+    else if ( at > (2U * reach) )
+    {
+        far = at - (2U * reach);
+        neg = true;
+    }
+    else if ( at > reach )
+    {
+        far = (2U * reach) - at;
+    }
+    else
+    {
+        /* On its way out: as far as it has gone. */
+    }
+    return neg ? -(int32_t)far : (int32_t)far;
+}
 
 kgui_rest_offset_t kgui_rest_offset(uint32_t step)
 {
-    /* The cycle: home, then the eight places round it, once each. */
-    /* Neighbours are at most one step apart on each axis, so the content creeps and never jumps. */
-    static const rest_place_t CYCLE[KGUI_REST_CYCLE_LEN] = {
-        { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 }, { -1, 1 },
-        { -1, 0 }, { -1, -1 }, { 0, -1 }, { 1, -1 },
-    };
-    rest_place_t const p = CYCLE[step % KGUI_REST_CYCLE_LEN];
     kgui_rest_offset_t out;
 
-    out.x = (int32_t)p.x * KGUI_REST_SHIFT_PX;
-    out.y = (int32_t)p.y * KGUI_REST_SHIFT_PX;
+    out.x = rest_bounce(step, REST_REACH_X);
+    out.y = rest_bounce(step, REST_REACH_Y);
     return out;
+}
+
+uint32_t kgui_rest_even(uint32_t step)
+{
+    uint32_t const at = step % KGUI_REST_CYCLE_LEN;
+
+    return (at + (at % 2U)) % KGUI_REST_CYCLE_LEN;
+}
+
+uint32_t kgui_rest_start(uint32_t step)
+{
+    return kgui_rest_even((step % KGUI_REST_CYCLE_LEN) + KGUI_REST_NEXT_STEPS);
 }
 
 bool kgui_rest_sleep_due(kgui_rest_sleep_t const *s)

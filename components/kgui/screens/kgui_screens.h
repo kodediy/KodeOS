@@ -424,11 +424,27 @@ void kgui_screen_face_prompt(bool set_time, bool zone);
 void kgui_screen_face_knock_say(const char *last);
 
 /**
+ * @brief Take the face's content to a place of Rest's cycle, as a movement.
+ *
+ * The way into Rest, the other way round from kgui_screen_face_home(): the
+ * content goes to where this Rest stands while Kody falls asleep, so nothing
+ * on the glass jumps once he is still. kgui_screen_face_shift() and
+ * kgui_screen_face_home() cancel it. Does nothing before
+ * kgui_screen_face_build().
+ *
+ * @param dx Pixels to the right of home; negative is to the left.
+ * @param dy Pixels below home; negative is above it.
+ * @param ms How long the way takes.
+ */
+void kgui_screen_face_glide(int32_t dx, int32_t dy, uint32_t ms);
+
+/**
  * @brief Take the face's content home from where Rest left it, as a movement.
  *
  * Rest moves the content up to 4 px to save the panel; going home at once is
  * the jump seen between the sleeping Kody and the waking one. It goes
- * while Kody himself leaps instead. kgui_screen_face_shift() cancels it.
+ * while Kody himself leaps instead. kgui_screen_face_shift() and
+ * kgui_screen_face_glide() cancel it.
  *
  * @param delay_ms How long it stands still first.
  * @param ms       How long the way takes.

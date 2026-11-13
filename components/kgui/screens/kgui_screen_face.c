@@ -511,6 +511,49 @@ void kgui_screen_face_shift(int32_t dx, int32_t dy)
     face_shift_write(dx, dy);
 }
 
+/** @brief Where the content is going: kgui_screen_face_glide(). */
+static int32_t s_glide_x;
+static int32_t s_glide_y;
+
+/** @brief An lv_anim's setter: the way to the place left, in 1/256ths of it. */
+static void face_glide_step(void *var, int32_t left)
+{
+    (void)var;
+    face_shift_write(s_glide_x + lv_map(left, 0, 256, 0, s_home_x - s_glide_x),
+                     s_glide_y + lv_map(left, 0, 256, 0, s_home_y - s_glide_y));
+}
+
+void kgui_screen_face_glide(int32_t dx, int32_t dy, uint32_t ms)
+{
+    lv_obj_t const *from = NULL;
+
+    for ( uint32_t i = 0U; (FACE_SHIFTS > i) && (NULL == from); i++ )
+    {
+        from = s_shifted[i];
+    }
+    (void)lv_anim_delete(&s_home_x, NULL);
+    if ( NULL == from )
+    {
+        return;
+    }
+    s_home_x  = lv_obj_get_style_translate_x(from, LV_PART_MAIN);
+    s_home_y  = lv_obj_get_style_translate_y(from, LV_PART_MAIN);
+    s_glide_x = dx;
+    s_glide_y = dy;
+    if ( (dx != s_home_x) || (dy != s_home_y) )
+    {
+        lv_anim_t a;
+
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, &s_home_x);
+        lv_anim_set_exec_cb(&a, face_glide_step);
+        lv_anim_set_values(&a, 256, 0);
+        lv_anim_set_duration(&a, ms);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+        (void)lv_anim_start(&a);
+    }
+}
+
 /** @brief An lv_anim's setter: the way home left, in 1/256ths of it. */
 static void face_home_step(void *var, int32_t left)
 {

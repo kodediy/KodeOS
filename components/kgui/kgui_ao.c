@@ -3099,8 +3099,6 @@ typedef struct {
     uint32_t rest_asked_ms;  /**< When.                                      */
     bool     rest_held;      /**< That ask ended awake: rounds for ASLEEP are
                                *   refused at Rest until Rest asks again.    */
-    uint32_t rest_parks;     /**< Rests that slept: each sleeps at the next
-                               *   place of the burn-in cycle.               */
 #endif
 #if CONFIG_KODE_TEST_DOT
     kgui_td_req_t td_first;  /**< The request that took the glass for the E5
@@ -28730,15 +28728,19 @@ static void gui_rest_hint(Gui * const me)
 /**
  * @brief Paint the time at Rest, and move the face's content on its burn-in cycle each minute.
  *
- * The first paint of a Rest only takes its place in the cycle. The content
- * does not move while Kody is awake for the second press (rest_knock).
+ * The first paint of a Rest takes the content to the place this Rest starts
+ * at (gui_rest_enter()): as a movement while Kody falls asleep, so nothing
+ * jumps once he is still. With no fall the place is home, where it stands.
+ * Each minute after it is one step of the cycle, a pixel on each axis. The
+ * content does not move while Kody is awake for the second press (rest_knock).
  *
  * @param me The AO.
  */
 static void gui_rest_paint(Gui * const me)
 {
     uint32_t key;
-    bool     move = false;
+    bool     move  = false;
+    bool     first = false;
 
     gui_face_time_paint(me);
     key = me->face_min;
@@ -28751,6 +28753,7 @@ static void gui_rest_paint(Gui * const me)
         me->rest_painted = true;
         me->rest_key     = key;
         move             = true;
+        first            = true;
     }
     else if ( (key != me->rest_key) && !me->rest_knock )
     {
@@ -28768,7 +28771,16 @@ static void gui_rest_paint(Gui * const me)
     {
         kgui_rest_offset_t const at = kgui_rest_offset(me->rest_step);
 
-        kgui_screen_face_shift(at.x, at.y);
+        if ( first && ((uint8_t)GUI_FALL_NONE != me->rest_fall) )
+        {
+            /* Every frame is drawn until the veil is over (gui_tick_wait()),
+             * which is longer than this takes. */
+            kgui_screen_face_glide(at.x, at.y, KGUI_VEIL_MS);
+        }
+        else
+        {
+            kgui_screen_face_shift(at.x, at.y);
+        }
     }
 }
 
@@ -29048,8 +29060,10 @@ static uint32_t gui_tick_wait(Gui const * const me, uint32_t lvgl_next)
  * @brief The Lock goes to Rest: the entry of Gui_rest.
  *
  * In this order: an armed press and the bottom button's hold end, Kody stands
- * still on a frame of his scene, the face's content takes
- * its place in the burn-in cycle (gui_rest_paint()), and the glass starts to
+ * still on a frame of his scene, the face's content sets off for this Rest's
+ * place in the burn-in cycle, past the one the Rest before stood at
+ * (kgui_rest_start(), gui_rest_paint()) - or stays home when Kody has no
+ * fall to move under - and the glass starts to
  * dim. The clock, the date and the scene stay in colour. The tick slows down to
  * KGUI_REST_TICK_MS (gui_tick_wait()).
  *
@@ -29066,6 +29080,16 @@ static void gui_rest_enter(Gui * const me)
     gui_rest_kody(me);
     me->face_painted = false;   /* the yellow pills go */
     me->rest_painted = false;
+    if ( (uint8_t)GUI_FALL_NONE != me->rest_fall )
+    {
+        me->rest_step = kgui_rest_start(me->rest_step);
+    }
+    else
+    {
+        /* He has no fall to hide the way in: this Rest stands at home,
+         * where the awake face is, rather than jump there. */
+        me->rest_step = 0U;
+    }
     me->deep_ms      = khal_time_ms();
     gui_rest_paint(me);
     if ( (uint8_t)GUI_FALL_NONE == me->rest_fall )
@@ -29103,10 +29127,9 @@ static void gui_rest_leave(Gui * const me)
     kgui_hint_dismiss();
     /* Rest moved the content to save the panel. Home at a stroke is the jump
      * between the sleeping Kody and the waking one (measured up
-     * to 4 px on the Dot): it goes home while he leaps. The next Rest starts
-     * from home, as the apocrifa's does (kshell_face.c). */
+     * to 4 px on the Dot): it goes home while he leaps. The next Rest goes
+     * on from the place this one stood at (gui_rest_enter()). */
     kgui_screen_face_home(GUI_REST_HOME_DELAY_MS, GUI_REST_HOME_MS);
-    me->rest_step    = 0U;
     me->face_woke    = false;
     me->joke_ok      = true;   /* waking: the joke may come */
     me->kody_sight   = GUI_KODY_SEEN;
@@ -32726,9 +32749,12 @@ static void gui_rest_sleep_tick(Gui * const me)
 /**
  * @brief Rest's park: the entry of Gui_rest_asleep.
  *
- * What gui_lp_park() does, with the Rest face for its page. The content takes
- * the next place of the burn-in cycle, since nothing moves on the glass while
- * the board sleeps: each sleep stands somewhere else. The face is drawn bare
+ * What gui_lp_park() does, with the Rest face for its page. The content stays
+ * where this Rest put it, so nothing jumps as the board goes to sleep; only
+ * from an odd place of the burn-in cycle does it take the next one, a pixel
+ * away, for the hour's even pixels (kgui_rest_even()). Nothing moves on the
+ * glass while the board sleeps, and each Rest stands somewhere else
+ * (kgui_rest_start()). The face is drawn bare
  * of its clock, its date and its battery - the hour is AO_Display's from here,
  * written over a rectangle that would cut the battery in two, and the date
  * would stay a day behind - and that frame is the last the link carries. The
@@ -32750,8 +32776,7 @@ static void gui_rest_park(Gui * const me)
     s_gui_state = "rest asleep";
     me->lp_rest = true;
     gui_lp_quiet(me);
-    me->rest_parks += 1U;
-    me->rest_step   = me->rest_parks;
+    me->rest_step = kgui_rest_even(me->rest_step);
     at = kgui_rest_offset(me->rest_step);
     kgui_screen_face_shift(at.x, at.y);
     kgui_screen_face_bare(true);
