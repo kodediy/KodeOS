@@ -33,6 +33,7 @@ static int32_t rest_bounce(uint32_t step, uint32_t reach)
     uint32_t const at  = step % (REST_LEGS * reach);
     uint32_t       far = at;       /* how far from home */
     bool           neg = false;    /* on the other side of it */
+    int32_t        out;
 
     if ( at > (3U * reach) )
     {
@@ -52,7 +53,12 @@ static int32_t rest_bounce(uint32_t step, uint32_t reach)
     {
         /* On its way out: as far as it has gone. */
     }
-    return neg ? -(int32_t)far : (int32_t)far;
+    out = (int32_t)far;
+    if ( neg )
+    {
+        out = -out;
+    }
+    return out;
 }
 
 kgui_rest_offset_t kgui_rest_offset(uint32_t step)

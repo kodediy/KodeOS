@@ -27641,11 +27641,16 @@ static void gui_face_kody_rouse(Gui * const me)
         }
         if ( me->face_woke )
         {
+            const char *how = "is awake";
+
+            if ( up )
+            {
+                how = "wakes";
+            }
             me->face_wake_up = false;
             /* The player holds this scene's descriptors and no other's now. */
             kgui_assets_scene_keep(id);
-            KLOG_D(TAG, "face: Kody %s in the %s scene", up ? "wakes" : "is awake",
-                   kgui_assets_scene_name(id));
+            KLOG_D(TAG, "face: Kody %s in the %s scene", how, kgui_assets_scene_name(id));
         }
         gui_face_window_open(me);
     }
@@ -29467,10 +29472,15 @@ static bool gui_face_kody_ready(Gui * const me)
             else if ( kgui_assets_scene_load(id) )
             {
                 uint32_t const t0 = khal_time_ms();
+                /* The frame his play starts from (gui_face_kody_rouse()). */
+                const kui_kody_anim_t *first = kgui_assets_loop(id);
 
+                if ( me->face_wake_up )
+                {
+                    first = kgui_assets_wake(id);
+                }
                 me->face_scene_on = id;
-                /* On the frame his play starts from (gui_face_kody_rouse()). */
-                gui_kody_stand(me, me->face_wake_up ? kgui_assets_wake(id) : kgui_assets_loop(id));
+                gui_kody_stand(me, first);
                 me->face_stood = (uint16_t)id;
                 KLOG_N(TAG, "face: Kody stands in the %s scene before it is seen, "
                             "%u ms after boot, drawn in %u ms",

@@ -39,6 +39,18 @@ void test_the_cycle_stays_near_home(void)
     }
 }
 
+/** @brief How far apart two places are on one axis. */
+static int32_t apart(int32_t a, int32_t b)
+{
+    int32_t d = b - a;
+
+    if ( 0 > d )
+    {
+        d = -d;
+    }
+    return d;
+}
+
 void test_a_step_of_the_cycle_is_one_pixel_on_each_axis(void)
 {
     for ( uint32_t i = 0U; i < KGUI_REST_CYCLE_LEN; ++i )
@@ -46,8 +58,8 @@ void test_a_step_of_the_cycle_is_one_pixel_on_each_axis(void)
         kgui_rest_offset_t const a = kgui_rest_offset(i);
         kgui_rest_offset_t const b = kgui_rest_offset(i + 1U);
 
-        TEST_ASSERT_EQUAL_INT(1, ((b.x - a.x) > 0) ? (b.x - a.x) : (a.x - b.x));
-        TEST_ASSERT_EQUAL_INT(1, ((b.y - a.y) > 0) ? (b.y - a.y) : (a.y - b.y));
+        TEST_ASSERT_EQUAL_INT(1, apart(a.x, b.x));
+        TEST_ASSERT_EQUAL_INT(1, apart(a.y, b.y));
     }
 }
 
