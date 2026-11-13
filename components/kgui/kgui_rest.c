@@ -118,7 +118,7 @@ uint32_t kgui_rest_off_ms(const char *word, uint32_t def_ms)
         n = (n * REST_DECIMAL) + ((uint32_t)digit - (uint32_t)'0');
         i++;
     }
-    if ( (0U < i) && ('\0' == word[i + 1U]) )
+    if ( (0U < i) && ('\0' != word[i]) && ('\0' == word[i + 1U]) )
     {
         if ( 'm' == word[i] )
         {

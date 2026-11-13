@@ -171,6 +171,14 @@ void test_no_word_heard_yet_is_the_default(void)
     TEST_ASSERT_EQUAL_UINT32(5U, kgui_rest_off_ms(NULL, 5U));
 }
 
+void test_a_number_with_no_unit_is_never(void)
+{
+    /* Read to its end and no further: a build with a sanitizer stops here on
+     * a byte read past the terminator. */
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("20", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("7", 5U));
+}
+
 void test_the_hour_moves_with_the_cycle_on_even_pixels(void)
 {
     for ( uint32_t i = 0U; i < KGUI_REST_CYCLE_LEN; ++i )
@@ -227,6 +235,7 @@ int main(void)
     RUN_TEST(test_the_time_left_never_goes_below_zero);
     RUN_TEST(test_the_time_to_off_is_read_from_the_settings_word);
     RUN_TEST(test_no_word_heard_yet_is_the_default);
+    RUN_TEST(test_a_number_with_no_unit_is_never);
     RUN_TEST(test_the_hour_moves_with_the_cycle_on_even_pixels);
     RUN_TEST(test_an_odd_home_goes_down_to_even);
     RUN_TEST(test_an_hour_off_the_glass_is_not_written);
