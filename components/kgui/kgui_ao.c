@@ -624,10 +624,11 @@ typedef uint16_t GuiSceneId;
  * HIDDEN while the face is off the glass, on its way onto it, or under a
  * card - the times his player stands paused. SEEN the moment the face is
  * uncovered: its load ended (LV_EVENT_SCREEN_LOADED), or the card over it
- * went. The face's next tick wakes him, and he is AWAKE from then on. A
- * scene the face goes on while he is awake - a choice, or the hour's change
- * - puts him back to SEEN, so that the same tick wakes him up in it
- * (gui_face_scene_set()). ASLEEP for as long as the Lock rests (Gui_rest):
+ * went. The face's next tick puts him in his scene, and he is AWAKE from
+ * then on. A scene chosen while he is awake puts him back to SEEN, so that
+ * the same tick puts him in it (gui_face_scene_set()); the hour changes his
+ * scene only while he is HIDDEN on a face that is off the glass
+ * (gui_face_scene_hour()). ASLEEP for as long as the Lock rests (Gui_rest):
  * he stands still on a frame of his scene, nothing is drawn, and leaving Rest
  * puts him back to SEEN (gui_rest_leave()).
  */
@@ -2557,16 +2558,16 @@ typedef struct {
                                       *   KGUI_ASSETS_EV_RESOLVED; empty for
                                       *   none.                              */
     bool         face_rouse_owed;   /**< The scene's files were loading when
-                                      *   Kody was to wake: KGUI_ASSETS_EV_SCENE
-                                      *   wakes him.                         */
+                                      *   Kody was to be put in it:
+                                      *   KGUI_ASSETS_EV_SCENE puts him there. */
     bool         face_react_owed;   /**< A look was asked while its file was
                                       *   loading: KGUI_ASSETS_EV_REACTION
                                       *   plays it.                          */
     uint32_t     assets_t0_ms;      /**< khal_time_ms() the pack began to be
                                       *   read: the face's wait for it is
                                       *   counted from here.                 */
-    bool         face_chosen;       /**< face_scene_on is a choice - a swipe
-                                      *   sideways, the pad or the console
+    bool         face_chosen;       /**< face_scene_on is a choice - the
+                                      *   Screen card's row or the console
                                       *   made it, and kgui/scene keeps it -
                                       *   so the hour leaves it alone. false
                                       *   while none is chosen and the hour
@@ -2584,12 +2585,12 @@ typedef struct {
     bool         home_owed;         /**< The way home from Apps waits for him. */
     bool         home_pass;         /**< It has waited: the next one goes.    */
     uint32_t     home_owed_ms;      /**< Since when it waits.                 */
-    bool         face_woke;         /**< Kody's wake-up has played in the
-                                      *   scene the face is on: false from
-                                      *   the boot, and from every change of
-                                      *   scene - a choice, or the hour's -
-                                      *   until it has
-                                      *   (gui_face_scene_set(),
+    bool         face_woke;         /**< Kody has been put in the scene the
+                                      *   face is on, waking up or in his
+                                      *   loop: false from the boot, out of
+                                      *   Rest and from every change of scene
+                                      *   - a choice, or the hour's - until
+                                      *   he has (gui_face_scene_set(),
                                       *   gui_face_kody_rouse()).            */
     bool         face_wake_up;      /**< The next time Kody is put in his
                                       *   scene he wakes up in it: out of
@@ -14709,8 +14710,9 @@ static void gui_welcome_mark(const char *word)
  * @brief The landing after Welcome, on the awake Lock's tick: the ring closes
  *        and Kody reads the line (kshell_welcome.c).
  *
- * Counted from Kody starting to wake, as kshell's is, and only with him awake on
- * a bare face. A face that is never seen awake leaves the key `pending` for the
+ * Counted from Kody being put in his scene, where the way back from Welcome
+ * finds him awake in his loop (face_wake_up), and only with him awake on a
+ * bare face. A face that is never seen awake leaves the key `pending` for the
  * next boot, as kshell's dark glass does.
  *
  * @param me The AO.
@@ -27449,17 +27451,20 @@ static GuiSceneId gui_face_scene_want(Gui const * const me)
 }
 
 /**
- * @brief Put the face on another scene: Kody has yet to wake up in it.
+ * @brief Put the face on another scene: Kody has yet to be put in it.
  *
- * What a choice of scene and the hour's change of scene both come to, and
- * state alone (gui_face_scene_choose(), gui_face_scene_hour()): the scene is
- * the face's from here, Kody has not woken in it, and while he is on the
- * glass the face counts as seen afresh, so that the face's tick wakes him up
- * in it the way it does at boot (gui_face_kody_wake()). Nothing is played
- * from here: every wake-up starts from that one place in the tick, on the
- * stack frames of the boot's, whatever changed the scene. At Rest he stays
- * on the frame he stands on, and the wake that ends Rest plays his wake-up in
- * the new scene.
+ * What a choice of scene, the hour's change of scene and a pack read again
+ * all come to, and state alone (gui_face_scene_choose(),
+ * gui_face_scene_hour(), gui_assets_resolved()): the scene is the face's from
+ * here and Kody is not in it yet. While he is on the glass the face counts as
+ * seen afresh, so that the face's tick puts him in it (gui_face_kody_wake()):
+ * with a cut, and in his loop, since he wakes up only at a cold boot and out
+ * of Rest (face_wake_up). While he is out of sight he is stood in it before
+ * the face is pictured again (gui_face_kody_ready()). Nothing is played from
+ * here: every play starts from that one place in the tick, on the stack
+ * frames of the boot's, whatever changed the scene. At Rest he stays on the
+ * frame he stands on, and the wake that ends Rest plays his wake-up in the
+ * new scene.
  *
  * @param me The AO.
  * @param id The scene; another than the one the face is on.
@@ -27517,20 +27522,22 @@ static void gui_face_scene_hour(Gui * const me)
 }
 
 /**
- * @brief Choose the face's scene: it is kept, and Kody wakes up in it.
+ * @brief Choose the face's scene: it is kept, and Kody is put in it.
  *
  * Where `config key="scene"` and the Screen card's Kody row end
- * (gui_scene_config()). The scene is a choice from here on, which the hour leaves alone, and
- * kgui/scene keeps its name for the next boot; a store that refuses is said,
- * and the scene holds until the restart. When it is another scene than the
- * one the face is on, the face goes on it (gui_face_scene_set()): Kody has
- * not woken in it yet, and the face's tick wakes him up in it the way it
- * does at boot (gui_face_kody_wake()), on its next pass while he is on the
- * glass - the face counts as seen afresh - and otherwise the next time the
- * face is seen, from under a card, from another screen, or once the panel
- * has answered. Nothing is played from here, so every wake-up starts from
- * the face's tick, whoever chose the scene. Choosing the scene he is in
- * already changes nothing on the glass: it stops the hour from picking.
+ * (gui_scene_config()). The scene is a choice from here on, which the hour
+ * leaves alone, and kgui/scene keeps its name for the next boot; a store that
+ * refuses is said, and the scene holds until the restart. When it is another
+ * scene than the one the face is on, the face goes on it
+ * (gui_face_scene_set()): Kody is not in it yet, and the face's tick puts him
+ * in it (gui_face_kody_wake()), on its next pass while he is on the glass -
+ * the face counts as seen afresh - and otherwise the next time the face is
+ * seen, from under a card, from another screen, or once the panel has
+ * answered. He is found there awake, in his loop, with a cut and no wake-up:
+ * that is played at a cold boot and out of Rest alone (face_wake_up). Nothing
+ * is played from here, so every play starts from the face's tick, whoever
+ * chose the scene. Choosing the scene he is in already changes nothing on the
+ * glass: it stops the hour from picking.
  *
  * @param me  The AO.
  * @param id  The scene: one of the active pack's, or KGUI_ASSETS_BUILTIN.
@@ -27565,22 +27572,23 @@ static void gui_face_scene_choose(Gui * const me, GuiSceneId id,
  *        loop, out of Rest and at a cold boot; its loop alone any other time
  *        (face_wake_up).
  *
- * The boot's first sight of the face, every choice of another scene and
- * every change of scene the hour makes come here, all by way of
- * gui_face_kody_wake() and so from one place in the face's tick. The
- * wake-up's last frame is the loop's first, and kui_kody_then() is asked
- * right after the play, where the hand-over cannot be missed; from there the
- * loop plays for as long as the face is seen. Whatever the player is doing
- * ends at once: two scenes share no pose to link at, so a change of scene is
- * a cut. A choice cuts a look and a wake-up still under way, and a second
- * one while the first wakes simply starts the newer scene; the hour's change
- * is not made until a look has ended (gui_face_scene_hour()). A window of
- * passes opens here, so the line that closes it counts this scene's passes
- * and no other's (gui_face_window_log()). A wake-up that cannot play (the
- * player says why) leaves the face to the time, and the next time the face
- * is seen tries it again. A scene of the pack whose files are not read yet
- * is waited for (KGUI_ASSETS_EV_SCENE comes back here), and one that cannot
- * play gives the face to the built-in scene.
+ * The boot's first sight of the face, the wake that ends Rest, every choice
+ * of another scene and every scene the hour brought while the face was away
+ * come here, all by way of gui_face_kody_wake() and so from one place in the
+ * face's tick. When he wakes up, the wake-up's last frame is the loop's
+ * first, and kui_kody_then() is asked right after the play, where the
+ * hand-over cannot be missed; from there, as when he is put straight in his
+ * loop, the loop plays for as long as the face is seen. Whatever the player
+ * is doing ends at once: two scenes share no pose to link at, so a change of
+ * scene is a cut. A choice cuts a look and a wake-up still under way, and a
+ * second one while the first plays simply starts the newer scene; the hour's
+ * change is never made on a face that is seen (gui_face_scene_hour()). A
+ * window of passes opens here, so the line that closes it counts this scene's
+ * passes and no other's (gui_face_window_log()). A play that cannot start
+ * (the player says why) leaves the face to the time and face_wake_up as it
+ * was, and the next time the face is seen tries it again. A scene of the pack
+ * whose files are not read yet is waited for (KGUI_ASSETS_EV_SCENE comes back
+ * here), and one that cannot play gives the face to the built-in scene.
  *
  * @param me The AO; Kody is on the glass.
  */
@@ -27675,21 +27683,24 @@ static void gui_face_kody_hide(Gui * const me)
 }
 
 /**
- * @brief The face has been seen: wake Kody.
+ * @brief The face has been seen: put Kody in his scene, or let him go on.
  *
- * The first time, at boot, he wakes up in the scene the face is to be on:
- * the one chosen, or while none is chosen the one the hour asks for
- * (gui_face_scene_want(), gui_face_kody_rouse()). So he does in every scene
- * the face has gone on since he last woke (gui_face_scene_set()): one chosen
- * on the face, which shows him the face afresh, one chosen while he is out
- * of sight - a scene the console set under a card or on another screen -
- * and the one the hour has just asked for (gui_face_scene_hour()). And so he
- * does whenever the wake-up could not play the last time.
+ * While he is not in the scene the face is on (face_woke), he is put in the
+ * one the face is to be on: the one chosen, or while none is chosen the one
+ * the hour asks for (gui_face_scene_want(), gui_face_kody_rouse()). That is
+ * the first sight of the face after a boot, the wake that ends Rest, and
+ * every scene the face has gone on since he was last put in one
+ * (gui_face_scene_set()): one chosen on the face, which shows him the face
+ * afresh, one chosen while he is out of sight - a scene the console set under
+ * a card or on another screen - and the one the hour asked for while the face
+ * was off the glass (gui_face_scene_hour()). And so it is whenever the play
+ * could not start the last time. He wakes up there at a cold boot and out of
+ * Rest, and is found awake in his loop any other time (face_wake_up).
  *
- * Every other time he has woken in this scene already, and goes on from
- * where he stood, wherever the pause that hid him caught him - in a look
- * too, which plays on to its end, the hour's change of scene waiting for
- * it.
+ * Every other time he is in this scene already, and goes on from where he
+ * stood, wherever the pause that hid him caught him - in a look too, which
+ * plays on to its end. The hour does not change his scene here: a face that
+ * stays on the glass keeps its scene past the hour.
  *
  * @param me The AO.
  */
@@ -28076,9 +28087,8 @@ static void gui_rest_check(Gui * const me)
  * What Kody stands on whenever Rest begins, and what a pack read again puts
  * him on. A scene that cannot play is left for
  * the built-in one. A scene whose files are not read yet is asked for, and
- * KGUI_ASSETS_EV_SCENE comes back (gui_assets_notify()). He counts as woken
- * in the scene from here, so the wake that ends Rest goes on with the loop
- * from its first frame (gui_face_kody_wake()) and plays no wake-up over it.
+ * KGUI_ASSETS_EV_SCENE comes back (gui_assets_notify()). Whatever he stands
+ * on, the wake that ends Rest plays his wake-up over it (gui_rest_leave()).
  *
  * @param me The AO; Kody has a player.
  * @return What he stands on, in words for the log; "no frame" when the
@@ -28129,11 +28139,10 @@ static const char *gui_rest_frame(Gui * const me)
  *
  * He stands on the first frame of his scene's loop (gui_rest_frame()),
  * wherever the press that rests the Lock caught him, paused so nothing is
- * rasterised from here on, and he stays woken in the scene: the wake that
- * ends Rest goes on from that frame (gui_face_kody_wake()), unless the hour
- * has asked for another scene by then. When the scene cannot be drawn he
- * stops on the frame he is on. A look asked for and not answered goes with
- * him.
+ * rasterised from here on. The wake that ends Rest plays his wake-up, in the
+ * scene the hour asks for by then (gui_rest_leave(), gui_face_kody_wake()).
+ * When the scene cannot be drawn he stops on the frame he is on. A look asked
+ * for and not answered goes with him.
  *
  * @param me The AO; Kody is on the glass, awake or not woken yet.
  */
@@ -29147,9 +29156,10 @@ static uint32_t gui_tick_wait(Gui const * const me, uint32_t lvgl_next)
  * still on a frame of his scene, the face's content sets off for this Rest's
  * place in the burn-in cycle, past the one the Rest before stood at
  * (kgui_rest_start(), gui_rest_paint()) - or stays home when Kody has no
- * fall to move under - and the glass starts to
- * dim. The clock, the date and the scene stay in colour. The tick slows down to
- * KGUI_REST_TICK_MS (gui_tick_wait()).
+ * fall to move under - and the glass starts to dim. The date goes: it shows
+ * for a few seconds on waking, and the tick that takes it off does not run at
+ * Rest. The clock stays. The tick slows down to KGUI_REST_TICK_MS
+ * (gui_tick_wait()).
  *
  * @param me The AO.
  */
@@ -29191,11 +29201,12 @@ static void gui_rest_enter(Gui * const me)
 /**
  * @brief The Lock leaves Rest: the exit of Gui_rest, whatever it leaves for.
  *
- * A hint over the Rest face goes, the face's content goes back home, the glass comes back to the stored level, which
- * AO_Display is asked for first (gui_settle_begin()), and Kody is seen again:
- * the face's tick lets him go on from the frame he stands on, or wakes him in
- * the scene the hour asks for by then, and it comes at once rather than up to
- * KGUI_REST_TICK_MS late (gui_tick_now()). The Lock is woken from here, and
+ * A hint over the Rest face goes, the face's content goes back home, the
+ * glass comes back to the stored level, which AO_Display is asked for first
+ * (gui_settle_begin()), and Kody is seen again: the face's tick plays his
+ * wake-up, in the scene the hour asks for by then (face_wake_up), and it
+ * comes at once rather than up to KGUI_REST_TICK_MS late (gui_tick_now()).
+ * The Lock is woken from here, and
  * rests again after KGUI_WOKEN_REST_MS unless something touches it. A state
  * that takes the glass instead of the face hides Kody again on its way.
  *
@@ -29348,14 +29359,11 @@ static void gui_face_window_log(Gui const * const me)
 /**
  * @brief Kody's share of the face's tick.
  *
- * In this order: while he can be seen and no scene is chosen, put the face
- * on the scene the hour asks for, once no look is under way
- * (gui_face_scene_hour()); wake him when the face has just been seen and no
- * card is up - in the scene chosen, or the hour's, when there is one, since
- * either shows him the face afresh (gui_face_scene_set()); answer a look; and close a window of passes that
- * has run its length, opening the next. The hour is the one the time paint
- * has just read, on the same tick. Nothing here transitions: the face's
- * tick hands up to the parent's as ever.
+ * In this order: put him in his scene when the face has just been seen and
+ * no card is up - the scene chosen, or the hour's (gui_face_kody_wake()) -;
+ * answer a look; and close a window of passes that has run its length,
+ * opening the next. Nothing here transitions: the face's tick hands up to
+ * the parent's as ever.
  *
  * Awake, he plays, and his scene loops for as long as the face is seen. Two
  * things stop him: the face's exit or a card over it, which pause him
@@ -29363,14 +29371,15 @@ static void gui_face_window_log(Gui const * const me)
  * still (gui_rest_kody()). At Rest the awake Lock's tick, and so this, does
  * not run.
  *
- * The hour's change is made before a look is answered, so a look recorded
- * as the hour moves finds Kody waking and is refused, and no row of looks
- * holds the hour back.
+ * The hour does not change his scene here. A change of scene is a cut, and
+ * it is made only while the face is off the glass (gui_face_scene_hour()): a
+ * face that stays on the glass keeps its scene past the hour, and no look
+ * waits for one.
  *
- * Until he has woken, nothing but a wake-up puts him on the glass: a face
- * whose wake-up could not play stays the time alone until it is seen again,
- * or another scene is chosen. No line closes a window of passes on such a
- * face: it would say a scene played that is not on the glass.
+ * Until he has been put in his scene, nothing else puts him on the glass: a
+ * face whose play could not start stays the time alone until it is seen
+ * again, or another scene is chosen. No line closes a window of passes on
+ * such a face: it would say a scene played that is not on the glass.
  *
  * @param me The AO.
  */
@@ -29418,14 +29427,18 @@ static void gui_face_kody_tick(Gui * const me)
  *        cold boot, his loop any other time.
  *
  * The face first seen behind a curtain, back from an app: the first frame was
- * Apps, so nobody woke him, and the curtain's picture would be a face without
- * him, who comes in when it lands. The first_hold's rule holds
- * here too: he is there from the first frame of the fade. The wake-up that
- * plays when the face lands starts from this very frame, so nothing jumps.
- * Nothing moves until then: he is paused (gui_kody_stand()).
+ * Apps, so nobody put him in his scene, and the curtain's picture would be a
+ * face without him, who comes in when it lands. The first_hold's rule holds
+ * here too: he is there from the first frame of the fade. What he plays when
+ * the face lands starts from this very frame, so nothing jumps. Nothing moves
+ * until then: he is paused (gui_kody_stand()).
+ *
+ * A face that has been seen and is away has its scene changed here when the
+ * hour asks for another (gui_face_scene_hour()), and he is stood in the new
+ * one in the same call.
  *
  * The scene's files are asked for here and read in the background, as the
- * face's own wake-up asks for them (kgui_assets_scene_load()): being asked
+ * face's own play asks for them (kgui_assets_scene_load()): being asked
  * again until they are in is harmless.
  *
  * @param me The AO.
@@ -29699,8 +29712,9 @@ static void gui_face_tap(Gui * const me)
  * choice to the hour, with a warning, and the key as it is, for the pack
  * that has it. With none chosen the hour picks. Either way the face goes on
  * that scene afresh (gui_face_scene_set()): the players were stopped when
- * the old pack was retired, so Kody wakes up again, in it, on the face's
- * next tick while he is on the glass.
+ * the old pack was retired, so Kody is put in it again on the face's next
+ * tick while he is on the glass - in his loop, or waking up when a cold boot
+ * or Rest still owes him his wake-up (face_wake_up).
  *
  * @param me The AO.
  */
@@ -31256,7 +31270,7 @@ static void gui_scene_say(Gui const * const me)
  * are the pack's, which is not read yet: the name is kept as it is
  * (scene_stored) and resolved when the pack has been
  * (KGUI_ASSETS_EV_RESOLVED, gui_assets_resolved()). There a name the pack
- * has makes that scene the face's, as a choice: Kody wakes in it, and the
+ * has makes that scene the face's, as a choice: Kody is put in it, and the
  * hour leaves it alone. With no key no scene is chosen and the hour picks.
  * So it does for a name the pack does not have, and for a key that does not
  * read, each said with a warning; the key is left as it is, for the pack
@@ -31361,11 +31375,13 @@ static const char *gui_scene_word(Gui const * const me)
 /**
  * @brief Answer `config key="scene"`, choosing or forgetting first when asked.
  *
- * A scene to choose is chosen as a swipe chooses it (gui_face_scene_choose()):
- * kept, and Kody wakes up in it, on the face's next tick while he is on the
- * glass and otherwise the next time the face is seen. GUI_SCENE_AUTO forgets
- * the choice: the key goes from the store, and the hour picks from here on,
- * by its own rule (gui_face_kody_tick()). The name is resolved against the
+ * A scene to choose is chosen as the Screen card's row chooses it
+ * (gui_face_scene_choose()): kept, and Kody is put in it, on the face's next
+ * tick while he is on the glass and otherwise the next time the face is seen.
+ * GUI_SCENE_AUTO forgets the choice: the key goes from the store, and the
+ * hour picks from here on, by its own rule, which changes the scene the next
+ * time the face is off the glass (gui_face_scene_hour()). The name is
+ * resolved against the
  * active pack, and one it does not have is refused. Before the pack has been
  * read - Gui_waiting, or the first second of the face - the name is kept and
  * stored, and resolved with the pack. The value is the scene chosen, the one
@@ -36206,10 +36222,8 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
         }
         case GUI_TICK_SIG: {
             /* Side effects, then the parent's tick as ever: the time first,
-             * then Kody, whose scene - with none chosen - follows the hour
-             * the paint has just read, then the count to Rest. The held
-             * bottom button is the arc's (gui_off_arc_tick(), in the
-             * parent's tick). */
+             * then Kody, then the count to Rest. The held bottom button is
+             * the arc's (gui_off_arc_tick(), in the parent's tick). */
             gui_face_time_paint(me);
             if ( (0U != me->date_until_ms)
                 && ((int32_t)(khal_time_ms() - me->date_until_ms) >= 0) )
