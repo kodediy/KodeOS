@@ -624,10 +624,11 @@ typedef uint16_t GuiSceneId;
  * HIDDEN while the face is off the glass, on its way onto it, or under a
  * card - the times his player stands paused. SEEN the moment the face is
  * uncovered: its load ended (LV_EVENT_SCREEN_LOADED), or the card over it
- * went. The face's next tick wakes him, and he is AWAKE from then on. A
- * scene the face goes on while he is awake - a choice, or the hour's change
- * - puts him back to SEEN, so that the same tick wakes him up in it
- * (gui_face_scene_set()). ASLEEP for as long as the Lock rests (Gui_rest):
+ * went. The face's next tick puts him in his scene, and he is AWAKE from
+ * then on. A scene chosen while he is awake puts him back to SEEN, so that
+ * the same tick puts him in it (gui_face_scene_set()); the hour changes his
+ * scene only while he is HIDDEN on a face that is off the glass
+ * (gui_face_scene_hour()). ASLEEP for as long as the Lock rests (Gui_rest):
  * he stands still on a frame of his scene, nothing is drawn, and leaving Rest
  * puts him back to SEEN (gui_rest_leave()).
  */
@@ -1036,7 +1037,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 /** Why a round for ASLEEP is refused at Rest while Kody has not settled, or
  *  a sleep at Rest that did not happen holds the next one back. */
 #define GUI_LP_WHY_REST    "rest not settled"
-/** Past the 30 minutes at Rest, so the board that wakes for the count finds
+/** Past Rest's time to the count, so the board that wakes for the count finds
  *  them gone. */
 #define GUI_REST_WAKE_SLACK_MS 200U
 #if CONFIG_KODE_TEST_DOT
@@ -2557,16 +2558,16 @@ typedef struct {
                                       *   KGUI_ASSETS_EV_RESOLVED; empty for
                                       *   none.                              */
     bool         face_rouse_owed;   /**< The scene's files were loading when
-                                      *   Kody was to wake: KGUI_ASSETS_EV_SCENE
-                                      *   wakes him.                         */
+                                      *   Kody was to be put in it:
+                                      *   KGUI_ASSETS_EV_SCENE puts him there. */
     bool         face_react_owed;   /**< A look was asked while its file was
                                       *   loading: KGUI_ASSETS_EV_REACTION
                                       *   plays it.                          */
     uint32_t     assets_t0_ms;      /**< khal_time_ms() the pack began to be
                                       *   read: the face's wait for it is
                                       *   counted from here.                 */
-    bool         face_chosen;       /**< face_scene_on is a choice - a swipe
-                                      *   sideways, the pad or the console
+    bool         face_chosen;       /**< face_scene_on is a choice - the
+                                      *   Screen card's row or the console
                                       *   made it, and kgui/scene keeps it -
                                       *   so the hour leaves it alone. false
                                       *   while none is chosen and the hour
@@ -2584,13 +2585,19 @@ typedef struct {
     bool         home_owed;         /**< The way home from Apps waits for him. */
     bool         home_pass;         /**< It has waited: the next one goes.    */
     uint32_t     home_owed_ms;      /**< Since when it waits.                 */
-    bool         face_woke;         /**< Kody's wake-up has played in the
-                                      *   scene the face is on: false from
-                                      *   the boot, and from every change of
-                                      *   scene - a choice, or the hour's -
-                                      *   until it has
-                                      *   (gui_face_scene_set(),
+    bool         face_woke;         /**< Kody has been put in the scene the
+                                      *   face is on, waking up or in his
+                                      *   loop: false from the boot, out of
+                                      *   Rest and from every change of scene
+                                      *   - a choice, or the hour's - until
+                                      *   he has (gui_face_scene_set(),
                                       *   gui_face_kody_rouse()).            */
+    bool         face_wake_up;      /**< The next time Kody is put in his
+                                      *   scene he wakes up in it: out of
+                                      *   Rest and at a cold boot. Otherwise
+                                      *   - back from an app, another scene -
+                                      *   he is found in his loop, awake
+                                      *   (gui_face_kody_rouse()).           */
 
     /* THE LOCK AT REST. The face has two substates: Gui_awake is the face as
      * the person uses it, and Gui_rest is the same face dimmed, with Kody
@@ -2927,7 +2934,7 @@ typedef struct {
     lv_obj_t *deep_digit;    /**< Its figure. */
     lv_obj_t *deep_words;    /**< Its words. */
     bool     deep_fading;    /**< They are going: the glass ends black. */
-    uint32_t deep_ms;        /**< When Rest last saw anybody. */
+    uint32_t deep_ms;        /**< When Rest last saw anybody, or the cable leave. */
     uint32_t deep_ends_ms;   /**< When the count ends. */
     uint32_t deep_asked_ms;  /**< When the rest was asked for. */
     bool     deep_asked;     /**< It has been asked for, and the answer waits. */
@@ -2943,6 +2950,9 @@ typedef struct {
     kgui_haptic_level_t haptic_pref; /**< What the Vibration row chose; the volume's stops may ask otherwise. */
     char     ble_name[GUI_BLE_NAME_MAX + 1U]; /**< The name chosen for Bluetooth; empty for the serial. */
     bool     first_hold;     /**< The glass stays black: the first thing lit is whole. */
+    lv_obj_t *back_cover;    /**< Back from an app: the black the first frame comes up from, over everything (gui_back_cover_tick()). */
+    bool     back_cover_on;  /**< A pass has drawn it: it is fading. */
+    uint32_t back_cover_ms;  /**< Since when. */
     bool     disp_row;       /**< The `display` row has the glass: no pass draws. */
     uint32_t first_hold_ms;  /**< Since when. */
     bool     rest_hint;      /**< Rest says how to wake: any input but the top button. */
@@ -3112,8 +3122,6 @@ typedef struct {
     uint32_t rest_asked_ms;  /**< When.                                      */
     bool     rest_held;      /**< That ask ended awake: rounds for ASLEEP are
                                *   refused at Rest until Rest asks again.    */
-    uint32_t rest_parks;     /**< Rests that slept: each sleeps at the next
-                               *   place of the burn-in cycle.               */
 #endif
 #if CONFIG_KODE_TEST_DOT
     kgui_td_req_t td_first;  /**< The request that took the glass for the E5
@@ -3247,6 +3255,8 @@ static void gui_ble_name_config(Gui * const me, KodeConfigReqEvt const * const r
 static bool gui_row_cut(Gui const * const me, int32_t cy, kgui_rail_t const *edge);
 static void gui_vol_motor(Gui const * const me);
 static void gui_first_hold_tick(Gui * const me);
+static void gui_back_cover_put(Gui * const me);
+static void gui_back_cover_tick(Gui * const me, bool drew);
 static bool gui_level_back(Gui * const me, const char *source);
 static bool gui_level_grow_start(Gui * const me);
 static void gui_level_grow_cut(Gui * const me);
@@ -14700,8 +14710,9 @@ static void gui_welcome_mark(const char *word)
  * @brief The landing after Welcome, on the awake Lock's tick: the ring closes
  *        and Kody reads the line (kshell_welcome.c).
  *
- * Counted from Kody starting to wake, as kshell's is, and only with him awake on
- * a bare face. A face that is never seen awake leaves the key `pending` for the
+ * Counted from Kody being put in his scene, where the way back from Welcome
+ * finds him awake in his loop (face_wake_up), and only with him awake on a
+ * bare face. A face that is never seen awake leaves the key `pending` for the
  * next boot, as kshell's dark glass does.
  *
  * @param me The AO.
@@ -16699,6 +16710,12 @@ static bool gui_curtain_start(Gui * const me, bool aim)
     bool                         started = false;
     kgui_curtain_spec_t          spec;
 
+    /* A curtain that shows the face shows it as it will be: the hour's scene,
+     * and Kody standing in it, before its picture is taken. */
+    if ( lv_screen_active() != kgui_screen_face )
+    {
+        (void)gui_face_kody_ready(me);
+    }
     /* The pictures are the curtain's: a page that grows on them ends. */
     gui_page_grow_cut(me);
     gui_level_grow_cut(me);
@@ -27451,17 +27468,20 @@ static GuiSceneId gui_face_scene_want(Gui const * const me)
 }
 
 /**
- * @brief Put the face on another scene: Kody has yet to wake up in it.
+ * @brief Put the face on another scene: Kody has yet to be put in it.
  *
- * What a choice of scene and the hour's change of scene both come to, and
- * state alone (gui_face_scene_choose(), gui_face_scene_hour()): the scene is
- * the face's from here, Kody has not woken in it, and while he is on the
- * glass the face counts as seen afresh, so that the face's tick wakes him up
- * in it the way it does at boot (gui_face_kody_wake()). Nothing is played
- * from here: every wake-up starts from that one place in the tick, on the
- * stack frames of the boot's, whatever changed the scene. At Rest he stays
- * on the frame he stands on, and the wake that ends Rest plays his wake-up in
- * the new scene.
+ * What a choice of scene, the hour's change of scene and a pack read again
+ * all come to, and state alone (gui_face_scene_choose(),
+ * gui_face_scene_hour(), gui_assets_resolved()): the scene is the face's from
+ * here and Kody is not in it yet. While he is on the glass the face counts as
+ * seen afresh, so that the face's tick puts him in it (gui_face_kody_wake()):
+ * with a cut, and in his loop, since he wakes up only at a cold boot and out
+ * of Rest (face_wake_up). While he is out of sight he is stood in it before
+ * the face is pictured again (gui_face_kody_ready()). Nothing is played from
+ * here: every play starts from that one place in the tick, on the stack
+ * frames of the boot's, whatever changed the scene. At Rest he stays on the
+ * frame he stands on, and the wake that ends Rest plays his wake-up in the
+ * new scene.
  *
  * @param me The AO.
  * @param id The scene; another than the one the face is on.
@@ -27478,68 +27498,63 @@ static void gui_face_scene_set(Gui * const me, GuiSceneId id)
 
 /**
  * @brief The hour's change of scene: with none chosen, put the face on the
- *        scene the hour asks for.
+ *        scene the hour asks for, while nobody is looking at it.
  *
- * Asked on the face's every tick while Kody can be seen - awake, or about to
- * wake on this tick (gui_face_kody_tick()). So the change comes AT THE HOUR,
- * on the tick whose time paint reads the new one: at 06:00 and at 10:00 with
- * the face seen; as the face is seen again, when the hour moved meanwhile;
- * and whenever the zone, the wall clock or a scene set to `auto` leaves
- * the hour asking for another scene than the one he is in. He wakes up in it
- * exactly as he does in a scene chosen (gui_face_scene_set()): a cut,
- * because two scenes share no pose to link at.
+ * NEVER WHILE THE FACE IS SEEN. Two scenes share no pose to link at, so a
+ * change of scene is a cut, and a cut in front of the person reads as the
+ * face breaking. So the change is made ahead, with the face off the glass:
+ * asked while another screen is up and again as a door starts back to the
+ * face (gui_face_kody_ready()), which then stands Kody in the new scene
+ * before the first picture of the face is taken. A face that stays on the
+ * glass keeps its scene past the hour; the wake that ends Rest takes the
+ * hour's scene by itself (gui_face_kody_wake()).
  *
- * NEVER IN THE MIDDLE OF A LOOK. The player says whether one waits for its
- * anchor or plays (kui_kody_is_reacting()), paused or not, and while one
- * does the face stays on the scene it is on: this asks again on the next
- * tick, and the change comes on the first tick after the look has ended. A
- * choice does not wait: it cuts a look.
+ * Only once the new scene's files are read: until then the face keeps the
+ * scene it is on, whole, and this asks again.
  *
  * A scene chosen is the one the face is on, so with one chosen the hour
- * asks for no change. Nor does it before Kody has woken in the scene the
- * face is on: the wake-up to come takes the hour's scene by itself
- * (gui_face_kody_wake()).
+ * asks for no change. Nor does it before Kody has been put in the scene the
+ * face is on: what stands him there takes the hour's scene by itself.
  *
- * @param me The AO; Kody is seen, and no card is up.
+ * @param me The AO; Kody is out of sight.
  */
 static void gui_face_scene_hour(Gui * const me)
 {
     GuiSceneId const want = gui_face_scene_want(me);
 
-    if ( me->face_woke && (want != me->face_scene_on) )
+    if ( me->face_woke && (want != me->face_scene_on) && kgui_assets_scene_load(want) )
     {
-        if ( !kui_kody_is_reacting(me->face_kody) )
+        if ( 0 > me->face_hour )
         {
-            if ( 0 > me->face_hour )
-            {
-                KLOG_I(TAG, "face: the %s scene, the time unknown",
-                       kgui_assets_scene_name(want));
-            }
-            else
-            {
-                KLOG_I(TAG, "face: the %s scene, local hour %d",
-                       kgui_assets_scene_name(want), (int)me->face_hour);
-            }
-            gui_face_scene_set(me, want);
+            KLOG_I(TAG, "face: the %s scene, the time unknown, ahead of the next sight",
+                   kgui_assets_scene_name(want));
         }
+        else
+        {
+            KLOG_I(TAG, "face: the %s scene, local hour %d, ahead of the next sight",
+                   kgui_assets_scene_name(want), (int)me->face_hour);
+        }
+        gui_face_scene_set(me, want);
     }
 }
 
 /**
- * @brief Choose the face's scene: it is kept, and Kody wakes up in it.
+ * @brief Choose the face's scene: it is kept, and Kody is put in it.
  *
  * Where `config key="scene"` and the Screen card's Kody row end
- * (gui_scene_config()). The scene is a choice from here on, which the hour leaves alone, and
- * kgui/scene keeps its name for the next boot; a store that refuses is said,
- * and the scene holds until the restart. When it is another scene than the
- * one the face is on, the face goes on it (gui_face_scene_set()): Kody has
- * not woken in it yet, and the face's tick wakes him up in it the way it
- * does at boot (gui_face_kody_wake()), on its next pass while he is on the
- * glass - the face counts as seen afresh - and otherwise the next time the
- * face is seen, from under a card, from another screen, or once the panel
- * has answered. Nothing is played from here, so every wake-up starts from
- * the face's tick, whoever chose the scene. Choosing the scene he is in
- * already changes nothing on the glass: it stops the hour from picking.
+ * (gui_scene_config()). The scene is a choice from here on, which the hour
+ * leaves alone, and kgui/scene keeps its name for the next boot; a store that
+ * refuses is said, and the scene holds until the restart. When it is another
+ * scene than the one the face is on, the face goes on it
+ * (gui_face_scene_set()): Kody is not in it yet, and the face's tick puts him
+ * in it (gui_face_kody_wake()), on its next pass while he is on the glass -
+ * the face counts as seen afresh - and otherwise the next time the face is
+ * seen, from under a card, from another screen, or once the panel has
+ * answered. He is found there awake, in his loop, with a cut and no wake-up:
+ * that is played at a cold boot and out of Rest alone (face_wake_up). Nothing
+ * is played from here, so every play starts from the face's tick, whoever
+ * chose the scene. Choosing the scene he is in already changes nothing on the
+ * glass: it stops the hour from picking.
  *
  * @param me  The AO.
  * @param id  The scene: one of the active pack's, or KGUI_ASSETS_BUILTIN.
@@ -27570,25 +27585,27 @@ static void gui_face_scene_choose(Gui * const me, GuiSceneId id,
 #define GUI_FACE_ROUSE_PASSES 2U
 
 /**
- * @brief Wake Kody in the scene the face is on: its wake-up once, then its
- *        loop.
+ * @brief Put Kody in the scene the face is on: its wake-up once and then its
+ *        loop, out of Rest and at a cold boot; its loop alone any other time
+ *        (face_wake_up).
  *
- * The boot's first sight of the face, every choice of another scene and
- * every change of scene the hour makes come here, all by way of
- * gui_face_kody_wake() and so from one place in the face's tick. The
- * wake-up's last frame is the loop's first, and kui_kody_then() is asked
- * right after the play, where the hand-over cannot be missed; from there the
- * loop plays for as long as the face is seen. Whatever the player is doing
- * ends at once: two scenes share no pose to link at, so a change of scene is
- * a cut. A choice cuts a look and a wake-up still under way, and a second
- * one while the first wakes simply starts the newer scene; the hour's change
- * is not made until a look has ended (gui_face_scene_hour()). A window of
- * passes opens here, so the line that closes it counts this scene's passes
- * and no other's (gui_face_window_log()). A wake-up that cannot play (the
- * player says why) leaves the face to the time, and the next time the face
- * is seen tries it again. A scene of the pack whose files are not read yet
- * is waited for (KGUI_ASSETS_EV_SCENE comes back here), and one that cannot
- * play gives the face to the built-in scene.
+ * The boot's first sight of the face, the wake that ends Rest, every choice
+ * of another scene and every scene the hour brought while the face was away
+ * come here, all by way of gui_face_kody_wake() and so from one place in the
+ * face's tick. When he wakes up, the wake-up's last frame is the loop's
+ * first, and kui_kody_then() is asked right after the play, where the
+ * hand-over cannot be missed; from there, as when he is put straight in his
+ * loop, the loop plays for as long as the face is seen. Whatever the player
+ * is doing ends at once: two scenes share no pose to link at, so a change of
+ * scene is a cut. A choice cuts a look and a wake-up still under way, and a
+ * second one while the first plays simply starts the newer scene; the hour's
+ * change is never made on a face that is seen (gui_face_scene_hour()). A
+ * window of passes opens here, so the line that closes it counts this scene's
+ * passes and no other's (gui_face_window_log()). A play that cannot start
+ * (the player says why) leaves the face to the time and face_wake_up as it
+ * was, and the next time the face is seen tries it again. A scene of the pack
+ * whose files are not read yet is waited for (KGUI_ASSETS_EV_SCENE comes back
+ * here), and one that cannot play gives the face to the built-in scene.
  *
  * @param me The AO; Kody is on the glass.
  */
@@ -27625,18 +27642,36 @@ static void gui_face_kody_rouse(Gui * const me)
     {
         GuiSceneId const id = me->face_scene_on;
 
-        /* kui_kody_play() says why when it cannot. */
-        me->face_woke = kui_kody_play(me->face_kody, kgui_assets_wake(id),
-                                      false);
-        if ( me->face_woke )
+        bool const up = me->face_wake_up;
+
+        /* kui_kody_play() says why when it cannot. Out of Rest, and at a
+         * cold boot, he wakes up and then loops; any other time he is found
+         * awake, in his loop: back from an app the board has only just
+         * booted, and a wake-up on every return reads as a tic. */
+        if ( up )
         {
-            kui_kody_then(me->face_kody, kgui_assets_loop(id), true);
+            me->face_woke = kui_kody_play(me->face_kody, kgui_assets_wake(id), false);
+            if ( me->face_woke )
+            {
+                kui_kody_then(me->face_kody, kgui_assets_loop(id), true);
+            }
+        }
+        else
+        {
+            me->face_woke = kui_kody_play(me->face_kody, kgui_assets_loop(id), true);
         }
         if ( me->face_woke )
         {
+            const char *how = "is awake";
+
+            if ( up )
+            {
+                how = "wakes";
+            }
+            me->face_wake_up = false;
             /* The player holds this scene's descriptors and no other's now. */
             kgui_assets_scene_keep(id);
-            KLOG_D(TAG, "face: Kody wakes in the %s scene", kgui_assets_scene_name(id));
+            KLOG_D(TAG, "face: Kody %s in the %s scene", how, kgui_assets_scene_name(id));
         }
         gui_face_window_open(me);
     }
@@ -27665,21 +27700,24 @@ static void gui_face_kody_hide(Gui * const me)
 }
 
 /**
- * @brief The face has been seen: wake Kody.
+ * @brief The face has been seen: put Kody in his scene, or let him go on.
  *
- * The first time, at boot, he wakes up in the scene the face is to be on:
- * the one chosen, or while none is chosen the one the hour asks for
- * (gui_face_scene_want(), gui_face_kody_rouse()). So he does in every scene
- * the face has gone on since he last woke (gui_face_scene_set()): one chosen
- * on the face, which shows him the face afresh, one chosen while he is out
- * of sight - a scene the console set under a card or on another screen -
- * and the one the hour has just asked for (gui_face_scene_hour()). And so he
- * does whenever the wake-up could not play the last time.
+ * While he is not in the scene the face is on (face_woke), he is put in the
+ * one the face is to be on: the one chosen, or while none is chosen the one
+ * the hour asks for (gui_face_scene_want(), gui_face_kody_rouse()). That is
+ * the first sight of the face after a boot, the wake that ends Rest, and
+ * every scene the face has gone on since he was last put in one
+ * (gui_face_scene_set()): one chosen on the face, which shows him the face
+ * afresh, one chosen while he is out of sight - a scene the console set under
+ * a card or on another screen - and the one the hour asked for while the face
+ * was off the glass (gui_face_scene_hour()). And so it is whenever the play
+ * could not start the last time. He wakes up there at a cold boot and out of
+ * Rest, and is found awake in his loop any other time (face_wake_up).
  *
- * Every other time he has woken in this scene already, and goes on from
- * where he stood, wherever the pause that hid him caught him - in a look
- * too, which plays on to its end, the hour's change of scene waiting for
- * it.
+ * Every other time he is in this scene already, and goes on from where he
+ * stood, wherever the pause that hid him caught him - in a look too, which
+ * plays on to its end. The hour does not change his scene here: a face that
+ * stays on the glass keeps its scene past the hour.
  *
  * @param me The AO.
  */
@@ -28066,9 +28104,8 @@ static void gui_rest_check(Gui * const me)
  * What Kody stands on whenever Rest begins, and what a pack read again puts
  * him on. A scene that cannot play is left for
  * the built-in one. A scene whose files are not read yet is asked for, and
- * KGUI_ASSETS_EV_SCENE comes back (gui_assets_notify()). He counts as woken
- * in the scene from here, so the wake that ends Rest goes on with the loop
- * from its first frame (gui_face_kody_wake()) and plays no wake-up over it.
+ * KGUI_ASSETS_EV_SCENE comes back (gui_assets_notify()). Whatever he stands
+ * on, the wake that ends Rest plays his wake-up over it (gui_rest_leave()).
  *
  * @param me The AO; Kody has a player.
  * @return What he stands on, in words for the log; "no frame" when the
@@ -28119,11 +28156,10 @@ static const char *gui_rest_frame(Gui * const me)
  *
  * He stands on the first frame of his scene's loop (gui_rest_frame()),
  * wherever the press that rests the Lock caught him, paused so nothing is
- * rasterised from here on, and he stays woken in the scene: the wake that
- * ends Rest goes on from that frame (gui_face_kody_wake()), unless the hour
- * has asked for another scene by then. When the scene cannot be drawn he
- * stops on the frame he is on. A look asked for and not answered goes with
- * him.
+ * rasterised from here on. The wake that ends Rest plays his wake-up, in the
+ * scene the hour asks for by then (gui_rest_leave(), gui_face_kody_wake()).
+ * When the scene cannot be drawn he stops on the frame he is on. A look asked
+ * for and not answered goes with him.
  *
  * @param me The AO; Kody is on the glass, awake or not woken yet.
  */
@@ -28554,7 +28590,6 @@ static uint32_t gui_knock_wait(Gui const * const me, uint32_t next)
 #define GUI_FIRST_HOLD_MAX_MS   5000U    /* The longest the first frame waits to be whole. */
 #define GUI_HOME_WHOLE_MAX_MS    600U    /* The longest the way home from Apps waits for Kody. */
 #define GUI_WRITE_CANCEL_MS     5000U    /* A write called off speaks again after this. */
-#define GUI_DEEP_AFTER_REST_MS  1800000U /* Rest, with nobody there, until the count: 30 min. */
 #define GUI_DEEP_COUNT_MS       5000U    /* The count. */
 #define GUI_DEEP_ANSWER_MS      4000U    /* A rest not taken by then was refused. */
 #define GUI_DEEP_COUNT_TICK_MS  100U     /* The tick while the count stands. */
@@ -28588,6 +28623,23 @@ static void gui_deep_off(Gui * const me)
     me->deep_fading = false;
     me->deep_asked  = false;
     me->deep_forced = false;
+}
+
+/**
+ * @brief How long Rest lasts, with nobody there, until the count.
+ *
+ * The time "Turn off after" says: AO_LowPower's `off_after`, whose word this
+ * AO hears at the start and whenever it moves (gui_off_after_answer()). One
+ * time for the board's OFF, whichever of the two counts it: Rest no longer has
+ * a time of its own under a row that promised another.
+ *
+ * @param me The AO.
+ * @return The time in milliseconds; 0 when the setting is "never", and Rest
+ *         stays for good.
+ */
+static uint32_t gui_deep_after_ms(Gui const * const me)
+{
+    return kgui_rest_off_ms(me->off_word, KODE_LOWPOWER_OFF_AFTER_DEF_S * GUI_MS_PER_S);
 }
 
 /**
@@ -28653,7 +28705,7 @@ static void gui_deep_begin(Gui * const me)
         else
         {
             KLOG_N(TAG, "rest: nobody for %u s; the count before the deep rest",
-                   (unsigned)(GUI_DEEP_AFTER_REST_MS / 1000U));
+                   (unsigned)(gui_deep_after_ms(me) / GUI_MS_PER_S));
         }
         gui_tick_now(me);
     }
@@ -28662,7 +28714,9 @@ static void gui_deep_begin(Gui * const me)
 /**
  * @brief Rest's share of the deep rest: the wait, the count, and asking for it.
  *
- * On the battery only: a cable never sleeps.
+ * On the battery only: a cable never sleeps. The wait is counted from the
+ * entry into Rest, from the last press or touch, and from the cable leaving
+ * (Gui_running's POWER_EVT_SIG), whichever came last.
  *
  * @param me The AO, at Rest.
  */
@@ -28679,8 +28733,10 @@ static void gui_deep_tick(Gui * const me)
     }
     else if ( NULL == me->deep_warn )
     {
-        if ( (!me->vbus) && (!me->rest_knock) && (!me->rest_hint)
-            && ((now - me->deep_ms) >= GUI_DEEP_AFTER_REST_MS) )
+        uint32_t const after = gui_deep_after_ms(me);
+
+        if ( (0U != after) && (!me->vbus) && (!me->rest_knock) && (!me->rest_hint)
+            && ((now - me->deep_ms) >= after) )
         {
             gui_deep_begin(me);
         }
@@ -28782,15 +28838,19 @@ static void gui_rest_hint(Gui * const me)
 /**
  * @brief Paint the time at Rest, and move the face's content on its burn-in cycle each minute.
  *
- * The first paint of a Rest only takes its place in the cycle. The content
- * does not move while Kody is awake for the second press (rest_knock).
+ * The first paint of a Rest takes the content to the place this Rest starts
+ * at (gui_rest_enter()): as a movement while Kody falls asleep, so nothing
+ * jumps once he is still. With no fall the place is home, where it stands.
+ * Each minute after it is one step of the cycle, a pixel on each axis. The
+ * content does not move while Kody is awake for the second press (rest_knock).
  *
  * @param me The AO.
  */
 static void gui_rest_paint(Gui * const me)
 {
     uint32_t key;
-    bool     move = false;
+    bool     move  = false;
+    bool     first = false;
 
     gui_face_time_paint(me);
     key = me->face_min;
@@ -28803,6 +28863,7 @@ static void gui_rest_paint(Gui * const me)
         me->rest_painted = true;
         me->rest_key     = key;
         move             = true;
+        first            = true;
     }
     else if ( (key != me->rest_key) && !me->rest_knock )
     {
@@ -28820,7 +28881,16 @@ static void gui_rest_paint(Gui * const me)
     {
         kgui_rest_offset_t const at = kgui_rest_offset(me->rest_step);
 
-        kgui_screen_face_shift(at.x, at.y);
+        if ( first && ((uint8_t)GUI_FALL_NONE != me->rest_fall) )
+        {
+            /* Every frame is drawn until the veil is over (gui_tick_wait()),
+             * which is longer than this takes. */
+            kgui_screen_face_glide(at.x, at.y, KGUI_VEIL_MS);
+        }
+        else
+        {
+            kgui_screen_face_shift(at.x, at.y);
+        }
     }
 }
 
@@ -29100,10 +29170,13 @@ static uint32_t gui_tick_wait(Gui const * const me, uint32_t lvgl_next)
  * @brief The Lock goes to Rest: the entry of Gui_rest.
  *
  * In this order: an armed press and the bottom button's hold end, Kody stands
- * still on a frame of his scene, the face's content takes
- * its place in the burn-in cycle (gui_rest_paint()), and the glass starts to
- * dim. The clock, the date and the scene stay in colour. The tick slows down to
- * KGUI_REST_TICK_MS (gui_tick_wait()).
+ * still on a frame of his scene, the face's content sets off for this Rest's
+ * place in the burn-in cycle, past the one the Rest before stood at
+ * (kgui_rest_start(), gui_rest_paint()) - or stays home when Kody has no
+ * fall to move under - and the glass starts to dim. The date goes: it shows
+ * for a few seconds on waking, and the tick that takes it off does not run at
+ * Rest. The clock stays. The tick slows down to KGUI_REST_TICK_MS
+ * (gui_tick_wait()).
  *
  * @param me The AO.
  */
@@ -29118,6 +29191,21 @@ static void gui_rest_enter(Gui * const me)
     gui_rest_kody(me);
     me->face_painted = false;   /* the yellow pills go */
     me->rest_painted = false;
+    /* The date shows for a few seconds on waking and its end is counted by
+     * the awake Lock's tick, which does not run from here: a Rest entered
+     * inside those seconds would keep it for good. The hour stands alone. */
+    me->date_until_ms = 0U;
+    kgui_screen_face_date(false);
+    if ( (uint8_t)GUI_FALL_NONE != me->rest_fall )
+    {
+        me->rest_step = kgui_rest_start(me->rest_step);
+    }
+    else
+    {
+        /* He has no fall to hide the way in: this Rest stands at home,
+         * where the awake face is, rather than jump there. */
+        me->rest_step = 0U;
+    }
     me->deep_ms      = khal_time_ms();
     gui_rest_paint(me);
     if ( (uint8_t)GUI_FALL_NONE == me->rest_fall )
@@ -29130,11 +29218,12 @@ static void gui_rest_enter(Gui * const me)
 /**
  * @brief The Lock leaves Rest: the exit of Gui_rest, whatever it leaves for.
  *
- * A hint over the Rest face goes, the face's content goes back home, the glass comes back to the stored level, which
- * AO_Display is asked for first (gui_settle_begin()), and Kody is seen again:
- * the face's tick lets him go on from the frame he stands on, or wakes him in
- * the scene the hour asks for by then, and it comes at once rather than up to
- * KGUI_REST_TICK_MS late (gui_tick_now()). The Lock is woken from here, and
+ * A hint over the Rest face goes, the face's content goes back home, the
+ * glass comes back to the stored level, which AO_Display is asked for first
+ * (gui_settle_begin()), and Kody is seen again: the face's tick plays his
+ * wake-up, in the scene the hour asks for by then (face_wake_up), and it
+ * comes at once rather than up to KGUI_REST_TICK_MS late (gui_tick_now()).
+ * The Lock is woken from here, and
  * rests again after KGUI_WOKEN_REST_MS unless something touches it. A state
  * that takes the glass instead of the face hides Kody again on its way.
  *
@@ -29155,11 +29244,11 @@ static void gui_rest_leave(Gui * const me)
     kgui_hint_dismiss();
     /* Rest moved the content to save the panel. Home at a stroke is the jump
      * between the sleeping Kody and the waking one (measured up
-     * to 4 px on the Dot): it goes home while he leaps. The next Rest starts
-     * from home, as the apocrifa's does (kshell_face.c). */
+     * to 4 px on the Dot): it goes home while he leaps. The next Rest goes
+     * on from the place this one stood at (gui_rest_enter()). */
     kgui_screen_face_home(GUI_REST_HOME_DELAY_MS, GUI_REST_HOME_MS);
-    me->rest_step    = 0U;
     me->face_woke    = false;
+    me->face_wake_up = true;    /* out of Rest he wakes up */
     me->joke_ok      = true;   /* waking: the joke may come */
     me->kody_sight   = GUI_KODY_SEEN;
     me->woken        = true;
@@ -29287,14 +29376,11 @@ static void gui_face_window_log(Gui const * const me)
 /**
  * @brief Kody's share of the face's tick.
  *
- * In this order: while he can be seen and no scene is chosen, put the face
- * on the scene the hour asks for, once no look is under way
- * (gui_face_scene_hour()); wake him when the face has just been seen and no
- * card is up - in the scene chosen, or the hour's, when there is one, since
- * either shows him the face afresh (gui_face_scene_set()); answer a look; and close a window of passes that
- * has run its length, opening the next. The hour is the one the time paint
- * has just read, on the same tick. Nothing here transitions: the face's
- * tick hands up to the parent's as ever.
+ * In this order: put him in his scene when the face has just been seen and
+ * no card is up - the scene chosen, or the hour's (gui_face_kody_wake()) -;
+ * answer a look; and close a window of passes that has run its length,
+ * opening the next. Nothing here transitions: the face's tick hands up to
+ * the parent's as ever.
  *
  * Awake, he plays, and his scene loops for as long as the face is seen. Two
  * things stop him: the face's exit or a card over it, which pause him
@@ -29302,14 +29388,15 @@ static void gui_face_window_log(Gui const * const me)
  * still (gui_rest_kody()). At Rest the awake Lock's tick, and so this, does
  * not run.
  *
- * The hour's change is made before a look is answered, so a look recorded
- * as the hour moves finds Kody waking and is refused, and no row of looks
- * holds the hour back.
+ * The hour does not change his scene here. A change of scene is a cut, and
+ * it is made only while the face is off the glass (gui_face_scene_hour()): a
+ * face that stays on the glass keeps its scene past the hour, and no look
+ * waits for one.
  *
- * Until he has woken, nothing but a wake-up puts him on the glass: a face
- * whose wake-up could not play stays the time alone until it is seen again,
- * or another scene is chosen. No line closes a window of passes on such a
- * face: it would say a scene played that is not on the glass.
+ * Until he has been put in his scene, nothing else puts him on the glass: a
+ * face whose play could not start stays the time alone until it is seen
+ * again, or another scene is chosen. No line closes a window of passes on
+ * such a face: it would say a scene played that is not on the glass.
  *
  * @param me The AO.
  */
@@ -29330,8 +29417,9 @@ static void gui_face_kody_tick(Gui * const me)
     }
     if ( (GUI_KODY_HIDDEN != me->kody_sight) && (GUI_SHEET_NONE == me->sheet) )
     {
-        /* Seen, with nothing over the face: awake, or about to wake. */
-        gui_face_scene_hour(me);
+        /* Seen, with nothing over the face: awake, or about to wake. The
+         * hour's change of scene is not made here, in front of the person
+         * (gui_face_scene_hour()). */
         if ( GUI_KODY_SEEN == me->kody_sight )
         {
             gui_face_kody_wake(me);
@@ -29351,18 +29439,23 @@ static void gui_face_kody_tick(Gui * const me)
 }
 
 /**
- * @brief Have Kody in his box before the face has been seen: its hour, its
- *        scene and him on the first frame of his wake-up.
+ * @brief Have Kody in his box before the face is seen: its hour, its scene
+ *        and him on the first frame of what he will play - his wake-up at a
+ *        cold boot, his loop any other time.
  *
  * The face first seen behind a curtain, back from an app: the first frame was
- * Apps, so nobody woke him, and the curtain's picture would be a face without
- * him, who comes in when it lands. The first_hold's rule holds
- * here too: he is there from the first frame of the fade. The wake-up that
- * plays when the face lands starts from this very frame, so nothing jumps.
- * Nothing moves until then: he is paused (gui_kody_stand()).
+ * Apps, so nobody put him in his scene, and the curtain's picture would be a
+ * face without him, who comes in when it lands. The first_hold's rule holds
+ * here too: he is there from the first frame of the fade. What he plays when
+ * the face lands starts from this very frame, so nothing jumps. Nothing moves
+ * until then: he is paused (gui_kody_stand()).
+ *
+ * A face that has been seen and is away has its scene changed here when the
+ * hour asks for another (gui_face_scene_hour()), and he is stood in the new
+ * one in the same call.
  *
  * The scene's files are asked for here and read in the background, as the
- * face's own wake-up asks for them (kgui_assets_scene_load()): being asked
+ * face's own play asks for them (kgui_assets_scene_load()): being asked
  * again until they are in is harmless.
  *
  * @param me The AO.
@@ -29373,6 +29466,15 @@ static bool gui_face_kody_ready(Gui * const me)
 {
     bool whole = true;
 
+    if ( (NULL != me->face_kody) && me->face_woke && kgui_assets_ready()
+        && (GUI_KODY_HIDDEN == me->kody_sight) && (!me->at_rest)
+        && (lv_screen_active() != kgui_screen_face) )
+    {
+        /* The hour may have moved on while the face was away: its scene is
+         * changed here, out of sight, and he is stood in it below. */
+        gui_face_time_paint(me);
+        gui_face_scene_hour(me);
+    }
     if ( (NULL != me->face_kody) && (!me->face_woke)
         && (GUI_KODY_HIDDEN == me->kody_sight) )
     {
@@ -29396,9 +29498,15 @@ static bool gui_face_kody_ready(Gui * const me)
             else if ( kgui_assets_scene_load(id) )
             {
                 uint32_t const t0 = khal_time_ms();
+                /* The frame his play starts from (gui_face_kody_rouse()). */
+                const kui_kody_anim_t *first = kgui_assets_loop(id);
 
+                if ( me->face_wake_up )
+                {
+                    first = kgui_assets_wake(id);
+                }
                 me->face_scene_on = id;
-                gui_kody_stand(me, kgui_assets_wake(id));
+                gui_kody_stand(me, first);
                 me->face_stood = (uint16_t)id;
                 KLOG_N(TAG, "face: Kody stands in the %s scene before it is seen, "
                             "%u ms after boot, drawn in %u ms",
@@ -29448,19 +29556,21 @@ static bool gui_home_holds(Gui * const me)
 }
 
 /**
- * @brief On Apps, with the face not seen yet: get him ready, and let go a way
- *        home that waited for it.
+ * @brief Off the face - on Apps, in Settings - get him ready for the next
+ *        sight of it, in the scene the hour asks for by then, and let go a
+ *        way home that waited for it.
  *
  * Not while the first frame is held: that frame is Apps, and his read and his
- * first frame come after it, not in front of it.
+ * first frame come after it, not in front of it. Nor while the glass comes
+ * up from black after an app: drawing him takes two frames' time out of it.
  *
  * @param me The AO.
  */
 static void gui_face_ready_tick(Gui * const me)
 {
-    if ( (lv_screen_active() == kgui_screen_launcher) && (!me->first_hold)
+    if ( (lv_screen_active() != kgui_screen_face) && (!me->first_hold)
         && (!kgui_return_holds(&me->back)) && (!me->curtain_up)
-        && (GUI_SHEET_NONE == me->sheet) )
+        && (NULL == me->back_cover) && (GUI_SHEET_NONE == me->sheet) )
     {
         bool const whole = gui_face_kody_ready(me);
 
@@ -29619,8 +29729,9 @@ static void gui_face_tap(Gui * const me)
  * choice to the hour, with a warning, and the key as it is, for the pack
  * that has it. With none chosen the hour picks. Either way the face goes on
  * that scene afresh (gui_face_scene_set()): the players were stopped when
- * the old pack was retired, so Kody wakes up again, in it, on the face's
- * next tick while he is on the glass.
+ * the old pack was retired, so Kody is put in it again on the face's next
+ * tick while he is on the glass - in his loop, or waking up when a cold boot
+ * or Rest still owes him his wake-up (face_wake_up).
  *
  * @param me The AO.
  */
@@ -31176,7 +31287,7 @@ static void gui_scene_say(Gui const * const me)
  * are the pack's, which is not read yet: the name is kept as it is
  * (scene_stored) and resolved when the pack has been
  * (KGUI_ASSETS_EV_RESOLVED, gui_assets_resolved()). There a name the pack
- * has makes that scene the face's, as a choice: Kody wakes in it, and the
+ * has makes that scene the face's, as a choice: Kody is put in it, and the
  * hour leaves it alone. With no key no scene is chosen and the hour picks.
  * So it does for a name the pack does not have, and for a key that does not
  * read, each said with a warning; the key is left as it is, for the pack
@@ -31281,11 +31392,13 @@ static const char *gui_scene_word(Gui const * const me)
 /**
  * @brief Answer `config key="scene"`, choosing or forgetting first when asked.
  *
- * A scene to choose is chosen as a swipe chooses it (gui_face_scene_choose()):
- * kept, and Kody wakes up in it, on the face's next tick while he is on the
- * glass and otherwise the next time the face is seen. GUI_SCENE_AUTO forgets
- * the choice: the key goes from the store, and the hour picks from here on,
- * by its own rule (gui_face_kody_tick()). The name is resolved against the
+ * A scene to choose is chosen as the Screen card's row chooses it
+ * (gui_face_scene_choose()): kept, and Kody is put in it, on the face's next
+ * tick while he is on the glass and otherwise the next time the face is seen.
+ * GUI_SCENE_AUTO forgets the choice: the key goes from the store, and the
+ * hour picks from here on, by its own rule, which changes the scene the next
+ * time the face is off the glass (gui_face_scene_hour()). The name is
+ * resolved against the
  * active pack, and one it does not have is refused. Before the pack has been
  * read - Gui_waiting, or the first second of the face - the name is kept and
  * stored, and resolved with the pack. The value is the scene chosen, the one
@@ -32519,7 +32632,7 @@ static QState gui_lp_resume(Gui * const me)
         gui_buffers_align(me->disp);
     }
     kgui_screen_face_strip_free(&me->lp_strip);
-    kgui_screen_face_bare(false);
+    kgui_screen_face_bare(false, false);
     me->lp_parked = false;
     me->lp_rest   = false;
     /* The BOT that woke the board is Rest's first press (Gui_face's init). */
@@ -32693,7 +32806,7 @@ static void gui_lp_woke(Gui * const me, LowPowerStateEvt const * const s)
  * AO_Display, which writes the hour into the panel's memory each minute. The
  * same wakes as ever bring it back - TOP for the knock, BOT for the hint, the
  * cable, BLE, the broker - into Rest as it was, at the Rest level, and the
- * 30 minutes of Rest are a wake time given to AO_LowPower
+ * time Rest lasts (`off_after`) is a wake time given to AO_LowPower
  * (lowpower_wake_at()), so the board is up for the count when they end.
  */
 
@@ -32778,15 +32891,19 @@ static void gui_rest_sleep_tick(Gui * const me)
 /**
  * @brief Rest's park: the entry of Gui_rest_asleep.
  *
- * What gui_lp_park() does, with the Rest face for its page. The content takes
- * the next place of the burn-in cycle, since nothing moves on the glass while
- * the board sleeps: each sleep stands somewhere else. The face is drawn bare
- * of its clock, its date and its battery - the hour is AO_Display's from here,
- * written over a rectangle that would cut the battery in two, and the date
- * would stay a day behind - and that frame is the last the link carries. The
+ * What gui_lp_park() does, with the Rest face for its page. The content stays
+ * where this Rest put it, so nothing jumps as the board goes to sleep; only
+ * from an odd place of the burn-in cycle does it take the next one, a pixel
+ * away, for the hour's even pixels (kgui_rest_even()). Nothing moves on the
+ * glass while the board sleeps, and each Rest stands somewhere else
+ * (kgui_rest_start()). The face is drawn bare
+ * of its date and its battery - the hour is AO_Display's from here, written
+ * over a rectangle that would cut the battery in two, and the date would stay
+ * a day behind - with its clock left where the panel writes it again, so the
+ * hour never goes out, and that frame is the last the link carries. The
  * figures are rendered after it (gui_lp_park() says why), placed where the
- * face's clock stands at that place of the cycle. The time left of the 30
- * minutes of Rest is given to AO_LowPower before the answer, which is what
+ * face's clock stands at that place of the cycle. The time left of
+ * Rest (gui_deep_after_ms()) is given to AO_LowPower before the answer, which is what
  * wakes the board for the count; the round forgets times given before it.
  *
  * @param me The AO, at Rest and settled, with lp_round and lp_target set.
@@ -32795,6 +32912,7 @@ static void gui_rest_park(Gui * const me)
 {
     DisplayGlyphsEvt   glyphs;
     kgui_rest_offset_t at;
+    uint32_t           after;
     uint32_t           left;
     uint16_t           x = 0U;
     uint16_t           y = 0U;
@@ -32802,11 +32920,12 @@ static void gui_rest_park(Gui * const me)
     s_gui_state = "rest asleep";
     me->lp_rest = true;
     gui_lp_quiet(me);
-    me->rest_parks += 1U;
-    me->rest_step   = me->rest_parks;
+    me->rest_step = kgui_rest_even(me->rest_step);
     at = kgui_rest_offset(me->rest_step);
     kgui_screen_face_shift(at.x, at.y);
-    kgui_screen_face_bare(true);
+    /* The clock stays in the last frame: the panel writes the same figures
+     * over it, so the hour never goes out on the way to sleep. */
+    kgui_screen_face_bare(true, true);
     (void)lv_obj_invalidate(kgui_screen_face);
     lv_refr_now(me->disp);
     gui_flush_wait_cb(me->disp);
@@ -32832,13 +32951,27 @@ static void gui_rest_park(Gui * const me)
     else
     {
         KLOG_N(TAG, "rest: asleep with no hour on the glass (round %u)", (unsigned)me->lp_round);
+        /* Nobody will write the hour: the glass does not keep a stale one. */
+        kgui_screen_face_bare(true, false);
+        (void)lv_obj_invalidate(kgui_screen_face);
+        lv_refr_now(me->disp);
+        gui_flush_wait_cb(me->disp);
     }
     glyphs.rest_pct = gui_lp_rest_pct(me);
-    left = kgui_rest_left_ms(khal_time_ms() - me->deep_ms, GUI_DEEP_AFTER_REST_MS);
-    (void)lowpower_wake_at(me->lp_who, khal_time_us()
-                           + (((uint64_t)left + (uint64_t)GUI_REST_WAKE_SLACK_MS) * 1000ULL));
-    KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, the count in %u s",
-           (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN), (unsigned)(left / 1000U));
+    after = gui_deep_after_ms(me);
+    left  = kgui_rest_left_ms(khal_time_ms() - me->deep_ms, after);
+    if ( 0U != after )
+    {
+        (void)lowpower_wake_at(me->lp_who, khal_time_us()
+                               + (((uint64_t)left + (uint64_t)GUI_REST_WAKE_SLACK_MS) * 1000ULL));
+        KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, the count in %u s",
+               (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN), (unsigned)(left / GUI_MS_PER_S));
+    }
+    else
+    {
+        KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, no count (off_after never)",
+               (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN));
+    }
     display_glyphs_hand(&glyphs);
     lowpower_ready(me->lp_who, me->lp_round, false, NULL);
 }
@@ -32850,9 +32983,9 @@ static void gui_rest_park(Gui * const me)
  * clock back in place of the panel's; the glass is at the Rest level already
  * (AO_Display restores the level it was last asked for). A wake by TOP is the
  * knock, as is a TOP pressed while the glass was parked; a wake by BOT says
- * how to wake. Anything else - the cable, BLE, the broker, the 30 minutes -
+ * how to wake. Anything else - the cable, BLE, the broker, Rest's time -
  * lands on Rest as it was, and the tick decides from there: the count once the
- * 30 minutes are gone, or another sleep once Kody has settled again. A round
+ * time is gone, or another sleep once Kody has settled again. A round
  * that was given up, with the board never asleep, holds the next sleep back
  * until Rest asks again, so a busy owner does not take the glass down and up
  * on every retry of AO_LowPower's; one a person ended with a button does not.
@@ -32871,7 +33004,7 @@ static QState gui_rest_unpark(Gui * const me)
         gui_buffers_align(me->disp);
     }
     kgui_screen_face_strip_free(&me->lp_strip);
-    kgui_screen_face_bare(false);
+    kgui_screen_face_bare(false, false);
     me->lp_parked   = false;
     me->lp_rest     = false;
     me->lp_woke_bot = false;
@@ -33089,6 +33222,10 @@ void Gui_ctor(void)
     me->kody_sight      = GUI_KODY_HIDDEN;
     me->face_stood      = KUI_PACK_NONE;
     me->face_woke       = false;
+    me->face_wake_up    = true;
+    me->back_cover      = NULL;
+    me->back_cover_on   = false;
+    me->back_cover_ms   = 0U;
     /* The Lock is awake, nobody woke it, and no cable is asked to keep it so;
      * the glass is at the level the store holds, until Rest dims it. */
     me->at_rest         = false;
@@ -33473,6 +33610,9 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                 }
                 gui_request_list(me);
                 gui_request_installed(me);
+                /* How long Rest lasts before the count is AO_LowPower's
+                 * `off_after`: heard now, and again whenever it moves. */
+                gui_off_after_ask();
                 /* Kody's pack, read since Gui_initial, may have ended already:
                  * what it asks of the face is done now the face exists. */
                 if ( me->assets_owed )
@@ -33489,6 +33629,13 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                  * its scene and Kody standing in it, Apps with its rows. */
                 me->first_hold    = true;
                 me->first_hold_ms = khal_time_ms();
+                /* A cold boot greets with his wake-up; back from an app he
+                 * is found awake, and the glass comes up from the app's black. */
+                me->face_wake_up  = (boot_reason() != KBOOT_FROM_APP);
+                if ( !me->face_wake_up )
+                {
+                    gui_back_cover_put(me);
+                }
                 if ( gui_return_begin(me) )
                 {
                     status = Q_TRAN(&Gui_returning);
@@ -33798,11 +33945,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
 
                 next = lv_timer_handler();
                 gui_pass_measure(me, t0, (me->flushes != flushes));
+                gui_back_cover_tick(me, true);
             }
             else
             {
                 /* The first frame after an app waits for the installed list
                  * (Gui_returning): the glass stays black until it may go. */
+                gui_back_cover_tick(me, false);
             }
             /* Reduced motion's frame of fade, once a pass has drawn it. */
             gui_fade_tick(me);
@@ -34460,6 +34609,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 /* The cable that kept the Lock awake is out: Rest counts from
                  * here, not from an input that was long ago. */
                 gui_idle_rearm(me);
+            }
+            if ( me->at_rest && was_vbus && (!p->vbus) )
+            {
+                /* On a cable Rest counts nothing down, and the time spent on
+                 * one is not time with nobody there: the wait for the count
+                 * to OFF starts as the cable leaves. */
+                me->deep_ms = khal_time_ms();
             }
             me->chg_state = (uint8_t)chg_state;
             {
@@ -35743,6 +35899,79 @@ static void gui_first_hold_tick(Gui * const me)
     }
 }
 
+/** @brief How long the glass takes to come up from black after an app: 12 ticks of 33 ms. */
+#define GUI_BACK_FADE_MS  396U
+
+/**
+ * @brief Back from an app: cover the glass in black, for the first frame to
+ *        come up from.
+ *
+ * The app left the glass black and the boot kept it so. Lit at a stroke, the
+ * first frame is a flash; it comes up from that black instead, as the launch
+ * went down to it. The cover stands on LVGL's system layer, over every screen
+ * and every card, and is in none of their pictures.
+ *
+ * @param me The AO; the display is up.
+ */
+static void gui_back_cover_put(Gui * const me)
+{
+    lv_obj_t * const cover = lv_obj_create(lv_layer_sys());
+
+    if ( NULL != cover )
+    {
+        lv_obj_remove_style_all(cover);
+        lv_obj_set_clickable(cover, false);
+        lv_obj_set_pos(cover, 0, 0);
+        lv_obj_set_size(cover, (int32_t)KBSP_LCD_H_RES, (int32_t)KBSP_LCD_V_RES);
+        lv_obj_set_style_bg_color(cover, KUI_COLOR_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, LV_PART_MAIN);
+    }
+    me->back_cover    = cover;
+    me->back_cover_on = false;
+}
+
+/**
+ * @brief The cover's share of the tick: it fades from the first pass that
+ *        drew, and goes.
+ *
+ * Counted from the first drawn pass and not from the boot, so the wait for
+ * the installed list (Gui_returning) takes nothing off the fade.
+ *
+ * @param me   The AO.
+ * @param drew Whether this tick's pass ran.
+ */
+static void gui_back_cover_tick(Gui * const me, bool drew)
+{
+    if ( NULL != me->back_cover )
+    {
+        uint32_t const now = khal_time_ms();
+
+        if ( !me->back_cover_on )
+        {
+            if ( drew )
+            {
+                me->back_cover_on = true;
+                me->back_cover_ms = now;
+            }
+        }
+        else if ( (now - me->back_cover_ms) >= GUI_BACK_FADE_MS )
+        {
+            lv_obj_delete(me->back_cover);
+            me->back_cover = NULL;
+            KLOG_D(TAG, "back from an app: the glass is up from black, %u ms after its first pass",
+                   (unsigned)(now - me->back_cover_ms));
+        }
+        else
+        {
+            uint32_t const left = GUI_BACK_FADE_MS - (now - me->back_cover_ms);
+
+            lv_obj_set_style_bg_opa(me->back_cover,
+                                    (lv_opa_t)((left * (uint32_t)LV_OPA_COVER) / GUI_BACK_FADE_MS),
+                                    LV_PART_MAIN);
+        }
+    }
+}
+
 /**
  * @brief The first frame after an app waits here, with the glass black.
  *
@@ -35849,9 +36078,11 @@ static QState Gui_returning(Gui * const me, QEvt const * const e)
  * list was off the glass, and a second round at once would only put two
  * manifest questions in flight.
  *
- * KODY LIVES HERE, in face_scene: he wakes the first time the face is seen,
- * and again in every scene chosen or brought by the hour; his scene then
- * loops for as long as the face is seen, and he looks at you when asked. He
+ * KODY LIVES HERE, in face_scene: he wakes up at a cold boot and out of Rest,
+ * and nowhere else - back from an app, or in a scene chosen or brought by the
+ * hour, he is found awake in his loop (face_wake_up). The hour's scene is
+ * changed only while the face is off the glass (gui_face_scene_hour()). His
+ * scene loops for as long as the face is seen, and he looks at you when asked. He
  * is drawn only while he can be seen: the exit and a card over the face
  * pause him, and the face landing again - or the card going - lets him go
  * on, in the scene chosen, or with none chosen in the scene the hour asks
@@ -36008,10 +36239,8 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
         }
         case GUI_TICK_SIG: {
             /* Side effects, then the parent's tick as ever: the time first,
-             * then Kody, whose scene - with none chosen - follows the hour
-             * the paint has just read, then the count to Rest. The held
-             * bottom button is the arc's (gui_off_arc_tick(), in the
-             * parent's tick). */
+             * then Kody, then the count to Rest. The held bottom button is
+             * the arc's (gui_off_arc_tick(), in the parent's tick). */
             gui_face_time_paint(me);
             if ( (0U != me->date_until_ms)
                 && ((int32_t)(khal_time_ms() - me->date_until_ms) >= 0) )
@@ -36212,7 +36441,7 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
  * On the battery, once Kody has settled, Rest asks for ASLEEP and sleeps in
  * its child Gui_rest_asleep, the face on the glass and the hour in the panel's
  * memory; the wakes come back here as they were (gui_rest_unpark()), and the
- * 30 minutes before the count are a wake time of AO_LowPower's.
+ * time before the count is a wake time of AO_LowPower's.
  *
  * @param me The AO.
  * @param e  The event.

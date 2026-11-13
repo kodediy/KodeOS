@@ -18,8 +18,9 @@ extern "C" {
 #define KGUI_REST_TICK_MS      1000U  /**< How long AO_Gui's tick waits at Rest, in milliseconds. */
 #define KGUI_SETTLE_STEP_MS    90U    /**< Between two steps of the brightness, dimming or waking, in milliseconds. */
 #define KGUI_WOKEN_REST_MS     60000U /**< How long a Lock woken and left alone stays awake before it rests again, in milliseconds. */
-#define KGUI_REST_SHIFT_PX     4      /**< The farthest the face's content moves from its place on each axis, in pixels. */
-#define KGUI_REST_CYCLE_LEN    9U     /**< Places in the cycle of offsets: three on each axis. */
+#define KGUI_REST_SHIFT_PX     4      /**< The farthest the face's content moves from its place across, in pixels; one less down. */
+#define KGUI_REST_CYCLE_LEN    48U    /**< Places in the cycle of offsets: 16 across and 12 down, together again after 48. */
+#define KGUI_REST_NEXT_STEPS   2U     /**< How far along the cycle one Rest starts from the one before it. */
 #define KGUI_SLEEP_CUE_MS      990U   /**< BOT held this long on the face and Kody starts to fall asleep (30 ticks of 33 ms). */
 #define KGUI_VEIL_MS           363U   /**< Kody's last frame fading out over the next one, colour to outline and back: the apocrifa's 350 ms on the 33 ms grid (11 ticks). */
 #define KGUI_FALL_MAX_MS       3300U  /**< The longest <scene>_duerme takes (90 frames) and a little: past it the fall goes on regardless. */
@@ -52,13 +53,37 @@ typedef struct {
 /**
  * @brief One place of the fixed cycle of offsets.
  *
- * The cycle starts at home, then visits the eight places a step of
- * KGUI_REST_SHIFT_PX on each axis makes round it, once each, and starts again.
+ * The cycle starts at home and goes one pixel across and one down at every
+ * step, turning back at KGUI_REST_SHIFT_PX across and one less down, so a step
+ * is too small to be seen as a move and the content still covers the whole
+ * box over the cycle. Both axes move at every step: the even places stand on
+ * even pixels and the odd ones on odd pixels.
  *
  * @param step The place: any number, taken modulo KGUI_REST_CYCLE_LEN.
  * @return Its offset, at most KGUI_REST_SHIFT_PX on either axis.
  */
 kgui_rest_offset_t kgui_rest_offset(uint32_t step);
+
+/**
+ * @brief The place a Rest starts at, from where the Rest before it stood.
+ *
+ * KGUI_REST_NEXT_STEPS on, and on an even place: a Rest on the battery sleeps
+ * where it starts, with the hour written on even pixels (kgui_rest_strip_at()),
+ * and no two Rests in a row sleep in the same place.
+ *
+ * @param step Where the Rest before stood; any number.
+ * @return The place, below KGUI_REST_CYCLE_LEN and even.
+ */
+uint32_t kgui_rest_start(uint32_t step);
+
+/**
+ * @brief The place the glass sleeps at, from where the content stands.
+ *
+ * @param step Where the content stands; any number.
+ * @return @p step when its place is on even pixels, the next one otherwise:
+ *         one pixel away on each axis. Below KGUI_REST_CYCLE_LEN.
+ */
+uint32_t kgui_rest_even(uint32_t step);
 
 /* ---- Asleep at Rest ----------------------------------------------------------- */
 
@@ -94,11 +119,26 @@ bool kgui_rest_sleep_due(kgui_rest_sleep_t const *s);
 uint32_t kgui_rest_left_ms(uint32_t gone_ms, uint32_t after_ms);
 
 /**
+ * @brief How long Rest lasts before the count to OFF, from the word of
+ *        `off_after` ("Turn off after").
+ *
+ * The words are AO_LowPower's and kgui keeps no copy of them: a number and
+ * its unit - m, h or d - or anything else, which is "never".
+ *
+ * @param word   The setting's word: "20m", "1h", "7d", "never".
+ * @param def_ms What to answer while no word has been heard (NULL or empty).
+ * @return The time in milliseconds; 0 for never. A time past what 32 bits of
+ *         milliseconds hold is the longest they do.
+ */
+uint32_t kgui_rest_off_ms(const char *word, uint32_t def_ms);
+
+/**
  * @brief Where the hour's rectangle goes on the sleeping glass.
  *
  * The face's own clock at home, moved by the place of the cycle the content
  * stands at, on an even column and row (the panel's memory window asks for
- * them; KGUI_REST_SHIFT_PX is even, so an even home keeps every place exact).
+ * them; the glass sleeps on an even place of the cycle, kgui_rest_even(), so
+ * an even home keeps the hour exactly where the face drew it).
  *
  * @param home_x  The rectangle's left edge at home, in glass pixels.
  * @param home_y  Its top edge at home.

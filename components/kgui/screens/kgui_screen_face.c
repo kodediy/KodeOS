@@ -142,6 +142,8 @@ static lv_obj_t *s_arc_right;
 static lv_obj_t *s_arc_line;
 /** "Turn off", where the date stands while the arc is up. */
 static lv_obj_t *s_arc_words;
+/** Whether a stripped screen keeps its clock (kgui_screen_face_bare()). */
+static bool s_bare_clock;
 /** Whether the screen is stripped to the scene (kgui_screen_face_bare()). */
 static bool s_bare;
 /** Whether the arc is up. */
@@ -408,18 +410,19 @@ void kgui_screen_face_prompt(bool set_time, bool zone)
     s_prompt_zone = zone;
     if ( NULL != s_shifted[FACE_SHIFT_TIME] )
     {
-        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], s_bare || s_prompt_set);
+        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], (s_bare && !s_bare_clock) || s_prompt_set);
     }
     prompt_place();
 }
 
-void kgui_screen_face_bare(bool bare)
+void kgui_screen_face_bare(bool bare, bool clock)
 {
-    s_bare = bare;
+    s_bare       = bare;
+    s_bare_clock = bare && clock;
     prompt_place();
     if ( NULL != s_shifted[FACE_SHIFT_TIME] )
     {
-        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], bare || s_prompt_set);
+        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], (bare && !clock) || s_prompt_set);
     }
     if ( NULL != s_shifted[FACE_SHIFT_DATE] )
     {
@@ -509,6 +512,49 @@ void kgui_screen_face_shift(int32_t dx, int32_t dy)
 {
     (void)lv_anim_delete(&s_home_x, NULL);
     face_shift_write(dx, dy);
+}
+
+/** @brief Where the content is going: kgui_screen_face_glide(). */
+static int32_t s_glide_x;
+static int32_t s_glide_y;
+
+/** @brief An lv_anim's setter: the way to the place left, in 1/256ths of it. */
+static void face_glide_step(void *var, int32_t left)
+{
+    (void)var;
+    face_shift_write(s_glide_x + lv_map(left, 0, 256, 0, s_home_x - s_glide_x),
+                     s_glide_y + lv_map(left, 0, 256, 0, s_home_y - s_glide_y));
+}
+
+void kgui_screen_face_glide(int32_t dx, int32_t dy, uint32_t ms)
+{
+    lv_obj_t const *from = NULL;
+
+    for ( uint32_t i = 0U; (FACE_SHIFTS > i) && (NULL == from); i++ )
+    {
+        from = s_shifted[i];
+    }
+    (void)lv_anim_delete(&s_home_x, NULL);
+    if ( NULL == from )
+    {
+        return;
+    }
+    s_home_x  = lv_obj_get_style_translate_x(from, LV_PART_MAIN);
+    s_home_y  = lv_obj_get_style_translate_y(from, LV_PART_MAIN);
+    s_glide_x = dx;
+    s_glide_y = dy;
+    if ( (dx != s_home_x) || (dy != s_home_y) )
+    {
+        lv_anim_t a;
+
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, &s_home_x);
+        lv_anim_set_exec_cb(&a, face_glide_step);
+        lv_anim_set_values(&a, 256, 0);
+        lv_anim_set_duration(&a, ms);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+        (void)lv_anim_start(&a);
+    }
 }
 
 /** @brief An lv_anim's setter: the way home left, in 1/256ths of it. */
