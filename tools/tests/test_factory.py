@@ -216,7 +216,8 @@ class TestFullPass(Base):
         self.assertEqual(res["lock"], "ok")
         self.assertEqual(res["steps"]["lock"]["status"], "PASS")
         # A production run writes the NFC tag and reads it back.
-        self.assertEqual(r.sent("nfc_write"), [f'nfc_write text="{sim.SERIAL}"'])
+        self.assertEqual(r.sent("nfc_write"), [f'nfc_write text="{final.NFC_OTHER_TEXT}"',
+                                               f'nfc_write text="{sim.SERIAL}"'])
         # The pass is told to the Kode (it runs its factory reset), then locked.
         self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=pass"])
         self.assertEqual(r.sent("test_dot_lock"), ["test_dot_lock confirm=on"])
@@ -231,16 +232,41 @@ class TestFullPass(Base):
                                 if p.suffix in (".csv", ".html") or p.name.startswith("2")), [])
 
 
-class TestOptional(Base):
+class TestNfc(Base):
 
-    def test_a_failed_nfc_is_reported_and_the_kode_still_passes(self):
+    def test_a_failed_nfc_fails_the_kode(self):
         r = self.run_case(sim.Scenario("nfc"))
-        self.assertEqual(r.rc, 0, r.stdout[-2000:])
+        self.assertEqual(r.rc, 1, r.stdout[-2000:])
         res = r.results()
-        self.assertEqual(res["verdict"], "PASS")
+        self.assertEqual(res["verdict"], "FAIL")
         bad = {k: v["status"] for k, v in res["steps"].items() if v["status"] != "PASS"}
         self.assertEqual(bad, {"nfc": "FAIL"})
-        self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=pass"])
+        self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=fail"])
+
+    def test_the_serial_is_written_after_another_text(self):
+        r = self.run_case(sim.Scenario())
+        texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
+        self.assertEqual(texts, [final.NFC_OTHER_TEXT, r.results()["serial"]])
+        self.assertEqual(r.results()["steps"]["nfc"]["status"], "PASS")
+
+
+class TestRfidWrite(Base):
+
+    def test_the_id_that_counts_is_written_after_another_one(self):
+        r = self.run_case(sim.Scenario())
+        ids = [fields(ln.partition(" ")[2])["id"] for ln in r.sent("rfid_write")]
+        self.assertEqual(len(ids), 2, ids)
+        self.assertNotEqual(ids[0], ids[1])
+        self.assertEqual(ids[1], final.rfid_id_of(r.results()["info"]["mac"]))
+        self.assertEqual(r.results()["steps"]["rfid"]["status"], "PASS")
+
+    def test_a_tag_that_already_holds_the_id_does_not_pass_a_dead_write(self):
+        own = final.rfid_id_of(self.run_case(sim.Scenario()).results()["info"]["mac"])
+        r = self.run_case(sim.Scenario(rfid_tag=own, rfid_dead_write=True))
+        res = r.results()
+        self.assertEqual(res["steps"]["rfid"]["status"], "FAIL", res["steps"]["rfid"])
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=fail"])
 
 
 class TestPhotos(Base):

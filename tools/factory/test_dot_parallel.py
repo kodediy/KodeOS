@@ -88,6 +88,9 @@ class Parallel(unittest.TestCase):
                                operator_sim=False, no_write=False, no_place=False, port="-", discover=False,
                                no_open=True)
         st = final.Station(a)
+        # The mechanism is what is under test: every block beside the operator,
+        # whatever the template leaves out of it.
+        st.cfg["parallel_with_operator"] = list(final.BACKGROUND)
         st.link, st.outdir = link, self.tmp
         st.info = dict(serial="S", mac="38:44:be:1c:1d:44", kodeos="-", c5="-", date="-")
         order = []
