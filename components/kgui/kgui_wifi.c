@@ -60,15 +60,25 @@ const char *kgui_ble_pair_words(bool open, bool wait, bool linked)
     return words;
 }
 
-const char *kgui_wifi_fail_words(uint8_t fail)
+const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi)
 {
     const char *words = "Could not join";
 
     if ( (uint8_t)KDRV_WIFI_FAIL_PASSWORD == fail )
     {
+        /* The network turned the password down, and said so. */
+        words = "Wrong password";
+    }
+    else if ( (uint8_t)KDRV_WIFI_FAIL_HANDSHAKE == fail )
+    {
         /* The handshake did not finish. The stack gives one reason for a
-         * wrong password and for a signal that went during it. */
-        words = "Wrong password, or signal lost";
+         * wrong password and for a signal that went during it: a network
+         * heard weakly lost the signal, any other had the password wrong. */
+        words = "Wrong password";
+        if ( ((int8_t)KGUI_WIFI_RSSI_NONE != rssi) && ((int8_t)KGUI_WIFI_WEAK_DBM > rssi) )
+        {
+            words = "Signal lost";
+        }
     }
     else if ( (uint8_t)KDRV_WIFI_FAIL_NOT_FOUND == fail )
     {
