@@ -16622,10 +16622,8 @@ static void gui_curtain_look(Gui * const me, lv_obj_t const * const shot)
     {
         me->face_painted = false;
         gui_face_time_paint(me);
-        /* The picture is the face as it will land: on the scene the hour
-         * asks for by now, with him standing in it when he can be, and with
-         * the date of a face nobody has seen since the boot
-         * (gui_awake_events()). */
+        /* The picture has him in it when he can be, and the date of a face
+         * nobody has seen since the boot (gui_awake_events()). */
         (void)gui_face_kody_ready(me);
         if ( !me->date_seen_boot )
         {
@@ -16699,6 +16697,12 @@ static bool gui_curtain_start(Gui * const me, bool aim)
     bool                         started = false;
     kgui_curtain_spec_t          spec;
 
+    /* A curtain that shows the face shows it as it will be: the hour's scene,
+     * and Kody standing in it, before its picture is taken. */
+    if ( lv_screen_active() != kgui_screen_face )
+    {
+        (void)gui_face_kody_ready(me);
+    }
     /* The pictures are the curtain's: a page that grows on them ends. */
     gui_page_grow_cut(me);
     gui_level_grow_cut(me);
