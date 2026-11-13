@@ -65,14 +65,74 @@ void test_a_write_that_is_no_app_drops_the_face(void)
     TEST_ASSERT_EQUAL_INT(KGUI_WFACE_KEEP, kgui_wface_report(&w, false, ""));
 }
 
-void test_an_app_report_with_no_name_drops_a_face_of_another_write(void)
+void test_an_app_report_with_no_name_keeps_the_face_and_asks_its_folder_again(void)
 {
     kgui_wface_t w = { 0 };
 
     (void)kgui_wface_report(&w, true, "snake");
-    /* A write whose project is not known yet: it is not the one before. */
-    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_DROP, kgui_wface_report(&w, true, ""));
+    w.owed = false;                              /* its folder was asked */
+    /* The next transfer on the card, its image still unread: the install a
+     * fetch announced, or an install that starts again after its copies. */
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_AGAIN, kgui_wface_report(&w, true, ""));
+    TEST_ASSERT_TRUE_MESSAGE(kgui_wface_is(&w, "snake"),
+        "the card lost its face between a fetch and the install it announced");
+    TEST_ASSERT_TRUE_MESSAGE(w.owed,
+        "the folder the transfer before may have written was not asked again");
+}
+
+void test_a_nameless_stretch_asks_the_folder_once(void)
+{
+    kgui_wface_t w = { 0 };
+
+    (void)kgui_wface_report(&w, true, "snake");
+    (void)kgui_wface_report(&w, true, "");
+    w.owed = false;                              /* asked again */
+    /* The same report every second while a download opens. */
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_KEEP, kgui_wface_report(&w, true, ""));
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_KEEP, kgui_wface_report(&w, true, ""));
+    TEST_ASSERT_FALSE_MESSAGE(w.owed, "every second would ask the folder again");
+    TEST_ASSERT_TRUE(kgui_wface_is(&w, "snake"));
+}
+
+void test_the_image_naming_the_same_app_changes_nothing(void)
+{
+    kgui_wface_t w = { 0 };
+
+    (void)kgui_wface_report(&w, true, "snake");
+    (void)kgui_wface_report(&w, true, "");
+    w.owed = false;
+    /* The first chunk is read and names the app the card already wears. */
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_KEEP, kgui_wface_report(&w, true, "snake"));
+    TEST_ASSERT_FALSE(w.owed);
+    /* A second nameless stretch (the install starts again) asks once more. */
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_AGAIN, kgui_wface_report(&w, true, ""));
+    TEST_ASSERT_TRUE(w.owed);
+}
+
+void test_the_image_naming_another_app_takes_its_face(void)
+{
+    kgui_wface_t w = { 0 };
+
+    (void)kgui_wface_report(&w, true, "ladder");   /* what the fetch was for */
+    (void)kgui_wface_report(&w, true, "");
+    w.owed = false;
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_TAKE, kgui_wface_report(&w, true, "snake"));
+    TEST_ASSERT_TRUE(kgui_wface_is(&w, "snake"));
+    TEST_ASSERT_TRUE(w.owed);
+}
+
+void test_a_write_that_is_no_app_drops_a_face_kept_through_a_nameless_stretch(void)
+{
+    kgui_wface_t w = { 0 };
+
+    (void)kgui_wface_report(&w, true, "snake");
+    (void)kgui_wface_report(&w, true, "");
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_DROP, kgui_wface_report(&w, false, ""));
     TEST_ASSERT_FALSE(kgui_wface_has(&w));
+    TEST_ASSERT_FALSE(w.owed);
+    /* And the next card starts clean: a nameless report asks nothing. */
+    TEST_ASSERT_EQUAL_INT(KGUI_WFACE_KEEP, kgui_wface_report(&w, true, ""));
+    TEST_ASSERT_FALSE(w.owed);
 }
 
 void test_the_end_of_a_write_forgets_the_face(void)
@@ -119,7 +179,11 @@ int main(void)
     RUN_TEST(test_a_report_that_names_nobody_keeps_a_card_with_no_face);
     RUN_TEST(test_another_app_takes_the_face_over);
     RUN_TEST(test_a_write_that_is_no_app_drops_the_face);
-    RUN_TEST(test_an_app_report_with_no_name_drops_a_face_of_another_write);
+    RUN_TEST(test_an_app_report_with_no_name_keeps_the_face_and_asks_its_folder_again);
+    RUN_TEST(test_a_nameless_stretch_asks_the_folder_once);
+    RUN_TEST(test_the_image_naming_the_same_app_changes_nothing);
+    RUN_TEST(test_the_image_naming_another_app_takes_its_face);
+    RUN_TEST(test_a_write_that_is_no_app_drops_a_face_kept_through_a_nameless_stretch);
     RUN_TEST(test_the_end_of_a_write_forgets_the_face);
     RUN_TEST(test_an_answer_is_the_cards_only_by_its_project);
     RUN_TEST(test_a_name_longer_than_a_project_is_cut_not_overrun);

@@ -15025,7 +15025,11 @@ static void gui_write_face_take(Gui * const me)
 }
 
 /**
- * @brief A report of a write: keep, drop or take the face its card wears.
+ * @brief A report of a write: keep, drop or take the face its card wears, or
+ *        ask its folder again.
+ *
+ * Asked again, the face stays on the card as it is: the folder's answer is
+ * written over it and drawn when it has all arrived (gui_write_face_settle()).
  *
  * @param me The AO.
  * @param p  The report.
@@ -15039,10 +15043,19 @@ static void gui_write_face_report(Gui * const me, const AppProgressEvt *p)
     if ( KGUI_WFACE_TAKE == act )
     {
         gui_write_face_take(me);
+        gui_write_face_show(me);
     }
-    if ( KGUI_WFACE_KEEP != act )
+    else if ( KGUI_WFACE_DROP == act )
     {
         gui_write_face_show(me);
+    }
+    else if ( KGUI_WFACE_AGAIN == act )
+    {
+        gui_ask_next_appdata(me);
+    }
+    else
+    {
+        /* The same app, or still nobody. */
     }
 }
 
