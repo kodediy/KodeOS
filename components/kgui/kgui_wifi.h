@@ -46,12 +46,27 @@ const char *kgui_radio_words(kgui_radio_view_t const *v);
  */
 const char *kgui_ble_pair_words(bool open, bool wait, bool linked);
 
+/** @brief Under this many dBm a network is heard too weakly to say a handshake
+ *         that timed out was the password's doing. */
+#define KGUI_WIFI_WEAK_DBM   (-75)
+
+/** @brief A network nobody heard before its join: a hidden one, whose name is typed. */
+#define KGUI_WIFI_RSSI_NONE  0
+
 /**
  * @brief Why a join failed, in the hint's words.
+ *
+ * A handshake that timed out is a wrong password or a signal that went during
+ * it, and the stack gives one reason for both. How the network was heard when
+ * it was chosen decides: weaker than KGUI_WIFI_WEAK_DBM it is the signal,
+ * otherwise the password. Each answer fits one line of the hint.
+ *
  * @param fail kdrv_wifi_fail_t, as WifiStateEvt carries it.
- * @return "Wrong password, or signal lost", "Network not found", or "Could not join".
+ * @param rssi How the network was heard when it was chosen, dBm, or
+ *             KGUI_WIFI_RSSI_NONE.
+ * @return "Wrong password", "Signal lost", "Network not found", or "Could not join".
  */
-const char *kgui_wifi_fail_words(uint8_t fail);
+const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi);
 
 /**
  * @brief Whether the Kode channel's wait means the network reaches nothing.

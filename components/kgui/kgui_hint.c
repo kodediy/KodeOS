@@ -98,15 +98,51 @@ static void hint_fit(const char *words)
 /**
  * @brief Put the words over the top band's rows: the hint is shown.
  *
- * The caller starts or stops the clock.
+ * The caller starts or stops the clock. The colour is the label's own, over
+ * the look every hint shares: the kit's red for words that say something
+ * failed, the look's cream for the rest.
  *
  * @param words The line.
+ * @param alert The words say something failed.
  */
-static void hint_put(const char *words)
+static void hint_put(const char *words, bool alert)
 {
+    lv_color_t ink = KUI_COLOR_TEXT_ON_BG;
+
+    if ( alert )
+    {
+        ink = KUI_COLOR_DANGER;
+    }
+    lv_obj_set_style_text_color(s_hint, ink, LV_PART_MAIN);
     lv_label_set_text(s_hint, words);
     hint_fit(words);
     lv_obj_set_hidden(s_hint, false);
+}
+
+/**
+ * @brief Show words that end by themselves, and start their time.
+ *
+ * @param words The line, a literal or a string that stays for the call.
+ * @param ms    How long they stay, in milliseconds.
+ * @param alert The words say something failed.
+ */
+static void hint_timed(const char *words, uint32_t ms, bool alert)
+{
+    if ( NULL != words )
+    {
+        KLOG_I(TAG, "hint: %s", words);
+        s_hint_held = NULL;
+        if ( NULL != s_hint )
+        {
+            hint_put(words, alert);
+            lv_timer_set_period(s_hint_timer, ms);
+            lv_timer_reset(s_hint_timer);
+            lv_timer_resume(s_hint_timer);
+            s_hint_timed   = true;
+            s_hint_from_ms = lv_tick_get();
+            s_hint_for_ms  = ms;
+        }
+    }
 }
 
 /**
@@ -178,26 +214,17 @@ void kgui_hint_dress(lv_obj_t *label)
 
 void kgui_hint_for(const char *words, uint32_t ms)
 {
-    if ( NULL != words )
-    {
-        KLOG_I(TAG, "hint: %s", words);
-        s_hint_held = NULL;
-        if ( NULL != s_hint )
-        {
-            hint_put(words);
-            lv_timer_set_period(s_hint_timer, ms);
-            lv_timer_reset(s_hint_timer);
-            lv_timer_resume(s_hint_timer);
-            s_hint_timed   = true;
-            s_hint_from_ms = lv_tick_get();
-            s_hint_for_ms  = ms;
-        }
-    }
+    hint_timed(words, ms, false);
 }
 
 void kgui_hint(const char *words)
 {
     kgui_hint_for(words, KGUI_HINT_MS);
+}
+
+void kgui_hint_alert(const char *words)
+{
+    hint_timed(words, KGUI_HINT_ALERT_MS, true);
 }
 
 uint32_t kgui_hint_left_ms(void)
@@ -232,7 +259,7 @@ void kgui_hint_hold(const char *words)
         KLOG_I(TAG, "hint: %s", words);
         if ( NULL != s_hint )
         {
-            hint_put(words);
+            hint_put(words, false);
             lv_timer_pause(s_hint_timer);
             s_hint_held  = words;
             s_hint_timed = false;

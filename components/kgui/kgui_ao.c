@@ -3028,6 +3028,7 @@ typedef struct {
     uint32_t scan_paint_ms;  /**< When the rows were last written from it. */
     char     scan_shown[KDRV_WIFI_SCAN_MAX][GUI_SSID_BYTES];       /**< What the rows say, whatever the round has moved since. */
     uint8_t  scan_shown_auth[KDRV_WIFI_SCAN_MAX];
+    int8_t   scan_shown_rssi[KDRV_WIFI_SCAN_MAX];  /**< How each row's network was heard when the row was written, dBm. */
     uint8_t  scan_shown_n;
     uint8_t  scan_n;
     bool     scan_out;       /**< A scan this AO asked for has not answered
@@ -3056,6 +3057,9 @@ typedef struct {
                               *   a hidden network, the name once it is typed. */
     bool     kbd_secured;    /**< The network has a password, so Join with
                               *   nothing typed is no join.                 */
+    int8_t   kbd_rssi;       /**< How the network was heard when its row was
+                              *   chosen, dBm; KGUI_WIFI_RSSI_NONE for a hidden
+                              *   one. It words a join that fails.          */
     uint16_t kbd_door;       /**< The tag of the Wi-Fi row that opened the keypad,
                               *   where the ring goes back to.              */
     uint8_t  kbd_join_dot;   /**< How many dots after Joining, less one. */
@@ -3303,7 +3307,7 @@ static void gui_wifi_forget(Gui * const me, uint8_t idx);
 static void gui_wifi_link_row(Gui * const me);
 static void gui_wifi_link_text(Gui const * const me, char *out, size_t cap);
 static void gui_kbd_begin(Gui * const me, const char *ssid, bool hidden,
-                          uint16_t door);
+                          int8_t rssi, uint16_t door);
 static void gui_kbd_apply(Gui const * const me);
 static void gui_kbd_fill(Gui * const me);
 static void gui_kbd_forget(Gui * const me);
@@ -22982,6 +22986,7 @@ static void gui_wifi_fill(Gui * const me)
          * list under it. */
         (void)memcpy(me->scan_shown[i], me->scan_ssid[i], sizeof(me->scan_shown[0]));
         me->scan_shown_auth[i] = me->scan_auth[i];
+        me->scan_shown_rssi[i] = me->scan_rssi[i];
         me->scan_shown_n       = (uint8_t)(i + 1U);
     }
 
@@ -23057,7 +23062,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
         {
             /* A network with a password nobody has given this board: the
              * keypad asks for it. */
-            gui_kbd_begin(me, me->scan_shown[i], false, tag);
+            gui_kbd_begin(me, me->scan_shown[i], false, me->scan_shown_rssi[i], tag);
         }
         else
         {
@@ -23081,7 +23086,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
     {
         /* A hidden network is a network chosen: the keypad takes its name
          * and its password. */
-        gui_kbd_begin(me, "", true, tag);
+        gui_kbd_begin(me, "", true, (int8_t)KGUI_WIFI_RSSI_NONE, tag);
     }
     else
     {
@@ -23160,13 +23165,16 @@ static const char *gui_kbd_stage_name(uint8_t stage)
  * @param me     The AO.
  * @param ssid   The network's name; "" for a hidden one, whose name is typed.
  * @param hidden The network hides its name.
+ * @param rssi   How the row's network was heard, dBm; KGUI_WIFI_RSSI_NONE for
+ *               a hidden one.
  * @param door   The tag of the row that asked, where the ring goes back to.
  */
 static void gui_kbd_begin(Gui * const me, const char *ssid, bool hidden,
-                          uint16_t door)
+                          int8_t rssi, uint16_t door)
 {
     (void)snprintf(me->kbd_ssid, sizeof(me->kbd_ssid), "%s", ssid);
     me->kbd_secured = !hidden;
+    me->kbd_rssi    = rssi;
     me->kbd_door    = door;
     if ( hidden )
     {
@@ -23541,7 +23549,7 @@ static void gui_kbd_failed(Gui * const me, const char *words)
 {
     me->kbd_stage = (uint8_t)GUI_KBD_PASS;
     kgui_keyboard_hold(NULL, khal_time_ms());
-    kgui_hint(words);
+    kgui_hint_alert(words);
 }
 
 /**
@@ -23589,7 +23597,7 @@ static void gui_kbd_wifi_state(Gui * const me, WifiStateEvt const * const w)
             {
                 KLOG_I(TAG, "join of '%s': the network turned us away (%u)",
                        me->kbd_ssid, (unsigned)w->fail);
-                gui_kbd_failed(me, kgui_wifi_fail_words(w->fail));
+                gui_kbd_failed(me, kgui_wifi_fail_words(w->fail, me->kbd_rssi));
             }
             else if ( (uint8_t)KDRV_WIFI_IDLE == w->state )
             {
