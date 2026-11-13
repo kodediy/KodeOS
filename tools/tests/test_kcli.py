@@ -32,7 +32,6 @@ import sys
 import tempfile
 import types
 import unittest
-import warnings
 import zlib
 from unittest import mock
 
@@ -232,16 +231,10 @@ class PayloadConversation(unittest.TestCase):
         path = self.local_file(data)
         out = io.StringIO()
         died = None
-        # kcli reads the file to send with a bare open(...).read(), which the
-        # interpreter reports as a leaked handle. The tool exits right after,
-        # so it costs nothing there; here it would bury the results (and the
-        # runner's default filter, set by unittest, would show it every time).
-        with warnings.catch_warnings(), \
-                mock.patch.object(kcli, "time", types.SimpleNamespace(
+        with mock.patch.object(kcli, "time", types.SimpleNamespace(
                 monotonic=clock.monotonic, sleep=clock.sleep)), \
                 mock.patch.object(kcli.serial, "Serial", lambda: fake), \
                 contextlib.redirect_stdout(out):
-            warnings.simplefilter("ignore", ResourceWarning)
             port = kcli.Board(PORT)
             try:
                 if verb == "install":
@@ -426,6 +419,49 @@ class PayloadConversation(unittest.TestCase):
         self.assertIn("ping (pre-flight)", str(died.code))
         self.assertFalse(any(l.startswith("install ") for l in fake.lines))
         self.assertEqual(bytes(fake.received), b"")
+
+
+class AppdataPutIconSize(unittest.TestCase):
+    """`appdata put` sizes the icon it makes: 128 px unless `--icon-size 64` asks for the smaller form."""
+
+    def parsed(self, *extra):
+        """The arguments `kcli.py appdata put demo DIR *extra` hands the verb."""
+        seen = []
+        argv = ["kcli.py", "-p", PORT, "appdata", "put", "demo", "DIR", *extra]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(kcli, "Board", mock.MagicMock()), \
+                mock.patch.object(kcli, "do_appdata_put",
+                                  lambda board, args: seen.append(args)):
+            kcli.main()
+        return seen[0]
+
+    def test_the_icon_is_128_px_by_default(self):
+        self.assertEqual(self.parsed().icon_size, 128)
+
+    def test_the_icon_is_64_px_when_asked(self):
+        self.assertEqual(self.parsed("--icon-size", "64").icon_size, 64)
+
+    def test_a_size_the_board_does_not_read_is_refused(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as died:
+            self.parsed("--icon-size", "32")
+        self.assertEqual(died.exception.code, 2)
+
+    def test_the_size_reaches_the_packer(self):
+        asked = []
+
+        def load(src, side=None):
+            asked.append(side)
+            return b'{"kode":"1"}', b""
+
+        board = mock.MagicMock()
+        board.command.return_value = ([], ">ok")
+        with mock.patch.object(kcli.kappdata, "load", load), \
+                mock.patch.object(kcli, "_appdata_mkdir"), \
+                mock.patch.object(kcli, "stream_payload"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            kcli.do_appdata_put(board, types.SimpleNamespace(
+                name="demo", dir="DIR", icon_size=64, verbose=False))
+        self.assertEqual(asked, [64])
 
 
 if __name__ == "__main__":

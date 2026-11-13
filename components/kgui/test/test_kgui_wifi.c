@@ -55,14 +55,36 @@ void test_a_dead_radio_chip_is_never_on(void)
 
 void test_a_failed_join_says_why(void)
 {
+    /* A refusal that is no timeout is the password, said outright, however
+     * the network was heard. */
     TEST_ASSERT_EQUAL_STRING("Wrong password",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_PASSWORD));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_PASSWORD, -40));
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_PASSWORD, -90));
     TEST_ASSERT_EQUAL_STRING("Network not found",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NOT_FOUND));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NOT_FOUND, -40));
     TEST_ASSERT_EQUAL_STRING("Could not join",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_OTHER));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_OTHER, -40));
     TEST_ASSERT_EQUAL_STRING("Could not join",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NONE));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NONE, -40));
+}
+
+void test_a_handshake_that_timed_out_is_told_by_the_signal(void)
+{
+    /* The stack gives one reason for a wrong password and for a signal that
+     * went during the handshake: how the network was heard decides. */
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE, -40));
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                  (int8_t)KGUI_WIFI_WEAK_DBM));
+    TEST_ASSERT_EQUAL_STRING("Signal lost",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                  (int8_t)(KGUI_WIFI_WEAK_DBM - 1)));
+    /* A hidden network was never heard: the password is the likelier of the two. */
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                  (int8_t)KGUI_WIFI_RSSI_NONE));
 }
 
 void test_only_a_wait_with_no_answer_goes_nowhere(void)
@@ -100,6 +122,7 @@ int main(void)
     RUN_TEST(test_wifi_off_its_network_says_it_is_getting_back);
     RUN_TEST(test_a_dead_radio_chip_is_never_on);
     RUN_TEST(test_a_failed_join_says_why);
+    RUN_TEST(test_a_handshake_that_timed_out_is_told_by_the_signal);
     RUN_TEST(test_only_a_wait_with_no_answer_goes_nowhere);
     RUN_TEST(test_pair_new_device_says_visible_only_with_the_link_free);
     return UNITY_END();

@@ -12,7 +12,7 @@
 #include "kgui_span_label.h"
 
 /** @brief The words a setting offers, as its owner's table gives them. */
-static const char *const s_words[] = { "1h", "6h", "24h", "3d", "7d", "never" };
+static const char *const s_words[] = { "20m", "1h", "6h", "24h", "7d", "never" };
 
 #define WORDS_N  ((uint8_t)(sizeof(s_words) / sizeof(s_words[0])))  /**< How many words the cases step round. */
 
@@ -26,10 +26,10 @@ void tearDown(void)
 
 void test_span_label_the_six(void)
 {
+    TEST_ASSERT_EQUAL_STRING("20 minutes", kgui_span_label("20m"));
     TEST_ASSERT_EQUAL_STRING("1 hour", kgui_span_label("1h"));
     TEST_ASSERT_EQUAL_STRING("6 hours", kgui_span_label("6h"));
     TEST_ASSERT_EQUAL_STRING("1 day", kgui_span_label("24h"));
-    TEST_ASSERT_EQUAL_STRING("3 days", kgui_span_label("3d"));
     TEST_ASSERT_EQUAL_STRING("7 days", kgui_span_label("7d"));
     TEST_ASSERT_EQUAL_STRING("Never", kgui_span_label("never"));
 }
@@ -49,13 +49,13 @@ void test_span_label_null_and_empty(void)
 
 void test_span_next_goes_round_both_ways(void)
 {
-    TEST_ASSERT_EQUAL_UINT8(1U, kgui_span_next(s_words, WORDS_N, "1h", 1));
-    TEST_ASSERT_EQUAL_UINT8(2U, kgui_span_next(s_words, WORDS_N, "6h", 1));
+    TEST_ASSERT_EQUAL_UINT8(1U, kgui_span_next(s_words, WORDS_N, "20m", 1));
+    TEST_ASSERT_EQUAL_UINT8(2U, kgui_span_next(s_words, WORDS_N, "1h", 1));
     TEST_ASSERT_EQUAL_UINT8(0U, kgui_span_next(s_words, WORDS_N, "never", 1));
-    TEST_ASSERT_EQUAL_UINT8(0U, kgui_span_next(s_words, WORDS_N, "6h", -1));
-    TEST_ASSERT_EQUAL_UINT8((uint8_t)(WORDS_N - 1U), kgui_span_next(s_words, WORDS_N, "1h", -1));
+    TEST_ASSERT_EQUAL_UINT8(0U, kgui_span_next(s_words, WORDS_N, "1h", -1));
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)(WORDS_N - 1U), kgui_span_next(s_words, WORDS_N, "20m", -1));
     /* Any step that is not back is forward. */
-    TEST_ASSERT_EQUAL_UINT8(3U, kgui_span_next(s_words, WORDS_N, "24h", 0));
+    TEST_ASSERT_EQUAL_UINT8(4U, kgui_span_next(s_words, WORDS_N, "24h", 0));
 }
 
 void test_span_next_from_a_word_the_list_lacks(void)

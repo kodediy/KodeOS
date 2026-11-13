@@ -8,7 +8,7 @@ partition-table.bin, ota_data_initial.bin, kodeos.bin and storage.bin -
 flashed at fixed offsets by flash.sh / esptool. storage.bin, the internal FAT,
 also carries the ESP32-C5 radio-coprocessor firmware (c5_slave.bin, built
 from kodediy/kode_slave_c5: Espressif's esp-hosted-mcu slave, Apache-2.0, on
-ESP-IDF v6.0.2). Its own third-party components are not listed in this
+ESP-IDF v6.1). Its own third-party components are not listed in this
 notice.
 
 kodeOS is built with ESP-IDF v6.1.0 (Apache-2.0, Espressif Systems) for the
