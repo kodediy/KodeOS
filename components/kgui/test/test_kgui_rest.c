@@ -4,6 +4,7 @@
  * @brief Host tests of Rest's numbers (kgui_rest.h).
  */
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "unity.h"
@@ -152,6 +153,24 @@ void test_the_time_left_never_goes_below_zero(void)
     TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_left_ms(UINT32_MAX, 1800000U));
 }
 
+void test_the_time_to_off_is_read_from_the_settings_word(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(1200000U, kgui_rest_off_ms("20m", 5U));
+    TEST_ASSERT_EQUAL_UINT32(3600000U, kgui_rest_off_ms("1h", 5U));
+    TEST_ASSERT_EQUAL_UINT32(86400000U, kgui_rest_off_ms("24h", 5U));
+    TEST_ASSERT_EQUAL_UINT32(604800000U, kgui_rest_off_ms("7d", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("never", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("20x", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("20mm", 5U));
+    TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, kgui_rest_off_ms("90d", 5U));
+}
+
+void test_no_word_heard_yet_is_the_default(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(5U, kgui_rest_off_ms("", 5U));
+    TEST_ASSERT_EQUAL_UINT32(5U, kgui_rest_off_ms(NULL, 5U));
+}
+
 void test_the_hour_moves_with_the_cycle_on_even_pixels(void)
 {
     for ( uint32_t i = 0U; i < KGUI_REST_CYCLE_LEN; ++i )
@@ -206,6 +225,8 @@ int main(void)
     RUN_TEST(test_rest_does_not_ask_while_anything_moves_or_on_a_cable);
     RUN_TEST(test_an_ask_is_not_repeated_until_its_time);
     RUN_TEST(test_the_time_left_never_goes_below_zero);
+    RUN_TEST(test_the_time_to_off_is_read_from_the_settings_word);
+    RUN_TEST(test_no_word_heard_yet_is_the_default);
     RUN_TEST(test_the_hour_moves_with_the_cycle_on_even_pixels);
     RUN_TEST(test_an_odd_home_goes_down_to_even);
     RUN_TEST(test_an_hour_off_the_glass_is_not_written);

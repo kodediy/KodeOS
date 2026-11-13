@@ -93,6 +93,57 @@ uint32_t kgui_rest_left_ms(uint32_t gone_ms, uint32_t after_ms)
     return left;
 }
 
+/** @brief Milliseconds in a minute, an hour and a day. */
+#define REST_MS_MIN   60000U
+#define REST_MS_HOUR  3600000U
+#define REST_MS_DAY   86400000U
+
+/** @brief Radix of the word's number. */
+#define REST_DECIMAL  10U
+
+uint32_t kgui_rest_off_ms(const char *word, uint32_t def_ms)
+{
+    uint32_t n    = 0U;
+    uint32_t unit = 0U;
+    size_t   i    = 0U;
+
+    if ( (NULL == word) || ('\0' == word[0]) )
+    {
+        return def_ms;
+    }
+    while ( ('0' <= word[i]) && ('9' >= word[i]) && ((UINT32_MAX / REST_DECIMAL) > n) )
+    {
+        uint8_t const digit = (uint8_t)word[i];
+
+        n = (n * REST_DECIMAL) + ((uint32_t)digit - (uint32_t)'0');
+        i++;
+    }
+    if ( (0U < i) && ('\0' == word[i + 1U]) )
+    {
+        if ( 'm' == word[i] )
+        {
+            unit = REST_MS_MIN;
+        }
+        else if ( 'h' == word[i] )
+        {
+            unit = REST_MS_HOUR;
+        }
+        else if ( 'd' == word[i] )
+        {
+            unit = REST_MS_DAY;
+        }
+        else
+        {
+            /* Not a time: never. */
+        }
+    }
+    if ( (0U != unit) && ((UINT32_MAX / unit) < n) )
+    {
+        return UINT32_MAX;
+    }
+    return n * unit;
+}
+
 bool kgui_rest_strip_at(int32_t home_x, int32_t home_y, int32_t w, int32_t h,
                         kgui_rest_offset_t at, int32_t glass_w, int32_t glass_h,
                         uint16_t *x, uint16_t *y)

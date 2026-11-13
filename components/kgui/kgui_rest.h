@@ -119,6 +119,20 @@ bool kgui_rest_sleep_due(kgui_rest_sleep_t const *s);
 uint32_t kgui_rest_left_ms(uint32_t gone_ms, uint32_t after_ms);
 
 /**
+ * @brief How long Rest lasts before the count to OFF, from the word of
+ *        `off_after` ("Turn off after").
+ *
+ * The words are AO_LowPower's and kgui keeps no copy of them: a number and
+ * its unit - m, h or d - or anything else, which is "never".
+ *
+ * @param word   The setting's word: "20m", "1h", "7d", "never".
+ * @param def_ms What to answer while no word has been heard (NULL or empty).
+ * @return The time in milliseconds; 0 for never. A time past what 32 bits of
+ *         milliseconds hold is the longest they do.
+ */
+uint32_t kgui_rest_off_ms(const char *word, uint32_t def_ms);
+
+/**
  * @brief Where the hour's rectangle goes on the sleeping glass.
  *
  * The face's own clock at home, moved by the place of the cycle the content

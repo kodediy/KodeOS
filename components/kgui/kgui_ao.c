@@ -1027,7 +1027,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 /** Why a round for ASLEEP is refused at Rest while Kody has not settled, or
  *  a sleep at Rest that did not happen holds the next one back. */
 #define GUI_LP_WHY_REST    "rest not settled"
-/** Past the 30 minutes at Rest, so the board that wakes for the count finds
+/** Past Rest's time to the count, so the board that wakes for the count finds
  *  them gone. */
 #define GUI_REST_WAKE_SLACK_MS 200U
 #if CONFIG_KODE_TEST_DOT
@@ -28524,7 +28524,6 @@ static uint32_t gui_knock_wait(Gui const * const me, uint32_t next)
 #define GUI_FIRST_HOLD_MAX_MS   5000U    /* The longest the first frame waits to be whole. */
 #define GUI_HOME_WHOLE_MAX_MS    600U    /* The longest the way home from Apps waits for Kody. */
 #define GUI_WRITE_CANCEL_MS     5000U    /* A write called off speaks again after this. */
-#define GUI_DEEP_AFTER_REST_MS  1800000U /* Rest, with nobody there, until the count: 30 min. */
 #define GUI_DEEP_COUNT_MS       5000U    /* The count. */
 #define GUI_DEEP_ANSWER_MS      4000U    /* A rest not taken by then was refused. */
 #define GUI_DEEP_COUNT_TICK_MS  100U     /* The tick while the count stands. */
@@ -28558,6 +28557,23 @@ static void gui_deep_off(Gui * const me)
     me->deep_fading = false;
     me->deep_asked  = false;
     me->deep_forced = false;
+}
+
+/**
+ * @brief How long Rest lasts, with nobody there, until the count.
+ *
+ * The time "Turn off after" says: AO_LowPower's `off_after`, whose word this
+ * AO hears at the start and whenever it moves (gui_off_after_answer()). One
+ * time for the board's OFF, whichever of the two counts it: Rest no longer has
+ * a time of its own under a row that promised another.
+ *
+ * @param me The AO.
+ * @return The time in milliseconds; 0 when the setting is "never", and Rest
+ *         stays for good.
+ */
+static uint32_t gui_deep_after_ms(Gui const * const me)
+{
+    return kgui_rest_off_ms(me->off_word, KODE_LOWPOWER_OFF_AFTER_DEF_S * GUI_MS_PER_S);
 }
 
 /**
@@ -28623,7 +28639,7 @@ static void gui_deep_begin(Gui * const me)
         else
         {
             KLOG_N(TAG, "rest: nobody for %u s; the count before the deep rest",
-                   (unsigned)(GUI_DEEP_AFTER_REST_MS / 1000U));
+                   (unsigned)(gui_deep_after_ms(me) / GUI_MS_PER_S));
         }
         gui_tick_now(me);
     }
@@ -28649,8 +28665,10 @@ static void gui_deep_tick(Gui * const me)
     }
     else if ( NULL == me->deep_warn )
     {
-        if ( (!me->vbus) && (!me->rest_knock) && (!me->rest_hint)
-            && ((now - me->deep_ms) >= GUI_DEEP_AFTER_REST_MS) )
+        uint32_t const after = gui_deep_after_ms(me);
+
+        if ( (0U != after) && (!me->vbus) && (!me->rest_knock) && (!me->rest_hint)
+            && ((now - me->deep_ms) >= after) )
         {
             gui_deep_begin(me);
         }
@@ -32708,7 +32726,7 @@ static void gui_lp_woke(Gui * const me, LowPowerStateEvt const * const s)
  * AO_Display, which writes the hour into the panel's memory each minute. The
  * same wakes as ever bring it back - TOP for the knock, BOT for the hint, the
  * cable, BLE, the broker - into Rest as it was, at the Rest level, and the
- * 30 minutes of Rest are a wake time given to AO_LowPower
+ * time Rest lasts (`off_after`) is a wake time given to AO_LowPower
  * (lowpower_wake_at()), so the board is up for the count when they end.
  */
 
@@ -32804,8 +32822,8 @@ static void gui_rest_sleep_tick(Gui * const me)
  * a day behind - with its clock left where the panel writes it again, so the
  * hour never goes out, and that frame is the last the link carries. The
  * figures are rendered after it (gui_lp_park() says why), placed where the
- * face's clock stands at that place of the cycle. The time left of the 30
- * minutes of Rest is given to AO_LowPower before the answer, which is what
+ * face's clock stands at that place of the cycle. The time left of
+ * Rest (gui_deep_after_ms()) is given to AO_LowPower before the answer, which is what
  * wakes the board for the count; the round forgets times given before it.
  *
  * @param me The AO, at Rest and settled, with lp_round and lp_target set.
@@ -32814,6 +32832,7 @@ static void gui_rest_park(Gui * const me)
 {
     DisplayGlyphsEvt   glyphs;
     kgui_rest_offset_t at;
+    uint32_t           after;
     uint32_t           left;
     uint16_t           x = 0U;
     uint16_t           y = 0U;
@@ -32859,11 +32878,20 @@ static void gui_rest_park(Gui * const me)
         gui_flush_wait_cb(me->disp);
     }
     glyphs.rest_pct = gui_lp_rest_pct(me);
-    left = kgui_rest_left_ms(khal_time_ms() - me->deep_ms, GUI_DEEP_AFTER_REST_MS);
-    (void)lowpower_wake_at(me->lp_who, khal_time_us()
-                           + (((uint64_t)left + (uint64_t)GUI_REST_WAKE_SLACK_MS) * 1000ULL));
-    KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, the count in %u s",
-           (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN), (unsigned)(left / 1000U));
+    after = gui_deep_after_ms(me);
+    left  = kgui_rest_left_ms(khal_time_ms() - me->deep_ms, after);
+    if ( 0U != after )
+    {
+        (void)lowpower_wake_at(me->lp_who, khal_time_us()
+                               + (((uint64_t)left + (uint64_t)GUI_REST_WAKE_SLACK_MS) * 1000ULL));
+        KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, the count in %u s",
+               (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN), (unsigned)(left / GUI_MS_PER_S));
+    }
+    else
+    {
+        KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, no count (off_after never)",
+               (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN));
+    }
     display_glyphs_hand(&glyphs);
     lowpower_ready(me->lp_who, me->lp_round, false, NULL);
 }
@@ -32875,9 +32903,9 @@ static void gui_rest_park(Gui * const me)
  * clock back in place of the panel's; the glass is at the Rest level already
  * (AO_Display restores the level it was last asked for). A wake by TOP is the
  * knock, as is a TOP pressed while the glass was parked; a wake by BOT says
- * how to wake. Anything else - the cable, BLE, the broker, the 30 minutes -
+ * how to wake. Anything else - the cable, BLE, the broker, Rest's time -
  * lands on Rest as it was, and the tick decides from there: the count once the
- * 30 minutes are gone, or another sleep once Kody has settled again. A round
+ * time is gone, or another sleep once Kody has settled again. A round
  * that was given up, with the board never asleep, holds the next sleep back
  * until Rest asks again, so a busy owner does not take the glass down and up
  * on every retry of AO_LowPower's; one a person ended with a button does not.
@@ -33502,6 +33530,9 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                 }
                 gui_request_list(me);
                 gui_request_installed(me);
+                /* How long Rest lasts before the count is AO_LowPower's
+                 * `off_after`: heard now, and again whenever it moves. */
+                gui_off_after_ask();
                 /* Kody's pack, read since Gui_initial, may have ended already:
                  * what it asks of the face is done now the face exists. */
                 if ( me->assets_owed )
@@ -36323,7 +36354,7 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
  * On the battery, once Kody has settled, Rest asks for ASLEEP and sleeps in
  * its child Gui_rest_asleep, the face on the glass and the hour in the panel's
  * memory; the wakes come back here as they were (gui_rest_unpark()), and the
- * 30 minutes before the count are a wake time of AO_LowPower's.
+ * time before the count is a wake time of AO_LowPower's.
  *
  * @param me The AO.
  * @param e  The event.
