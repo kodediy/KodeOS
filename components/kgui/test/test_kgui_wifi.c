@@ -55,7 +55,9 @@ void test_a_dead_radio_chip_is_never_on(void)
 
 void test_a_failed_join_says_why(void)
 {
-    TEST_ASSERT_EQUAL_STRING("Wrong password",
+    /* A handshake that times out is a wrong password or a signal that went:
+     * the stack gives the same reason for both. */
+    TEST_ASSERT_EQUAL_STRING("Wrong password, or signal lost",
                              kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_PASSWORD));
     TEST_ASSERT_EQUAL_STRING("Network not found",
                              kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NOT_FOUND));

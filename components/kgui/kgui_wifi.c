@@ -66,7 +66,9 @@ const char *kgui_wifi_fail_words(uint8_t fail)
 
     if ( (uint8_t)KDRV_WIFI_FAIL_PASSWORD == fail )
     {
-        words = "Wrong password";
+        /* The handshake did not finish. The stack gives one reason for a
+         * wrong password and for a signal that went during it. */
+        words = "Wrong password, or signal lost";
     }
     else if ( (uint8_t)KDRV_WIFI_FAIL_NOT_FOUND == fail )
     {
