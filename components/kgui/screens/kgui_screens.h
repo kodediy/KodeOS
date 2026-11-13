@@ -455,15 +455,21 @@ void kgui_screen_face_home(uint32_t delay_ms, uint32_t ms);
  * @brief Strip the face to Kody's scene, or put the clock, the date and the
  *        battery back.
  *
- * The face the glass holds while the board sleeps: the scene alone. The time,
- * the date and the battery are not drawn: the glass would keep a minute, a
- * day and a charge it no longer knows. Does nothing before
+ * The face the glass holds while the board sleeps: the scene, and the clock
+ * when the panel is to write the hour over it. The date and the battery are
+ * not drawn: the glass would keep a day and a charge it no longer knows. The
+ * clock stays when AO_Display takes the hour from here, in the same figures
+ * on the same pixels (kgui_screen_face_strip()): taken off, the hour went out
+ * for the moment between this frame and the panel's first write, which read
+ * as the whole glass being drawn again. Does nothing before
  * kgui_screen_face_build().
  *
- * @param bare true to hide the time, the date and the battery; false to show
- *             them again.
+ * @param bare  true to hide the date and the battery; false to show them
+ *              again.
+ * @param clock With @p bare, true to keep the clock; false to hide it too,
+ *              for a glass nobody will write the hour on.
  */
-void kgui_screen_face_bare(bool bare);
+void kgui_screen_face_bare(bool bare, bool clock);
 
 /**
  * @brief Dim the clock, the date and the battery by their own opacity, or

@@ -142,6 +142,8 @@ static lv_obj_t *s_arc_right;
 static lv_obj_t *s_arc_line;
 /** "Turn off", where the date stands while the arc is up. */
 static lv_obj_t *s_arc_words;
+/** Whether a stripped screen keeps its clock (kgui_screen_face_bare()). */
+static bool s_bare_clock;
 /** Whether the screen is stripped to the scene (kgui_screen_face_bare()). */
 static bool s_bare;
 /** Whether the arc is up. */
@@ -408,18 +410,19 @@ void kgui_screen_face_prompt(bool set_time, bool zone)
     s_prompt_zone = zone;
     if ( NULL != s_shifted[FACE_SHIFT_TIME] )
     {
-        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], s_bare || s_prompt_set);
+        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], (s_bare && !s_bare_clock) || s_prompt_set);
     }
     prompt_place();
 }
 
-void kgui_screen_face_bare(bool bare)
+void kgui_screen_face_bare(bool bare, bool clock)
 {
-    s_bare = bare;
+    s_bare       = bare;
+    s_bare_clock = bare && clock;
     prompt_place();
     if ( NULL != s_shifted[FACE_SHIFT_TIME] )
     {
-        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], bare || s_prompt_set);
+        lv_obj_set_hidden(s_shifted[FACE_SHIFT_TIME], (bare && !clock) || s_prompt_set);
     }
     if ( NULL != s_shifted[FACE_SHIFT_DATE] )
     {

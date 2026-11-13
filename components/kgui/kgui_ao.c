@@ -32534,7 +32534,7 @@ static QState gui_lp_resume(Gui * const me)
         gui_buffers_align(me->disp);
     }
     kgui_screen_face_strip_free(&me->lp_strip);
-    kgui_screen_face_bare(false);
+    kgui_screen_face_bare(false, false);
     me->lp_parked = false;
     me->lp_rest   = false;
     /* The BOT that woke the board is Rest's first press (Gui_face's init). */
@@ -32799,9 +32799,10 @@ static void gui_rest_sleep_tick(Gui * const me)
  * away, for the hour's even pixels (kgui_rest_even()). Nothing moves on the
  * glass while the board sleeps, and each Rest stands somewhere else
  * (kgui_rest_start()). The face is drawn bare
- * of its clock, its date and its battery - the hour is AO_Display's from here,
- * written over a rectangle that would cut the battery in two, and the date
- * would stay a day behind - and that frame is the last the link carries. The
+ * of its date and its battery - the hour is AO_Display's from here, written
+ * over a rectangle that would cut the battery in two, and the date would stay
+ * a day behind - with its clock left where the panel writes it again, so the
+ * hour never goes out, and that frame is the last the link carries. The
  * figures are rendered after it (gui_lp_park() says why), placed where the
  * face's clock stands at that place of the cycle. The time left of the 30
  * minutes of Rest is given to AO_LowPower before the answer, which is what
@@ -32823,7 +32824,9 @@ static void gui_rest_park(Gui * const me)
     me->rest_step = kgui_rest_even(me->rest_step);
     at = kgui_rest_offset(me->rest_step);
     kgui_screen_face_shift(at.x, at.y);
-    kgui_screen_face_bare(true);
+    /* The clock stays in the last frame: the panel writes the same figures
+     * over it, so the hour never goes out on the way to sleep. */
+    kgui_screen_face_bare(true, true);
     (void)lv_obj_invalidate(kgui_screen_face);
     lv_refr_now(me->disp);
     gui_flush_wait_cb(me->disp);
@@ -32849,6 +32852,11 @@ static void gui_rest_park(Gui * const me)
     else
     {
         KLOG_N(TAG, "rest: asleep with no hour on the glass (round %u)", (unsigned)me->lp_round);
+        /* Nobody will write the hour: the glass does not keep a stale one. */
+        kgui_screen_face_bare(true, false);
+        (void)lv_obj_invalidate(kgui_screen_face);
+        lv_refr_now(me->disp);
+        gui_flush_wait_cb(me->disp);
     }
     glyphs.rest_pct = gui_lp_rest_pct(me);
     left = kgui_rest_left_ms(khal_time_ms() - me->deep_ms, GUI_DEEP_AFTER_REST_MS);
@@ -32888,7 +32896,7 @@ static QState gui_rest_unpark(Gui * const me)
         gui_buffers_align(me->disp);
     }
     kgui_screen_face_strip_free(&me->lp_strip);
-    kgui_screen_face_bare(false);
+    kgui_screen_face_bare(false, false);
     me->lp_parked   = false;
     me->lp_rest     = false;
     me->lp_woke_bot = false;
