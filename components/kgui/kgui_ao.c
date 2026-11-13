@@ -29104,6 +29104,11 @@ static void gui_rest_enter(Gui * const me)
     gui_rest_kody(me);
     me->face_painted = false;   /* the yellow pills go */
     me->rest_painted = false;
+    /* The date shows for a few seconds on waking and its end is counted by
+     * the awake Lock's tick, which does not run from here: a Rest entered
+     * inside those seconds would keep it for good. The hour stands alone. */
+    me->date_until_ms = 0U;
+    kgui_screen_face_date(false);
     if ( (uint8_t)GUI_FALL_NONE != me->rest_fall )
     {
         me->rest_step = kgui_rest_start(me->rest_step);
