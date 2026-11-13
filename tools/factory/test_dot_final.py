@@ -90,6 +90,8 @@ OPERATOR_SIM_SEED = None       # None: a new operator every run
 
 PING_TRIES = 20
 PING_TIMEOUT_S = 2.0
+C5_LINK_TRIES = 30            # --discover: looks for the C5's link after the reset of the port's opening
+C5_LINK_PAUSE_S = 0.5
 RUN_BUDGET_S = 300             # the whole run, camera and operator included
 POLL_PERIOD_S = 0.15
 POLL_TIMEOUT_S = 5.0
@@ -1582,6 +1584,13 @@ class Station:
                     break
                 except CommandError:
                     continue
+            # Opening the port reset the board, and its C5 takes a few seconds to
+            # link: a sweep asked before that ends at once with why=link.
+            for _ in range(C5_LINK_TRIES):
+                c5 = next((fields(r) for r in self.link.cmd("info", PING_TIMEOUT_S) if r.startswith("c5=")), {})
+                if c5.get("recog") == "kode":
+                    break
+                CLOCK.sleep(C5_LINK_PAUSE_S)
             line = f"test_dot_radio ssid24={quote(w['ssid_24'])} ssid5={quote(w['ssid_5'])} ble={quote(b['beacon_name'])}"
             recs = self.link.cmd(line + " discover=on", DISCOVER_TIMEOUT_S)
         except CommandError as e:
