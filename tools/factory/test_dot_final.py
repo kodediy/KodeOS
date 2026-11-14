@@ -1089,7 +1089,11 @@ class Station:
             self.pump()
             if s.poll_done and not s.lane_idle:
                 s.lane_idle = True               # the run is over: the line is free
-            ready = [w for w in todo if w not in ("nfc", "rfid") or w in self.pending]
+            # The PC's NFC and RFID steps wait for BOTH of the Kode's rows: its RFID
+            # row follows its NFC row at once, and an NFC write sent while the
+            # 125 kHz carrier of that row was still on failed three runs in eleven.
+            rows_in = all(r in self.pending or r in self.done_bg or self.has(r) for r in ("nfc", "rfid"))
+            ready = [w for w in todo if w not in ("nfc", "rfid") or (w in self.pending and rows_in)]
             if s.poll_done and not ready:
                 break
             if ready and s.cam_done and s.lane_idle:
@@ -1250,6 +1254,7 @@ class Station:
             for ident in (rfid_other(want), want):
                 done = False
                 for _ in range(RFID_WRITE_TRIES):          # a clone the Kode could not read back is written again
+                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
                     try:
                         wr, _ = self.link.exchange(f"rfid_write id={quote(ident)}", 60.0)
                         det.append(" ".join(wr))
@@ -1262,6 +1267,7 @@ class Station:
             wrote = all(both)
             tw = CLOCK.monotonic() - t1
         for _ in range(3):
+            self.operator_sim_pump()
             t2 = CLOCK.monotonic()
             try:
                 recs = self.link.cmd("rfid_read ms=3000", 15.0)
@@ -1316,6 +1322,7 @@ class Station:
                 # another text first, and both writes must be taken.
                 wr = []
                 for text in (NFC_OTHER_TEXT, serial):
+                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
                     try:
                         wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
                         det.append(" ".join(wr))
@@ -1330,6 +1337,7 @@ class Station:
             if skip_read:
                 det.append("nfc_read skipped: the write found no tag")
             else:
+                self.operator_sim_pump()
                 t2 = CLOCK.monotonic()
                 try:
                     rd = self.link.cmd("nfc_read ms=3000", 30.0)

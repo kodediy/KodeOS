@@ -143,6 +143,25 @@ class Parallel(unittest.TestCase):
         self.assertLess(self.order.index("radio"), self.order.index("nfc"))
         self.assertEqual(st.done_bg, {"pads", "nfc", "rfid", "radio"})
 
+    def test_nfc_waits_for_the_rfid_row_too(self):
+        # The Kode's RFID row follows its NFC row at once, its 125 kHz carrier
+        # on: the PC's NFC step sent in between failed on the bench. It waits
+        # for both rows, with the lane free all the while.
+        stream = ROWS + [">|test=nfc result=pass ms=10", ">ok"]
+        polls = [LANE + ["poll state=running lane=idle"],
+                 ["poll state=running lane=idle"],
+                 ["poll state=running lane=idle"],
+                 [">|test=rfid result=pass ms=4000"] + OPS + ["poll state=done lane=idle"]]
+        link = FakeLink(stream, polls, self.clock)
+        st = self.station(link)
+        seen = []
+        st.nfc_step = lambda: (seen.append("rfid" in st.pending or "rfid" in self.order), self.order.append("nfc"),
+                               st.pending.pop("nfc"))
+        self.run_all(st)
+        self.assertEqual(seen, [True])
+        self.assertLess(self.order.index("radio"), self.order.index("nfc"))
+        self.assertEqual(st.done_bg, {"pads", "nfc", "rfid", "radio"})
+
     def test_sd_abort_ends_the_run(self):
         stream = [">|test=sd result=fail ms=100", ">|test=all result=aborted why=sd_missing",
                   ">err code=4 msg=aborted"]

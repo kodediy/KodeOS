@@ -14,7 +14,7 @@
     "wifi_5": null,
     "ble_rx": null
   },
-  "parallel_with_operator": ["pads", "radio"],
+  "parallel_with_operator": ["pads", "nfc", "rfid", "radio"],
   "place": {
     "usb_s": 30,
     "camera_s": 10,
@@ -23,5 +23,5 @@
     "turn_deg": 5,
     "window": [704, 628]
   },
-  "note": "The template. The station works on its own copy (--config, default ~/kode-factory/test_dot_station.json), made from this file on first use. ssid_24 and ssid_5 are the two networks of the place where the station stands; their channels are filled in by test_dot_final.py --discover. A threshold of null only records the RSSI: the criterion is that each network and the beacon are heard. station names the station in the exit record and in the CSV's name. parallel_with_operator lists what the PC does while the operator presses and touches. NFC and RFID are left out of it on purpose: written while the buttons and touch steps run they failed on the bench (NFC twice and RFID once in five runs, none in six with them after the operator); put them back once that is understood. place.window is the camera window of the last good placement, kept by the program."
+  "note": "The template. The station works on its own copy (--config, default ~/kode-factory/test_dot_station.json), made from this file on first use. ssid_24 and ssid_5 are the two networks of the place where the station stands; their channels are filled in by test_dot_final.py --discover. A threshold of null only records the RSSI: the criterion is that each network and the beacon are heard. station names the station in the exit record and in the CSV's name. parallel_with_operator lists what the PC does while the operator presses and touches. place.window is the camera window of the last good placement, kept by the program."
 }
