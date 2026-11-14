@@ -88,6 +88,9 @@ class Parallel(unittest.TestCase):
                                operator_sim=False, no_write=False, no_place=False, port="-", discover=False,
                                no_open=True)
         st = final.Station(a)
+        # The mechanism is what is under test: every block beside the operator,
+        # whatever the template leaves out of it.
+        st.cfg["parallel_with_operator"] = list(final.BACKGROUND)
         st.link, st.outdir = link, self.tmp
         st.info = dict(serial="S", mac="38:44:be:1c:1d:44", kodeos="-", c5="-", date="-")
         order = []
@@ -137,6 +140,25 @@ class Parallel(unittest.TestCase):
         link = FakeLink(stream, polls, self.clock)
         st = self.station(link)
         self.run_all(st)
+        self.assertLess(self.order.index("radio"), self.order.index("nfc"))
+        self.assertEqual(st.done_bg, {"pads", "nfc", "rfid", "radio"})
+
+    def test_nfc_waits_for_the_rfid_row_too(self):
+        # The Kode's RFID row follows its NFC row at once, its 125 kHz carrier
+        # on: the PC's NFC step sent in between failed on the bench. It waits
+        # for both rows, with the lane free all the while.
+        stream = ROWS + [">|test=nfc result=pass ms=10", ">ok"]
+        polls = [LANE + ["poll state=running lane=idle"],
+                 ["poll state=running lane=idle"],
+                 ["poll state=running lane=idle"],
+                 [">|test=rfid result=pass ms=4000"] + OPS + ["poll state=done lane=idle"]]
+        link = FakeLink(stream, polls, self.clock)
+        st = self.station(link)
+        seen = []
+        st.nfc_step = lambda: (seen.append("rfid" in st.pending or "rfid" in self.order), self.order.append("nfc"),
+                               st.pending.pop("nfc"))
+        self.run_all(st)
+        self.assertEqual(seen, [True])
         self.assertLess(self.order.index("radio"), self.order.index("nfc"))
         self.assertEqual(st.done_bg, {"pads", "nfc", "rfid", "radio"})
 

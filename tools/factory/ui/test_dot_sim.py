@@ -209,10 +209,13 @@ class Scenario:
                            many times.
     @param lock_refused    True: `test_dot_lock` answers `>err` (a lock the
                            Kode could not keep).
+    @param rfid_tag        The ID the station's tag holds before the run.
+    @param rfid_dead_write True: `rfid_write` changes nothing and says so.
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
-                 photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False):
+                 photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
+                 rfid_tag=None, rfid_dead_write=False):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -220,6 +223,8 @@ class Scenario:
         self.photo_bad_crc = dict(photo_bad_crc or {})
         self.serial = serial
         self.lock_refused = lock_refused
+        self.rfid_tag = rfid_tag
+        self.rfid_dead_write = rfid_dead_write
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -473,7 +478,7 @@ class FakeKode:
         self.relays = 0xFF
         self.boost = False
         self.tag_text = None
-        self.tag_id = None
+        self.tag_id = self.sc.rfid_tag
         self.ring = []                # [(due, seq, record)], sorted: what the poll hands over
         self.run_state = "none"       # test_dot_info's run=: none, running, done
         self.lane_idle_at = None
@@ -735,6 +740,9 @@ class FakeKode:
                      f"nfc=ndef len={len(self.tag_text) + 7} text={quote(self.tag_text)}"], delay=0.6)
 
     def v_rfid_write(self, a):
+        if self.sc.rfid_dead_write:
+            self.answer([f"rfid=clone id={quote(a.get('id'))} match=no"], delay=1.5)
+            return
         self.tag_id = a.get("id")
         self.answer([f"rfid=clone id={quote(self.tag_id)} match=yes"], delay=1.5)
 

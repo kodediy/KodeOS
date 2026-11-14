@@ -90,6 +90,8 @@ OPERATOR_SIM_SEED = None       # None: a new operator every run
 
 PING_TRIES = 20
 PING_TIMEOUT_S = 2.0
+C5_LINK_TRIES = 30            # --discover: looks for the C5's link after the reset of the port's opening
+C5_LINK_PAUSE_S = 0.5
 RUN_BUDGET_S = 300             # the whole run, camera and operator included
 POLL_PERIOD_S = 0.15
 POLL_TIMEOUT_S = 5.0
@@ -206,8 +208,14 @@ PADS_IDS = ["pads_charge", "pads_delivery", "pads_gnd", "pads_loop"]
 ROW_SEQ = ["sd", "imu", "audio", "haptic", "mag", "pmic", "gauge", "ioexp", "clocks", "ir", "nfc", "rfid", "mem"]
 RUN_IDS = ROW_SEQ + CAM_IDS + ["led", "buttons", "tp"]
 BACKGROUND = ["pads", "nfc", "rfid", "radio"]     # the PC's work beside the operator, longest first
-# Steps that are run and reported in full but do not decide the verdict.
-OPTIONAL = {"nfc"}
+# Steps that are run and reported in full but do not decide the verdict: none.
+# NFC was one, and a Kode whose reader was dead left the station passed.
+OPTIONAL = set()
+# What the NFC step writes before the serial, so the serial is a real write.
+NFC_OTHER_TEXT = "KODE E5"
+# Times the RFID step writes an ID before giving it up: one clone in about thirty
+# is not read back by the Kode on the bench, and the next one is.
+RFID_WRITE_TRIES = 2
 
 PASS, FAIL, TIMEOUT, NOVERDICT, NOTRUN = "PASS", "FAIL", "TIMEOUT", "NO VERDICT", "NOT RUN"
 EVENT_STATE = {NOVERDICT: "NOVERDICT", NOTRUN: "NOT_RUN"}
@@ -380,6 +388,12 @@ def reason_from(status, measured, detail):
         return measured[:300]
     errs = re.findall(r"!E [^ ]+ [^ ]+ (.*)", detail or "")
     return (errs[-1] if errs else measured)[:300]
+
+
+def rfid_other(ident):
+    """An ID that is never the given one: every byte inverted. Written before
+    the ID that counts, so that one is a real write whatever the tag held."""
+    return ":".join(f"{(~int(b, 16)) & 0xFF:02X}" for b in ident.split(":"))
 
 
 def rfid_id_of(mac):
@@ -556,6 +570,7 @@ class Station:
         self.rng = random.Random(OPERATOR_SIM_SEED)
         self.sim_queue = []                  # [(due, line, key)] the bench operator's presses
         self.sim_missed = set()
+        self.sim_wrong = False
         self.pending = {}                    # rows finished later by the PC: nfc and rfid
         self.done_bg = set()
         self.extra = {}
@@ -1074,7 +1089,11 @@ class Station:
             self.pump()
             if s.poll_done and not s.lane_idle:
                 s.lane_idle = True               # the run is over: the line is free
-            ready = [w for w in todo if w not in ("nfc", "rfid") or w in self.pending]
+            # The PC's NFC and RFID steps wait for BOTH of the Kode's rows: its RFID
+            # row follows its NFC row at once, and an NFC write sent while the
+            # 125 kHz carrier of that row was still on failed three runs in eleven.
+            rows_in = all(r in self.pending or r in self.done_bg or self.has(r) for r in ("nfc", "rfid"))
+            ready = [w for w in todo if w not in ("nfc", "rfid") or (w in self.pending and rows_in)]
             if s.poll_done and not ready:
                 break
             if ready and s.cam_done and s.lane_idle:
@@ -1180,7 +1199,10 @@ class Station:
         q = []
         if f.get("press") in INJECT_ID:
             want = INJECT_ID[f["press"]]
-            if rng.random() < 0.12:
+            # One wrong button a run at most: the Kode forgives two, and a bench
+            # operator that draws a third has failed a good Kode by itself.
+            if rng.random() < 0.12 and not self.sim_wrong:
+                self.sim_wrong = True
                 wrong = rng.choice([v for v in INJECT_ID.values() if v != want])
                 q += [(now + d, f"btn id={wrong} state=press"), (now + d + 0.3, f"btn id={wrong} state=release")]
                 d += 0.3 + rng.uniform(0.6, 1.5)
@@ -1224,14 +1246,28 @@ class Station:
         tag, tw, tr, wrote = None, None, None, False
         if write and want:
             t1 = CLOCK.monotonic()
-            try:
-                wr, _ = self.link.exchange(f"rfid_write id={quote(want)}", 60.0)
-                det.append(" ".join(wr))
-                wrote = any(fields(r).get("match") == "yes" for r in wr)
-            except CommandError as e:
-                det.append(str(e))
+            # The tag may already hold this Kode's ID (the same Kode, back at the
+            # station) and would then read back right with the write path dead.
+            # It is given another ID first, so the one that counts is really
+            # written; both writes must be the ones the Kode read back itself.
+            both = []
+            for ident in (rfid_other(want), want):
+                done = False
+                for _ in range(RFID_WRITE_TRIES):          # a clone the Kode could not read back is written again
+                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
+                    try:
+                        wr, _ = self.link.exchange(f"rfid_write id={quote(ident)}", 60.0)
+                        det.append(" ".join(wr))
+                        done = any(fields(r).get("match") == "yes" for r in wr)
+                    except CommandError as e:
+                        det.append(str(e))
+                    if done:
+                        break
+                both.append(done)
+            wrote = all(both)
             tw = CLOCK.monotonic() - t1
         for _ in range(3):
+            self.operator_sim_pump()
             t2 = CLOCK.monotonic()
             try:
                 recs = self.link.cmd("rfid_read ms=3000", 15.0)
@@ -1248,7 +1284,12 @@ class Station:
             info = f"written {want}; read {read or 'nothing'}"
             if tw is not None and tr is not None:
                 info += f"; write {tw:.1f} s (checked by the Kode: {'yes' if wrote else 'no'}), read {tr:.1f} s"
-            valid = bool(tag) and read == want
+            # The Kode's own check of its writes counts too: without it the tag
+            # may only be showing what it already held.
+            valid = bool(tag) and read == want and wrote
+        elif write:
+            info = "no ID to write: the Kode's MAC could not be read"
+            valid = False
         else:
             info = f"EM4100 at RF/{tag.get('rf', '?')}; ID {tag['id']}" if tag else ""
             valid = bool(tag) and re.fullmatch(r"([0-9A-Fa-f]{2}:){4}[0-9A-Fa-f]{2}", tag["id"]) is not None
@@ -1272,21 +1313,31 @@ class Station:
         tw = tr = None
         read, uid, rd = "", "", []
         skip_read = False
+        wrote = True
         try:
             if write:
                 t1 = CLOCK.monotonic()
-                try:
-                    wr, _ = self.link.exchange(f"nfc_write text={quote(serial)}", 30.0)
-                    det.append(" ".join(wr))
-                except CommandError as e:
-                    wr = e.records
-                    det.append(" ".join(wr) + f" {e.term}")
-                    skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                # The Kode's own row has just left the serial on the tag, so reading
+                # it back would prove no write of this step's: the tag is given
+                # another text first, and both writes must be taken.
+                wr = []
+                for text in (NFC_OTHER_TEXT, serial):
+                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
+                    try:
+                        wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
+                        det.append(" ".join(wr))
+                    except CommandError as e:
+                        wr = e.records
+                        det.append(" ".join(wr) + f" {e.term}")
+                        wrote = False
+                        skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                        break
                 tw = CLOCK.monotonic() - t1
                 uid = next((fields(r).get("uid", "") for r in wr if r.startswith("nfc=tag")), "")
             if skip_read:
                 det.append("nfc_read skipped: the write found no tag")
             else:
+                self.operator_sim_pump()
                 t2 = CLOCK.monotonic()
                 try:
                     rd = self.link.cmd("nfc_read ms=3000", 30.0)
@@ -1303,7 +1354,7 @@ class Station:
                     uid = f.get("uid", "")
         except Exception as e:
             det.append(f"{type(e).__name__}: {e}")
-        ok = (read == serial) if write else bool(uid)
+        ok = (read == serial and wrote) if write else bool(uid)
         info = (f"written {serial}; " if write else "") + f"read {read or 'nothing'}" + (f"; tag {uid}" if uid else "")
         if tw is not None and tr is not None:
             info += f"; write {tw:.1f} s, read {tr:.1f} s"
@@ -1582,6 +1633,13 @@ class Station:
                     break
                 except CommandError:
                     continue
+            # Opening the port reset the board, and its C5 takes a few seconds to
+            # link: a sweep asked before that ends at once with why=link.
+            for _ in range(C5_LINK_TRIES):
+                c5 = next((fields(r) for r in self.link.cmd("info", PING_TIMEOUT_S) if r.startswith("c5=")), {})
+                if c5.get("recog") == "kode":
+                    break
+                CLOCK.sleep(C5_LINK_PAUSE_S)
             line = f"test_dot_radio ssid24={quote(w['ssid_24'])} ssid5={quote(w['ssid_5'])} ble={quote(b['beacon_name'])}"
             recs = self.link.cmd(line + " discover=on", DISCOVER_TIMEOUT_S)
         except CommandError as e:
