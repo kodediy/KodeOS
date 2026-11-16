@@ -744,7 +744,7 @@ static void assets_write_op(const char *path, uint8_t *blk, uint32_t len)
     s_a.op       = OP_WRITE;
     s_a.op_t0_ms = khal_time_ms();
     s_a.wblk     = blk;
-    storage_write_all_request(path, blk, len, s_a.ao);
+    storage_write_all_request(path, blk, len, s_a.ao, KODE_STORAGE_TAG_NONE);
 }
 
 /** @brief Ask AO_Storage how much room the internal FAT has. */

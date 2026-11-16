@@ -1062,6 +1062,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_WHY_REST_IDLE   "kody_sleep"                     /**< What it says of Rest asked for by the time without input. */
 #define GUI_WHY_REST_WOKEN  "woken and left alone"           /**< What it says of Rest asked for again by a Lock that was woken and nothing touched. */
 #define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install says when AO_AppMgr stays busy. */
+#define GUI_HINT_CARD_FULL  "SD card is full"                /**< What the glass says when an app's copy does not fit the card. */
 #define GUI_OFF_IDLE        0U                               /**< The face's red arc is not drawn. */
 #define GUI_OFF_FILL        1U                               /**< It fills while the bottom button stays down. */
 #define GUI_OFF_EMPTY       2U                               /**< It empties after the button was let go. */
@@ -3109,6 +3110,10 @@ typedef struct {
                                *   this AO made was refused: "who: why".    */
     bool     lp_refused_due; /**< That refusal arrived while parked and is
                                *   still to be said on the glass.            */
+    bool     card_full_due;  /**< The card was found full while the glass
+                               *   was out of sight (parked or at Rest): it
+                               *   is said on the next face, Apps or
+                               *   Settings (gui_card_full_due_say()).      */
     bool     lp_rest;        /**< The park is Rest's (Gui_rest_asleep): the
                                *   Rest face stays on the glass.            */
     bool     lp_top_down;    /**< TOP went down while parked and has not come up. */
@@ -14264,8 +14269,9 @@ static void gui_evict_end(Gui * const me, AppEvictEndEvt const * const e)
     else
     {
         /* Room is made and nobody is asked (it loads, and that
-         * is it). AO_AppMgr keeps what goes on the card first; a copy that
-         * fails stops the install with nothing removed (KFAIL_KEEP). */
+         * is it). AO_AppMgr evicts the apps the card holds a copy of; when
+         * one it must evict has none yet, nothing is written and the
+         * install fails as busy (KFAIL_BUSY). */
         KLOG_N(TAG, "install: %u app(s) make room for %s", (unsigned)e->victims,
                me->write_name);
         gui_install_write(me);
@@ -21849,20 +21855,20 @@ static void gui_failure_fill(Gui * const me)
 {
     int8_t const row = gui_sheet_card_row(me);
     const GuiWriteWords * const words = gui_write_words(me->write_what);
-    /* Nothing was written and nothing is damaged: the card refused the copy
-     * of an app this install would have removed. The title stays the
-     * write's. */
-    static const char * const KEEP_WHY[3] = {
-        "Nothing changed.", "The card could not keep",
-        "an app this one replaces.",
+    /* Nothing was written and nothing is damaged: an app this install
+     * would remove has no copy on the card yet, and AO_AppMgr is making it.
+     * The title stays the write's; Try again is the answer. */
+    static const char * const BUSY_WHY[3] = {
+        "Nothing changed.", "An app this one replaces",
+        "is still being copied.",
     };
     const char * const *why = words->why;
     char                detail[GUI_SYS_DETAIL_MAX];
 
     me->sheet_locked = false;
-    if ( (uint8_t)KFAIL_KEEP == me->fail_why )
+    if ( (uint8_t)KFAIL_BUSY == me->fail_why )
     {
-        why = KEEP_WHY;
+        why = BUSY_WHY;
     }
     gui_frame_begin(me);
     gui_write_prot(me, row);
@@ -32760,6 +32766,36 @@ static void gui_lp_refused(Gui * const me, LowPowerRefusedEvt const * const r)
 }
 
 /**
+ * @brief Say on the glass that the card is full.
+ *
+ * AO_AppMgr skips the copy of an app that does not fit the card and says so
+ * once for each card mounted; the person is told, to free some space.
+ *
+ * @param me The AO, its face awake, Apps or Settings on the glass.
+ */
+static void gui_card_full_say(Gui * const me)
+{
+    me->card_full_due = false;
+    KLOG_N(TAG, "the card is full: an app's copy does not fit");
+    kgui_hint(GUI_HINT_CARD_FULL);
+}
+
+/**
+ * @brief Say the card's "full" that came while the glass was out of sight.
+ *
+ * Called on the way into the face awake, Apps and Settings.
+ *
+ * @param me The AO.
+ */
+static void gui_card_full_due_say(Gui * const me)
+{
+    if ( me->card_full_due )
+    {
+        gui_card_full_say(me);
+    }
+}
+
+/**
  * @brief The board is awake and the glass is back: draw again, on the face.
  *
  * The framebuffers are fetched again (the link may have come back elsewhere),
@@ -33375,6 +33411,7 @@ void Gui_ctor(void)
     /* The Lock is awake, nobody woke it, and no cable is asked to keep it so;
      * the glass is at the level the store holds, until Rest dims it. */
     me->at_rest         = false;
+    me->card_full_due   = false;
     me->woken           = false;
     me->usb_awake       = false;
     me->rail_3v3        = false;
@@ -33562,6 +33599,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
     QActive_subscribe(&me->super, APP_FLASH_PROGRESS_SIG);
     QActive_subscribe(&me->super, APP_FLASH_DONE_SIG);
     QActive_subscribe(&me->super, APP_FLASH_FAIL_SIG);
+    QActive_subscribe(&me->super, APP_CARD_FULL_SIG);
     QActive_subscribe(&me->super, APP_ERASE_DONE_SIG);
 #if CONFIG_KODE_TEST_DOT
     /* AO_TestDot's screens and patterns: the E5 test takes the glass. */
@@ -34431,7 +34469,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
              * takes the Opening card over when one is up and raises the
              * failure by itself when none is. The event carries a reason:
              * it says which sentence the card wears, the write's own or the
-             * card that could not keep an app. */
+             * app still being copied to the card. */
             me->fail_why = Q_EVT_CAST(AppFlashFailEvt)->why;
             if ( me->write_cancel )
             {
@@ -34443,6 +34481,14 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             {
                 gui_show_fail(me);
             }
+            status = Q_HANDLED();
+            break;
+        }
+        case APP_CARD_FULL_SIG: {
+            /* The glass is out of sight - parked, at Rest, or a screen that
+             * is not the face, Apps or Settings, which say it themselves:
+             * it is said on the way into the next of them. */
+            me->card_full_due = true;
             status = Q_HANDLED();
             break;
         }
@@ -36399,6 +36445,7 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
     {
         case Q_ENTRY_SIG: {
             s_gui_state = "face";
+            gui_card_full_due_say(me);
             /* The time without input counts from here: from the boot, from
              * the door that led to the face, from Rest and from a card that
              * has gone. */
@@ -36582,6 +36629,11 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
             {
                 status = Q_HANDLED();
             }
+            break;
+        }
+        case APP_CARD_FULL_SIG: {
+            gui_card_full_say(me);
+            status = Q_HANDLED();
             break;
         }
         default: {
@@ -37040,6 +37092,7 @@ static QState gui_browsing_events(Gui * const me, QEvt const * const e)
         case Q_ENTRY_SIG: {
             me->screen = Q_STATE_CAST(&Gui_browsing);
             s_gui_state = "browsing";
+            gui_card_full_due_say(me);
             /* The state you are in IS the screen you see, and this is the
              * state that owns the launcher: loading it on the entry covers
              * every way in with one mechanism, and costs nothing on a path
@@ -37198,6 +37251,11 @@ static QState gui_browsing_events(Gui * const me, QEvt const * const e)
             status = Q_SUPER(&Gui_running);
             break;
         }
+        case APP_CARD_FULL_SIG: {
+            gui_card_full_say(me);
+            status = Q_HANDLED();
+            break;
+        }
         default: {
             status = Q_SUPER(&Gui_running);
             break;
@@ -37264,6 +37322,7 @@ static QState gui_settings_events(Gui * const me, QEvt const * const e)
         case Q_ENTRY_SIG: {
             me->screen = Q_STATE_CAST(&Gui_settings);
             s_gui_state = "settings";
+            gui_card_full_due_say(me);
             me->set_tick_ms = khal_time_ms();
             /* The drop from above that the opening swipe promises is the
              * curtain's, a picture of this screen that has already come
@@ -37482,6 +37541,11 @@ static QState gui_settings_events(Gui * const me, QEvt const * const e)
             /* And the auto-lock's count, which a sheet up holds. */
             gui_idle_check(me);
             status = Q_SUPER(&Gui_running);
+            break;
+        }
+        case APP_CARD_FULL_SIG: {
+            gui_card_full_say(me);
+            status = Q_HANDLED();
             break;
         }
         default: {
