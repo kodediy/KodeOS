@@ -107,7 +107,7 @@ bool kgui_crit_waits(bool locked, bool system, bool guided, bool parked);
 #define KGUI_RESET_ROW_SUB     "Erase apps and settings"  /**< ...and the line under it. */
 #define KGUI_RESET_ASK         "Factory reset?"           /**< The question's title. */
 #define KGUI_RESET_ASK_SUB     "Apps and settings go"     /**< ...its second line. */
-#define KGUI_RESET_ASK_DETAIL  "So do networks and paired\ndevices. The welcome app,\nthe name and files stay." /**< ...and what else goes and what stays. */
+#define KGUI_RESET_ASK_DETAIL  "So do networks, paired\ndevices and app files.\nThe welcome app stays." /**< ...and what else goes and what stays. */
 #define KGUI_RESET_BUTTON      "Reset"                    /**< The question's one button. */
 #define KGUI_RESET_TITLE       "Factory reset"            /**< The wait's title, and the refusal's. */
 #define KGUI_RESET_WAIT_SUB    "Erasing"                  /**< The wait's second line. */
