@@ -471,6 +471,8 @@ static void say_source(bool state)
 
 /* ---- The gatherer: one file, read whole, into one PSRAM block --------------- */
 
+static void gather_fail(kode_status_t rc);
+
 /**
  * @brief Start reading a whole file from a path or a URL.
  * @param net   true for a URL (AO_Net's stream), false for a path.
@@ -492,7 +494,11 @@ static void gather(bool net, const char *where, uint32_t limit)
     s_a.g_probing = false;
     if ( net )
     {
+#if CONFIG_KODEOS_NET
         net_stream_open_request(s_a.g_where, s_a.ao);
+#else
+        gather_fail(KODE_DENIED);          /* no AO_Net: no URL opens */
+#endif
     }
     else
     {
@@ -503,11 +509,13 @@ static void gather(bool net, const char *where, uint32_t limit)
 /** @brief Close the gather's file or stream; buffers on loan go back with it. */
 static void gather_close(void)
 {
+#if CONFIG_KODEOS_NET
     if ( s_a.g_net )
     {
         net_stream_close_request();
     }
     else
+#endif
     {
         storage_close_request();
     }
@@ -569,11 +577,13 @@ static void gather_opened(StorageOpenRspEvt const * const r)
         gather_fail(KODE_NO_RESOURCES);
         return;
     }
+#if CONFIG_KODEOS_NET
     if ( s_a.g_net )
     {
         net_stream_read_request();
     }
     else
+#endif
     {
         storage_read_request();
     }
@@ -624,11 +634,13 @@ static void gather_data(StorageDataEvt const * const d)
 {
     const uint8_t *src = NULL;
 
+#if CONFIG_KODEOS_NET
     if ( s_a.g_net )
     {
         src = net_stream_buf(d->idx);
     }
     else
+#endif
     {
         src = storage_buf(d->idx);
     }
@@ -655,10 +667,12 @@ static void gather_data(StorageDataEvt const * const d)
         s_a.op = OP_NONE;
         post_result(KODE_OK, true);
     }
+#if CONFIG_KODEOS_NET
     else if ( s_a.g_net )
     {
         net_stream_return(d->idx);         /* a return IS the next read */
     }
+#endif
     else
     {
         storage_next_request(d->idx);
