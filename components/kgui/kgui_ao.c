@@ -3048,6 +3048,9 @@ typedef struct {
     uint32_t scan_out_ms;    /**< When the scan out was asked: one never answered is given up after GUI_WIFI_SCAN_LOST_MS. */
     bool     scan_refused;   /**< The last sweep was refused: the radio's next
                                *   WIFI_STATE_SIG asks again.               */
+    bool     scan_own_join;  /**< The page asked for a join with its sweep
+                               *   out: the sweep's end, cut for the join,
+                               *   is followed soon and not at the period.  */
     bool     scan_fresh;
     bool     scan_answered;  /**< A round has reached its end since the radio
                                *   came on: only then can "No networks found"
@@ -23170,6 +23173,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
             /* An empty password means the stored one, so this covers both
              * the open network and the one the board remembers. */
             (void)wifi_join_request(me->scan_shown[i], "", true);
+            me->scan_own_join = me->scan_out;
             KLOG_I(TAG, "joining '%s'", me->scan_shown[i]);
         }
     }
@@ -23180,6 +23184,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
         if ( i < me->saved_n )            /* the same stale-row guard */
         {
             (void)wifi_join_request(me->saved_ssid[i], "", true);
+            me->scan_own_join = me->scan_out;
             KLOG_I(TAG, "joining '%s'", me->saved_ssid[i]);
         }
     }
@@ -25483,10 +25488,19 @@ static void gui_sheet_tick(Gui * const me)
                 }
                 if ( !me->scan_out && gui_wifi_scan_due(me, now, entering) )
                 {
-                    me->scan_out     = true;
-                    me->scan_out_ms  = now;
-                    me->scan_refused = false;
-                    wifi_scan_request();
+                    if ( wifi_scan_request(NULL) )
+                    {
+                        me->scan_out      = true;
+                        me->scan_out_ms   = now;
+                        me->scan_refused  = false;
+                        me->scan_own_join = false;
+                    }
+                    else
+                    {
+                        /* AO_Radio's queue had no room: nothing was asked and
+                         * nothing will answer. The page asks again soon. */
+                        me->sheet_ask_ms = now - (GUI_WIFI_SCAN_MS - GUI_WIFI_SCAN_RETRY_MS);
+                    }
                 }
                 if ( entering || !me->wifi_linked )
                 {
@@ -33190,6 +33204,7 @@ void Gui_ctor(void)
     me->apps_from           = 0U;
 #if CONFIG_KODEOS_WIFI
     me->scan_out        = false;
+    me->scan_own_join   = false;
     me->scan_answered   = false;
     me->scan_fresh      = true;
     me->saved_fresh     = true;
@@ -33546,6 +33561,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
      * have to tell one round from another with no way to. */
     QActive_subscribe(&me->super, WIFI_SCAN_ENTRY_SIG);
     QActive_subscribe(&me->super, WIFI_SCAN_END_SIG);
+    QActive_subscribe(&me->super, WIFI_SCAN_AGAIN_SIG);
     QActive_subscribe(&me->super, WIFI_SAVED_ENTRY_SIG);
     QActive_subscribe(&me->super, WIFI_SAVED_END_SIG);
 #if CONFIG_KODEOS_CHANNEL
@@ -35060,6 +35076,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                  * waiting for would stop it ever asking another. And what
                  * it knew about the air is no longer known. */
                 me->scan_out      = false;
+                me->scan_own_join = false;
                 me->scan_answered = false;
             }
             bool const joined = got_ip && (!me->wifi_linked);
@@ -35278,13 +35295,20 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                    x->ok ? "ok" : "refused or cut", (unsigned)x->count,
                    (unsigned)me->scan_n, (unsigned)was_n);
             /* The question is answered, so the wait for the next one starts
-             * HERE. A refusal taught nothing and asks again sooner. */
-            me->scan_out = false;
+             * HERE. A refusal taught nothing and asks again sooner; a sweep
+             * somebody else's newer Wi-Fi request ended does not: whoever
+             * ended it has the radio, and asking at once would end theirs in
+             * turn. One the page's own join ended is asked again soon: the
+             * list is wanted back, and a sweep waits for a join. */
+            bool const own_join = me->scan_own_join;
+
+            me->scan_out      = false;
+            me->scan_own_join = false;
             if ( GUI_SHEET_WIFI == me->sheet )
             {
                 me->sheet_ask    = false;
                 me->sheet_ask_ms = now;
-                if ( !x->ok )
+                if ( KGUI_SCAN_NEXT_SOON == kgui_wifi_scan_next(x->ok, x->cut, own_join) )
                 {
                     me->sheet_ask_ms = now - (GUI_WIFI_SCAN_MS - GUI_WIFI_SCAN_RETRY_MS);
                     /* A busy radio is in the middle of a job that its next
@@ -35300,6 +35324,22 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             {
                 gui_sheet_refill(me);
             }
+            status = Q_HANDLED();
+            break;
+        }
+        case WIFI_SCAN_AGAIN_SIG: {
+            /* A newer `wifi_scan` ended the sweep in flight and the listing
+             * starts again: the list is emptied, because what it holds was
+             * heard by a sweep that did not reach its end, and the new one
+             * fills it from the first channel. A listing is out from here to
+             * its end, whoever asked for it: the page says it is looking,
+             * asks for no sweep of its own meanwhile, and gives up the wait
+             * as it does for its own question. */
+            me->scan_n      = 0U;
+            me->scan_fresh  = true;
+            me->scan_dirty  = true;
+            me->scan_out    = true;
+            me->scan_out_ms = khal_time_ms();
             status = Q_HANDLED();
             break;
         }

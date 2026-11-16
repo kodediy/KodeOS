@@ -108,3 +108,14 @@ bool kgui_wifi_goes_nowhere(const char *why)
     }
     return found;
 }
+
+kgui_scan_next_t kgui_wifi_scan_next(bool ok, bool cut, bool own_join)
+{
+    kgui_scan_next_t next = KGUI_SCAN_NEXT_CYCLE;
+
+    if ( (!ok) && ((!cut) || own_join) )
+    {
+        next = KGUI_SCAN_NEXT_SOON;
+    }
+    return next;
+}

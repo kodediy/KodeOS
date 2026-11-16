@@ -114,6 +114,29 @@ void test_pair_new_device_says_visible_only_with_the_link_free(void)
                              kgui_ble_pair_words(true, false, true));
 }
 
+void test_a_sweep_ended_for_a_newer_request_is_not_asked_again_at_once(void)
+{
+    /* A whole sweep, and one somebody else's newer Wi-Fi request ended: the
+     * page waits its period. Asked again at once, it would end theirs in turn. */
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(true, false, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(false, true, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(true, true, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(true, false, true));
+}
+
+void test_a_refused_or_failed_sweep_is_asked_again_soon(void)
+{
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_SOON, kgui_wifi_scan_next(false, false, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_SOON, kgui_wifi_scan_next(false, false, true));
+}
+
+void test_a_sweep_the_pages_own_join_ended_is_asked_again_soon(void)
+{
+    /* The list is wanted back once the join is made, and a sweep waits for a
+     * join: asking soon ends nobody's request. */
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_SOON, kgui_wifi_scan_next(false, true, true));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -125,5 +148,8 @@ int main(void)
     RUN_TEST(test_a_handshake_that_timed_out_is_told_by_the_signal);
     RUN_TEST(test_only_a_wait_with_no_answer_goes_nowhere);
     RUN_TEST(test_pair_new_device_says_visible_only_with_the_link_free);
+    RUN_TEST(test_a_sweep_ended_for_a_newer_request_is_not_asked_again_at_once);
+    RUN_TEST(test_a_refused_or_failed_sweep_is_asked_again_soon);
+    RUN_TEST(test_a_sweep_the_pages_own_join_ended_is_asked_again_soon);
     return UNITY_END();
 }

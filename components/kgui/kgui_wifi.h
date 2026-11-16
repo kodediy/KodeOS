@@ -83,6 +83,30 @@ const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi);
  */
 bool kgui_wifi_goes_nowhere(const char *why);
 
+/** @brief When the Wi-Fi page asks for its next sweep (kgui_wifi_scan_next()). */
+typedef enum {
+    KGUI_SCAN_NEXT_CYCLE = 0,  /**< At the page's own period.                */
+    KGUI_SCAN_NEXT_SOON        /**< Soon: the last question taught nothing.  */
+} kgui_scan_next_t;
+
+/**
+ * @brief When the Wi-Fi page asks for its next sweep, from how the last one ended.
+ *
+ * A sweep that reached its end is followed at the page's period. So is one
+ * somebody else's newer Wi-Fi request ended early - a scan, a join, Wi-Fi
+ * switched: whoever ended it has the radio, and a sweep asked for at once
+ * would end theirs in turn. A refusal or a failure taught nothing and took
+ * nobody's place, so the page asks again soon. So it does after a sweep the
+ * page's own join ended: the list is wanted back once the join is made, and
+ * a sweep waits for a join instead of ending it.
+ *
+ * @param ok       The sweep reached its end (WifiScanEndEvt.ok).
+ * @param cut      It was ended early for a newer request (WifiScanEndEvt.cut).
+ * @param own_join The page asked for a join while the sweep was out.
+ * @return KGUI_SCAN_NEXT_CYCLE or KGUI_SCAN_NEXT_SOON.
+ */
+kgui_scan_next_t kgui_wifi_scan_next(bool ok, bool cut, bool own_join);
+
 #ifdef __cplusplus
 }
 #endif
