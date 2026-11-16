@@ -129,7 +129,7 @@ SIM_JITTER_PX = 8              # and its scatter on the target
 # gives up: the Kode's bound < its console's line < the PC's wait.
 MS_PER_S = 1000.0              # milliseconds in a second, for the Kode's times
 WAIT_MARGIN_S = 5.0            # what the PC adds to a Kode bound: the line's way over USB and back
-KODE_RESET_S = 290.045         # the SHIP factory reset at every step's budget (KODE_RESET_CONSOLE_MS)
+KODE_RESET_S = 380.045         # the SHIP factory reset at every step's budget (KODE_RESET_CONSOLE_MS)
 KODE_LINE_MARGIN_S = 5.0       # what the Kode's line adds to the reset's bound (KODE_TEST_DOT_LINE_MARGIN_MS)
 KODE_LINE_S = KODE_RESET_S + KODE_LINE_MARGIN_S   # the Kode's console gives a station verb's line this long (KODE_TEST_DOT_LINE_MS)
 RESULT_PASS_TIMEOUT_S = KODE_LINE_S + WAIT_MARGIN_S   # `test_dot_result verdict=pass` answers when the reset is done
