@@ -1104,7 +1104,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_LOCK_DEFAULT_S  60U    /* a minute without input locks (reasonable times) */
 
 /** @brief Kody's sleep time while he follows the auto-lock's: no seconds of
- *         its own, and what a board with nothing stored does. */
+ *         its own, and the choice `config key="kody_sleep" value=lock`. */
 #define GUI_SLEEP_LOCK      UINT32_MAX
 
 /** @brief The hours on a 12 h clock's dial. */
@@ -31074,7 +31074,7 @@ static const char *const s_clock_words[] = { "24h", "12h" };
  */
 static const uint32_t s_sleeps[] = { GUI_SLEEP_LOCK, 30U, 60U, 300U, 600U, 0U };
 
-/** @brief The face rests after half a minute untouched on a board with nothing stored (the apocrifa's is a minute; reasonable times). */
+/** @brief The face rests after a minute untouched on a board with nothing stored: `config` reads `1m`, the Sleep after row `1 min`. */
 #define GUI_SLEEP_DEFAULT_S 60U   /* the apocrifa's CONFIG_KODEOS_SHELL_IDLE_DEFAULT_S */
 
 /** @brief Their words, in s_sleeps' order. */
@@ -31151,7 +31151,7 @@ static int gui_hour_shown(Gui const * const me, int hour)
 /**
  * @brief Read `clock` and `kody_sleep` from kgui's store, once, at boot.
  *
- * A missing key is the default (24 h; Kody follows the auto-lock), and so is
+ * A missing key is the default (24 h; Rest after GUI_SLEEP_DEFAULT_S), and so is
  * one that does not read as a value the table offers, said with a warning.
  *
  * @param me The AO.
@@ -31176,12 +31176,12 @@ static void gui_clock_sleep_load(Gui * const me)
     }
     else if ( KODE_DENIED != st )
     {
-        KLOG_W(TAG, "kgui/%s does not read as a sleep time; Kody follows the "
-                    "auto-lock", GUI_NVS_KEY_SLEEP);
+        KLOG_W(TAG, "kgui/%s does not read as a sleep time; the face rests "
+                    "after %u s", GUI_NVS_KEY_SLEEP, (unsigned)GUI_SLEEP_DEFAULT_S);
     }
     else
     {
-        /* Nothing stored: he follows the auto-lock. */
+        /* Nothing stored: GUI_SLEEP_DEFAULT_S. */
     }
     h12 = 0U;
     if ( me->clock_12h )
