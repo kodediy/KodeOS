@@ -1104,7 +1104,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_LOCK_DEFAULT_S  60U    /* a minute without input locks (reasonable times) */
 
 /** @brief Kody's sleep time while he follows the auto-lock's: no seconds of
- *         its own, and what a board with nothing stored does. */
+ *         its own, and the choice `config key="kody_sleep" value=lock`. */
 #define GUI_SLEEP_LOCK      UINT32_MAX
 
 /** @brief The hours on a 12 h clock's dial. */
@@ -3215,7 +3215,9 @@ static void gui_vol_ask(void);
 static void gui_vol_answer(Gui * const me, KodeConfigAnsEvt const * const a);
 static void gui_off_after_ask(void);
 static void gui_off_after_answer(Gui * const me, KodeConfigAnsEvt const * const a);
+#if CONFIG_KODEOS_WIFI || CONFIG_KODEOS_BLE
 static GuiSetLook gui_set_look(uint8_t which);
+#endif
 static GuiSetLook gui_more_look(uint8_t which);
 static void gui_sheet_rest_take(Gui const * const me);
 static void gui_sheet_page_dress(Gui * const me);
@@ -3249,9 +3251,11 @@ static void gui_more_fill(Gui * const me);
 static void gui_time_fill(Gui * const me);
 static void gui_time_follow(Gui * const me);
 static uint32_t gui_time_minute(Gui const * const me, struct tm *out);
+#if CONFIG_KODEOS_BLE
 static const char *gui_ble_name_shown(Gui const * const me);
 static void gui_ble_name_send(Gui const * const me);
 static void gui_ble_name_config(Gui * const me, KodeConfigReqEvt const * const r);
+#endif
 static bool gui_row_cut(Gui const * const me, int32_t cy, kgui_rail_t const *edge);
 static void gui_vol_motor(Gui const * const me);
 static void gui_first_hold_tick(Gui * const me);
@@ -5179,6 +5183,47 @@ static void gui_pair_yield(Gui * const me)
 }
 #endif /* CONFIG_KODEOS_BLE_PAIRING_PASSKEY */
 
+#if !CONFIG_KODEOS_WIFI || !CONFIG_KODEOS_BLE
+/**
+ * @brief Take a radio's circle off the control centre in a build without it.
+ *
+ * Its slot is left NULL, as a control missing from the screen is, so the pad,
+ * the taps and the painting pass over it; a cursor that stood on it starts on
+ * Settings.
+ *
+ * @param me    The AO.
+ * @param which A GuiSetCtl whose control was found.
+ * @return true when @p which is a radio this build has not got.
+ */
+static bool gui_set_absent(Gui * const me, uint8_t which)
+{
+    bool absent = false;
+
+#if !CONFIG_KODEOS_WIFI
+    if ( (uint8_t)GUI_SET_WIFI == which )
+    {
+        absent = true;
+    }
+#endif
+#if !CONFIG_KODEOS_BLE
+    if ( (uint8_t)GUI_SET_BLE == which )
+    {
+        absent = true;
+    }
+#endif
+    if ( absent )
+    {
+        lv_obj_set_hidden(me->set_ctl[which], true);
+        me->set_ctl[which] = NULL;
+        if ( which == me->set_sel )
+        {
+            me->set_sel = (uint8_t)GUI_SET_MORE;
+        }
+    }
+    return absent;
+}
+#endif
+
 /**
  * @brief Stand the UI up and wire the screens this side drives.
  *
@@ -5811,6 +5856,12 @@ static bool ui_build(Gui * const me)
                        SET_CTL_NAMES[i]);
                 continue;
             }
+#if !CONFIG_KODEOS_WIFI || !CONFIG_KODEOS_BLE
+            if ( gui_set_absent(me, i) )
+            {
+                continue;
+            }
+#endif
             if ( ((uint8_t)GUI_SET_LEVEL == i) || ((uint8_t)GUI_SET_VOLUME == i) )
             {
                 /* The level is a track a finger drags, as a sheet's value
@@ -12087,7 +12138,9 @@ static void gui_keep_gate(Gui * const me)
         && ((uint8_t)GUI_KEEP_READ_NONE == me->keep_read) )
     {
         me->keep_gate_open = true;
+#if CONFIG_KODEOS_RADIO
         radio_boot_release();
+#endif
     }
 }
 
@@ -19080,6 +19133,7 @@ static lv_color_t gui_bat_bar_colour(Gui const * const me)
  * @param which A GuiSetCtl; out of range answers with More's look.
  * @return That control's colour, glyph and title.
  */
+#if CONFIG_KODEOS_WIFI || CONFIG_KODEOS_BLE
 static GuiSetLook gui_set_look(uint8_t which)
 {
     static const void *const GLYPHS[GUI_SET_COUNT] = {
@@ -19124,6 +19178,7 @@ static GuiSetLook gui_set_look(uint8_t which)
     look.title = TITLES[idx];
     return look;
 }
+#endif
 
 /**
  * @brief What a row of More is called and what it wears on its page.
@@ -22838,7 +22893,9 @@ static bool gui_wifi_listed(Gui const * const me, const char *ssid)
 {
     return me->wifi_linked && (strcmp(me->wifi_ssid, ssid) == 0);
 }
+#endif /* CONFIG_KODEOS_WIFI */
 
+#if CONFIG_KODEOS_WIFI || CONFIG_KODEOS_BLE
 /**
  * @brief A radio's row's words, with what the link to the radio chip last
  *        said (kgui_radio_words()).
@@ -22856,7 +22913,9 @@ static const char *gui_radio_words(Gui const * const me, bool on, bool linked,
 
     return kgui_radio_words(&v);
 }
+#endif
 
+#if CONFIG_KODEOS_WIFI
 /**
  * @brief The Wi-Fi sheet: the switch, then the networks.
  *
@@ -24557,11 +24616,16 @@ static bool gui_os_image_on_card(Gui const * const me)
 
 /**
  * @brief Whether this build has an update service to ask.
- * @return true unless CONFIG_KGUI_OS_UPDATE_URL is empty.
+ * @return true unless CONFIG_KGUI_OS_UPDATE_URL is empty or the build has no
+ *         AO_Net to ask it with.
  */
 static bool gui_os_service(void)
 {
+#if CONFIG_KODEOS_NET
     return (sizeof(GUI_OS_SERVICE) > GUI_OS_SERVICE_NONE);
+#else
+    return false;
+#endif
 }
 
 /**
@@ -24623,6 +24687,7 @@ static void gui_os_ask(Gui * const me, const char *why)
     {
         return;     /* nobody to ask, no way to ask, or asked already */
     }
+#if CONFIG_KODEOS_NET
     if ( NULL == me->os )
     {
         /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
@@ -24647,6 +24712,10 @@ static void gui_os_ask(Gui * const me, const char *why)
     {
         gui_os_failed(me, "AO_Net did not take the question");
     }
+#else
+    /* Unreached: without AO_Net gui_os_service() is false. */
+    (void)why;
+#endif
 }
 
 /**
@@ -24764,6 +24833,7 @@ static void gui_more_value(Gui const * const me, uint8_t which, char *out,
             (void)snprintf(out, cap, "%s", gui_zone_label(me->zone));
             break;
         }
+#if CONFIG_KODEOS_WIFI
         case GUI_MORE_WIFI: {
             const char * const w = gui_radio_words(me, me->wifi_on, me->wifi_linked,
                                                    me->wifi_reconnecting);
@@ -24776,10 +24846,13 @@ static void gui_more_value(Gui const * const me, uint8_t which, char *out,
             (void)snprintf(out, cap, "%s", say);
             break;
         }
+#endif
+#if CONFIG_KODEOS_BLE
         case GUI_MORE_BLE: {
             (void)snprintf(out, cap, "%s", gui_radio_words(me, me->ble_on, false, false));
             break;
         }
+#endif
         case GUI_MORE_TIME: {
             struct tm t;
 
@@ -24854,9 +24927,15 @@ static void gui_more_fill(Gui * const me)
     gui_sheet_header(me, NULL, KUI_COLOR_TEXT, "Settings", "");
     /* What a person looks for, first: the radios and the
      * battery, also here though their circles open them; the time; what
-     * changes where it stands; the self-test; and the Dot itself last. */
+     * changes where it stands; the self-test; and the Dot itself last. A
+     * radio the build has not got has no row here and no circle
+     * (gui_set_absent()). */
+#if CONFIG_KODEOS_WIFI
     gui_more_row(me, (uint8_t)GUI_MORE_WIFI);
+#endif
+#if CONFIG_KODEOS_BLE
     gui_more_row(me, (uint8_t)GUI_MORE_BLE);
+#endif
     gui_more_row(me, (uint8_t)GUI_MORE_BAT);
     me->time_shown = gui_time_minute(me, NULL);
     gui_more_row(me, (uint8_t)GUI_MORE_TIME);
@@ -30995,7 +31074,7 @@ static const char *const s_clock_words[] = { "24h", "12h" };
  */
 static const uint32_t s_sleeps[] = { GUI_SLEEP_LOCK, 30U, 60U, 300U, 600U, 0U };
 
-/** @brief The face rests after half a minute untouched on a board with nothing stored (the apocrifa's is a minute; reasonable times). */
+/** @brief The face rests after a minute untouched on a board with nothing stored: `config` reads `1m`, the Sleep after row `1 min`. */
 #define GUI_SLEEP_DEFAULT_S 60U   /* the apocrifa's CONFIG_KODEOS_SHELL_IDLE_DEFAULT_S */
 
 /** @brief Their words, in s_sleeps' order. */
@@ -31072,7 +31151,7 @@ static int gui_hour_shown(Gui const * const me, int hour)
 /**
  * @brief Read `clock` and `kody_sleep` from kgui's store, once, at boot.
  *
- * A missing key is the default (24 h; Kody follows the auto-lock), and so is
+ * A missing key is the default (24 h; Rest after GUI_SLEEP_DEFAULT_S), and so is
  * one that does not read as a value the table offers, said with a warning.
  *
  * @param me The AO.
@@ -31097,12 +31176,12 @@ static void gui_clock_sleep_load(Gui * const me)
     }
     else if ( KODE_DENIED != st )
     {
-        KLOG_W(TAG, "kgui/%s does not read as a sleep time; Kody follows the "
-                    "auto-lock", GUI_NVS_KEY_SLEEP);
+        KLOG_W(TAG, "kgui/%s does not read as a sleep time; the face rests "
+                    "after %u s", GUI_NVS_KEY_SLEEP, (unsigned)GUI_SLEEP_DEFAULT_S);
     }
     else
     {
-        /* Nothing stored: he follows the auto-lock. */
+        /* Nothing stored: GUI_SLEEP_DEFAULT_S. */
     }
     h12 = 0U;
     if ( me->clock_12h )
@@ -33551,7 +33630,10 @@ static QState Gui_initial(Gui * const me, void const * const par)
     {
         kgui_assets_start();
     }
+#if CONFIG_KODEOS_RADIO
     radio_boot_hold();
+#endif
+#if CONFIG_KODEOS_BLE
     /* The name chosen for Bluetooth: the radio keeps it for its adverts. It
      * is sent once every owner has its queue (GUI_TICK_SIG): this AO starts
      * in kode_init()'s early row, before AO_Radio, and a post to an AO with
@@ -33566,6 +33648,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
     {
         me->ble_name[0] = '\0';
     }
+#endif
     return Q_TRAN(&Gui_waiting);
 }
 
@@ -33842,11 +33925,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 me->settings_owed = false;
                 gui_settings_ask();
             }
+#if CONFIG_KODEOS_BLE
             if ( me->ble_name_owed && kode_up() )
             {
                 me->ble_name_owed = false;
                 gui_ble_name_send(me);
             }
+#endif
             /* The long step of the whole system, which is why AO_Gui sits
              * near the bottom of the priority list, with only AO_Net below
              * it: a repaint spends most of its time blocked inside LVGL

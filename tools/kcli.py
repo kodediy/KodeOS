@@ -67,6 +67,20 @@ CLOSE_TIMEOUT = 30.0   # CRC + image verify + directory commit after the bytes
 C5_CLOSE_IDLE = 45.0   # install --dst c5: silence this long after the bytes means the
                        # update died; the link's bring-up alone is ~10 s quiet
 
+# What to try when the console goes quiet (no ping answer, no ready, no ack,
+# no terminator). Two states look the same from here. A boot request left
+# armed by the mailbox relaunches its app at every port-open reset, and only
+# a hardware reset retires it. After a guest app has run, the USB-C link can
+# hold bytes back in both directions; a reset does not clear that and
+# unplugging the cable does. The charging base's port resets nothing when it
+# opens.
+LINK_HINT = ("kcli: the console did not answer. If an app keeps starting "
+             "instead of kodeOS, hold BOT+LEFT about a second. If kodeOS is "
+             "running and a guest app ran since the USB-C cable went in, "
+             "unplug that cable and plug it back in: a reset does not clear "
+             "that state. On the charging base's port, opening it resets "
+             "nothing: BOT+LEFT is the reset there.")
+
 
 def port_holders(port):
     """PIDs holding `port` open, per lsof. Empty when it is free (or on any
@@ -320,6 +334,13 @@ def check_ok(term, what):
         die(f"{what}: {term}")
 
 
+def check_link(term, what):
+    """check_ok() for a line any live console answers: silence is the cable."""
+    if term is None:
+        die(f"{what}: no terminator (timeout)\n{LINK_HINT}")
+    check_ok(term, what)
+
+
 def do_ping(board, args):
     records, term = board.command("ping")
     check_ok(term, "ping")
@@ -369,6 +390,11 @@ def stream_payload(board, data, cmd, what, verbose=False,
     `close_timeout` is how long to wait for that terminator after the last
     byte (CLOSE_TIMEOUT unless said otherwise), and with `close_idle` it is
     a deadline on silence instead - see Board.collect().
+
+    The retries reset the board by reopening the port, which holds for the
+    USB-C cable only: the charging base's port resets nothing when it opens,
+    so there a transfer the board still has armed takes the retry's `ping`
+    as payload.
     """
     size = len(data)
 
@@ -390,7 +416,7 @@ def stream_payload(board, data, cmd, what, verbose=False,
                 print(f"   {line}")
         board.drain()
         _, term = board.command("ping")
-    check_ok(term, "ping (pre-flight)")
+    check_link(term, "ping (pre-flight)")
 
     line = None
     for attempt in (1, 2):
@@ -417,9 +443,9 @@ def stream_payload(board, data, cmd, what, verbose=False,
                     print(f"   {l}")
             board.drain()
             _, term = board.command("ping")
-            check_ok(term, "ping (retry)")
+            check_link(term, "ping (retry)")
     if line is None:
-        die(f"{what}: board never said ready (after a retry)")
+        die(f"{what}: board never said ready (after a retry)\n{LINK_HINT}")
 
     # The window the board announced: send that many bytes, wait for its
     # `>|ack`, repeat. The wire itself has no flow control (the device ACKs
@@ -439,7 +465,7 @@ def stream_payload(board, data, cmd, what, verbose=False,
         if n == step:
             _, term = board.collect(10.0, stop=lambda r: r == "ack")
             if term is None:
-                die(f"{what}: no ack at {sent}/{size} bytes")
+                die(f"{what}: no ack at {sent}/{size} bytes\n{LINK_HINT}")
             if term.startswith(">err"):
                 die(f"{what}: {term}")
         pct = 100 * sent // size
@@ -451,7 +477,7 @@ def stream_payload(board, data, cmd, what, verbose=False,
     if close_timeout is None:
         close_timeout = CLOSE_TIMEOUT
     _, term = board.collect(close_timeout, idle=close_idle)
-    check_ok(term, what)
+    check_link(term, what)
 
 
 def do_install(board, args):
