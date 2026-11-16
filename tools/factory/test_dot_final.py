@@ -705,8 +705,15 @@ class Station:
         self.find_repeat()
         self.emit_start()
         self.begin("info")
-        self.add("info", PASS if self.info["serial"] != "-" else FAIL,
-                 f"serial {self.info['serial']}; MAC {self.info['mac']}; kodeOS {self.info['kodeos']}; C5 {self.info['c5']}",
+        # The kodeOS a Kode leaves with is the one the station was told to expect,
+        # when it was told: a Kode flashed with another one talks to the station
+        # just as well.
+        want = (self.cfg.get("expect") or {}).get("kodeos")
+        wrong = bool(want) and self.info["kodeos"] != want
+        self.add("info", PASS if (self.info["serial"] != "-" and not wrong) else FAIL,
+                 f"serial {self.info['serial']}; MAC {self.info['mac']}; kodeOS {self.info['kodeos']}; C5 {self.info['c5']}"
+                 + (f"; the station expects kodeOS {want}" if wrong else ""),
+                 f"kodeOS {want}" if want else "",
                  detail="\n".join(recs),
                  values=[value("serial", self.info["serial"]), value("kodeos", self.info["kodeos"]),
                          value("c5", self.info["c5"])])

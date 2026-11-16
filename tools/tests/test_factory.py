@@ -232,6 +232,29 @@ class TestFullPass(Base):
                                 if p.suffix in (".csv", ".html") or p.name.startswith("2")), [])
 
 
+class TestExpectedVersion(Base):
+
+    def run_expecting(self, version):
+        r = Run(sim.Scenario())
+        self.addCleanup(r.cleanup)
+        cfg = json.loads(r.cfg.read_text())
+        cfg["expect"] = {"kodeos": version}
+        r.cfg.write_text(json.dumps(cfg))
+        return r.go()
+
+    def test_a_kode_with_another_kodeos_fails(self):
+        r = self.run_expecting("99.99.99")
+        res = r.results()
+        self.assertEqual(res["steps"]["info"]["status"], "FAIL", res["steps"]["info"])
+        self.assertIn("expects kodeOS 99.99.99", res["steps"]["info"]["measured"])
+        self.assertEqual(res["verdict"], "FAIL")
+
+    def test_the_expected_kodeos_passes(self):
+        seen = self.run_case(sim.Scenario()).results()["info"]["kodeos"]
+        r = self.run_expecting(seen)
+        self.assertEqual(r.results()["verdict"], "PASS")
+
+
 class TestNfc(Base):
 
     def test_a_failed_nfc_fails_the_kode(self):

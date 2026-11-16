@@ -39,6 +39,8 @@ verdict screen up and erases nothing.
 3. Fill the two channels: with a Kode on the cable, run
    `python3 tools/factory/test_dot_final.py --discover`. It lists the networks
    the Kode hears and writes the channels of the two named ones.
+4. Set `expect.kodeos` to the version the Kodes of this lot must run, as `info`
+   prints it. A Kode with another one fails its first step. `null` accepts any.
 
 ## Running the test
 
