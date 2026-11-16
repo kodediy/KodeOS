@@ -3,7 +3,7 @@ components/kgui/kgui_ao.c arrayIndexOutOfBoundsCond 2
 components/kgui/kgui_ao.c constParameterPointer 9
 components/kgui/kgui_ao.c constVariablePointer 9
 components/kgui/kgui_ao.c misra-c2012-10.1 2
-components/kgui/kgui_ao.c misra-c2012-10.8 7
+components/kgui/kgui_ao.c misra-c2012-10.8 6
 components/kgui/kgui_ao.c misra-c2012-11.1 6
 components/kgui/kgui_ao.c misra-c2012-11.6 6
 components/kgui/kgui_ao.c misra-c2012-12.2 2

@@ -18,13 +18,13 @@ extern "C" {
 #define KGUI_WELCOME_DONE     "done"             /**< The person was greeted. */
 #define KGUI_WELCOME_TEXT     "You're all set."  /**< What Kody reads. */
 
-#define KGUI_WELCOME_GREET_MS 1800U  /**< From Kody starting to wake to the greeting: kshell's GREET_DELAY_MS. */
+#define KGUI_WELCOME_GREET_MS 1800U  /**< From Kody being put in his scene to the greeting: kshell's GREET_DELAY_MS. */
 
 /** @brief The landing's mark, read once at boot. */
 typedef struct {
     bool     pending;  /**< The key said `pending`, and the greeting has not come. */
-    bool     armed;    /**< Kody has started to wake: the clock runs. */
-    uint32_t woke_ms;  /**< When he did. */
+    bool     armed;    /**< Kody has been put in his scene: the clock runs. */
+    uint32_t woke_ms;  /**< When he was. */
 } kgui_welcome_t;
 
 /**
@@ -54,11 +54,11 @@ void kgui_welcome_drop(kgui_welcome_t *w);
  * @brief Whether the greeting goes now. It answers true once.
  *
  * @param w      The mark.
- * @param woke   Kody has started to wake.
+ * @param woke   Kody has been put in his scene, waking up or in his loop.
  * @param bare   Nothing covers the face.
  * @param now_ms The clock.
- * @return true when KGUI_WELCOME_GREET_MS have passed since he started to wake
- *         and the face is bare; the mark is spent then.
+ * @return true when KGUI_WELCOME_GREET_MS have passed since he was and the
+ *         face is bare; the mark is spent then.
  */
 bool kgui_welcome_due(kgui_welcome_t *w, bool woke, bool bare, uint32_t now_ms);
 
