@@ -54,6 +54,7 @@
 #include "kgui_scene_label.h" /* a scene's English words, for what the interface shows */
 #include "kgui_osrel.h"    /* kodeOS's own update: the service's answer and About's row */
 #include "kgui_span_label.h"  /* a length of time's English words, and the step round a setting's */
+#include "kgui_clock.h"    /* the Time page: its zones, the step of each row, what the face asks for */
 #include "kgui_keyboard.h" /* the keypad card: a password or a hidden name, by multitap */
 #include "kgui_screens.h" /* this component's own screens and subjects */
 #include "kgui_motion.h"   /* the launcher's rail and motions: Step, Glide, Rubber, Slide */
@@ -137,8 +138,8 @@ enum {
     GUI_SHEET_OPEN_SIG,         /**< A sheet was asked for: by a control, a
                                  *   launcher row, a write, a pairing, or a
                                  *   row that opens a list in its own page's
-                                 *   place (About's Time zone, Screen's
-                                 *   Auto-lock). Carries the kind in a
+                                 *   place (Screen's Auto-lock). Carries
+                                 *   the kind in a
                                  *   SheetOpenEvt rather than being written
                                  *   into the AO by the caller: which sheet
                                  *   is up is state, and state changes where
@@ -243,8 +244,8 @@ enum {
  * @brief Which sheet is on the glass.
  *
  * One per settings page that has something to say, and NONE for the ordinary
- * case; then the two lists of choices, each a page a sheet opens from a row
- * of its own - About's zones and Screen's auto-lock times; then the kinds
+ * case; then the list of choices a page opens from a row of its own -
+ * Screen's auto-lock times; then the kinds
  * that belong to no page at all - a row of the launcher, a write in flight,
  * a write that failed, the ending, a peer asking to pair, an app that
  * stopped, a battery that is critical. The first seven
@@ -263,7 +264,6 @@ typedef enum {
     GUI_SHEET_BAT,
     GUI_SHEET_ABOUT,
     GUI_SHEET_MORE,
-    GUI_SHEET_ZONE,
     GUI_SHEET_TIME,
     GUI_SHEET_AUTOLOCK,
     GUI_SHEET_DETAILS,
@@ -296,7 +296,7 @@ typedef enum {
 static const char *gui_sheet_kind_name(GuiSheet kind)
 {
     static const char *const NAMES[] = {
-        "none", "wifi", "ble", "screen", "bat", "about", "more", "zone", "time",
+        "none", "wifi", "ble", "screen", "bat", "about", "more", "time",
         "autolock", "details", "opening", "failure", "poweroff", "pairing",
         "selftest", "kody", "keypad", "stopped", "battery", "remove", "removing",
         "reset", "resetting"
@@ -385,7 +385,7 @@ static bool gui_sheet_is_system(GuiSheet kind)
 /**
  * @brief Whether a sheet is a settings page: a kshell page of the rail.
  *
- * Wi-Fi, Bluetooth, More and the pages More opens, and the two lists of
+ * Wi-Fi, Bluetooth, More and the pages More opens, and the list of
  * choices under them, wear kshell's dress: no header disc, the page's name
  * centred over the glass, and rows that are discs on the page rather than
  * capsules, the focused one always at the same height. They go back one level
@@ -407,7 +407,6 @@ static bool gui_sheet_is_page(GuiSheet kind)
         case GUI_SHEET_BAT:
         case GUI_SHEET_ABOUT:
         case GUI_SHEET_MORE:
-        case GUI_SHEET_ZONE:
         case GUI_SHEET_TIME:
         case GUI_SHEET_AUTOLOCK:
         case GUI_SHEET_TEST:
@@ -914,20 +913,6 @@ enum {
 _Static_assert(GUI_ZONE_MAX == KODE_CONFIG_VALUE_MAX,
                "kgui's copy of the zone holds any zone AO_Boot answers");
 
-/** @brief The zone a board with nothing stored runs in: the board's own UTC,
- *         and the list's row for it (s_zones). */
-#define GUI_ZONE_UTC  "UTC0"
-
-/**
- * @brief One zone of the list: what its row and About's Time zone row call
- *        it, and the POSIX TZ string the clock runs in.
- */
-typedef struct {
-    const char *label;  /**< The list row's name, About's second line, and
-                          *   the log's word.                                */
-    const char *tz;     /**< The POSIX TZ string, at most GUI_ZONE_MAX.     */
-} GuiZone;
-
 /**
  * @brief One auto-lock time of the list: how long it is, what its row and
  *        the Screen sheet's Auto-lock row call it, and what the door it
@@ -1171,8 +1156,8 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
  * and from the console; every door between the face, the launcher and the
  * settings screen (the unlock, the settings door both ways, home and the
  * auto-lock), and home from the sheets; the Wi-Fi,
- * Bluetooth, Battery, Screen, About and Power off sheets, the lists of
- * zones and of auto-lock times, and the details; the Opening card's three
+ * Bluetooth, Battery, Screen, About and Power off sheets, the list of
+ * auto-lock times, and the details; the Opening card's three
  * roads, with the edge closing, and Didn't open; and the
  * empty launcher - duda's first play, the QR and back by the top button and
  * by a tap on Kody, the 20 s comeback, and all four players holding a model
@@ -1443,20 +1428,25 @@ typedef enum {
 #define GUI_TAG_MORE          70U   /* +GuiMore: the row of More that opens a page */
 #define GUI_TAG_MORE_SCREEN   70U   /* More's Screen row                    */
 #define GUI_TAG_MORE_BAT      71U   /* More's Battery row                   */
-#define GUI_TAG_MORE_ZONE     72U   /* More's Time zone row                 */
-#define GUI_TAG_MORE_KODY     73U   /* More's Kody row                      */
-#define GUI_TAG_MORE_TEST     74U   /* More's Self-test row                 */
-#define GUI_TAG_MORE_ABOUT    75U   /* More's About row                     */
-#define GUI_TAG_MORE_WIFI     76U   /* More's Wi-Fi row                     */
-#define GUI_TAG_MORE_BLE      77U   /* More's Bluetooth row                 */
-#define GUI_TAG_MORE_TIME     78U   /* More's Time row                      */
-#define GUI_TAG_TIME_HOUR     90U   /* Time: the hour, stepped              */
-#define GUI_TAG_TIME_MIN      91U   /* Time: the minute, stepped            */
+#define GUI_TAG_MORE_KODY     72U   /* More's Kody row                      */
+#define GUI_TAG_MORE_TEST     73U   /* More's Self-test row                 */
+#define GUI_TAG_MORE_ABOUT    74U   /* More's About row                     */
+#define GUI_TAG_MORE_WIFI     75U   /* More's Wi-Fi row                     */
+#define GUI_TAG_MORE_BLE      76U   /* More's Bluetooth row                 */
+#define GUI_TAG_MORE_TIME     77U   /* More's Time row                      */
+#define GUI_TAG_TIME_ZONE     90U   /* Time: the zone, stepped              */
+#define GUI_TAG_TIME_HOUR     91U   /* Time: the hour, stepped              */
+#define GUI_TAG_TIME_MIN      92U   /* Time: the minute, stepped            */
+#define GUI_TAG_TIME_DAY      93U   /* Time: the day, stepped               */
+#define GUI_TAG_TIME_MONTH    94U   /* Time: the month, stepped             */
+#define GUI_TAG_TIME_YEAR     95U   /* Time: the year, stepped              */
+#define GUI_TIME_VALUE_MAX    12U   /* the words under a row of Time        */
+#define GUI_TIME_NOON         12    /* the hour a clock never told starts from */
+#define GUI_US_PER_S          1000000ULL /* microseconds in a second        */
 #define GUI_MORE_VALUE_MAX    48U   /* the words under a row of More        */
 #define GUI_TEST_NEVER        "Never run" /* no report kept: the Self-test row and its page say it alike */
 #define GUI_TAG_WIFI_SAVED   100U   /* +i into saved_ssid[]                 */
 #define GUI_TAG_WIFI_SCAN    200U   /* +i into scan_ssid[]                  */
-#define GUI_TAG_ZONE         300U   /* +i into s_zones[]                    */
 #define GUI_TAG_LOCK         400U   /* +i into s_locks[]                    */
 #define GUI_TAG_TEST_START   500U   /* Self-test: run it                    */
 #define GUI_TAG_TEST_ROW     600U   /* +AUTOTEST_ID_*: run that row again   */
@@ -1469,7 +1459,6 @@ typedef enum {
 typedef enum {
     GUI_MORE_SCREEN = 0,
     GUI_MORE_BAT,
-    GUI_MORE_ZONE,
     GUI_MORE_KODY,
     GUI_MORE_TEST,
     GUI_MORE_ABOUT,
@@ -1481,10 +1470,12 @@ typedef enum {
 
 _Static_assert(((unsigned)GUI_TAG_MORE_SCREEN == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_SCREEN))
                && ((unsigned)GUI_TAG_MORE_BAT == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_BAT))
-               && ((unsigned)GUI_TAG_MORE_ZONE == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_ZONE))
                && ((unsigned)GUI_TAG_MORE_KODY == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_KODY))
                && ((unsigned)GUI_TAG_MORE_TEST == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_TEST))
-               && ((unsigned)GUI_TAG_MORE_ABOUT == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_ABOUT)),
+               && ((unsigned)GUI_TAG_MORE_ABOUT == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_ABOUT))
+               && ((unsigned)GUI_TAG_MORE_WIFI == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_WIFI))
+               && ((unsigned)GUI_TAG_MORE_BLE == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_BLE))
+               && ((unsigned)GUI_TAG_MORE_TIME == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_TIME)),
                "More's row tags follow GuiMore, one each");
 _Static_assert((unsigned)GUI_MORE_COUNT <= GUI_SHEET_ROWS_MAX, "More's rows fit a sheet");
 
@@ -1501,10 +1492,10 @@ typedef struct {
 
 /**
  * @brief The pages that open over another page and the page each goes back
- *        to: More's six pages (Screen, Battery, Time zone, Kody, Self-test,
- *        About), Screen's auto-lock times, and the Wi-Fi page's keypad, which
- *        is no list and goes back the same way (to the row that opened it:
- *        me->kbd_door, not the door written here).
+ *        to: More's pages (Wi-Fi, Bluetooth, Battery, Time, Kody,
+ *        Self-test, About), Screen's auto-lock times, and the Wi-Fi
+ *        page's keypad, which is no list and goes back the same way (to
+ *        the row that opened it: me->kbd_door, not the door written here).
  *
  * ONE MECHANISM FOR ALL. A page opens only in place over its own page
  * (gui_sheet_open_taken()), and every way back - the bottom button, a drag
@@ -1513,8 +1504,6 @@ typedef struct {
  */
 static const GuiListPage s_list_pages[] = {
     { GUI_SHEET_BAT,      GUI_SHEET_MORE,   (uint16_t)GUI_TAG_MORE_BAT,
-      "Settings" },
-    { GUI_SHEET_ZONE,     GUI_SHEET_MORE,   (uint16_t)GUI_TAG_MORE_ZONE,
       "Settings" },
     { GUI_SHEET_TIME,     GUI_SHEET_MORE,   (uint16_t)GUI_TAG_MORE_TIME,
       "Settings" },
@@ -2507,7 +2496,7 @@ typedef struct {
     lv_obj_t *face_date;
     uint32_t  face_min;
     bool      face_painted;
-    uint32_t  time_shown;           /**< The minute the Time page's two rows
+    uint32_t  time_shown;           /**< The minute the Time page's rows
                                       *   and the rail's Time row read, as
                                       *   gui_face_minute() numbers it, 0
                                       *   while the time is unknown
@@ -2541,6 +2530,15 @@ typedef struct {
     bool      zone_migrate; /**< kgui/zone was on the store at boot: the
                              *   boot's read decides its copy
                              *   (gui_zone_migrate()). */
+    bool      time_by_hand; /**< The Time page set the clock this boot and
+                             *   nobody wrote it since: a new zone keeps the
+                             *   local time it reads (gui_time_hand_holds()). */
+    int64_t   hand_s;       /**< The UTC second the page set last. */
+    uint32_t  hand_ms;      /**< When it set it (khal_time_ms()). */
+    bool      zone_keep;    /**< The Time page asked for a zone and keeps
+                             *   zone_keep_tm across it (gui_time_keep_local()). */
+    struct tm zone_keep_tm; /**< The local time read as that zone was asked. */
+    uint32_t  zone_keep_ms; /**< When it was read (khal_time_ms()). */
 
     /* KODY ON THE FACE. One player for the whole boot, made in ui_build()
      * inside face_scene - NULL when it could not be, and then the face is
@@ -3253,7 +3251,14 @@ static void gui_sheet_action_act(Gui * const me);
 static void gui_more_fill(Gui * const me);
 static void gui_time_fill(Gui * const me);
 static void gui_time_follow(Gui * const me);
-static uint32_t gui_time_minute(Gui const * const me, struct tm *out);
+static void gui_time_now(Gui const * const me, struct tm *t);
+static void gui_time_words(struct tm const *t, kgui_clock_field_t field, char *out, size_t cap);
+static void gui_time_set(Gui * const me, int64_t when);
+static void gui_time_hand_note(Gui * const me, int64_t when);
+static bool gui_time_hand_holds(Gui * const me);
+static bool gui_time_zone_step(Gui * const me, int8_t step);
+static void gui_time_keep_local(Gui * const me);
+static uint32_t gui_time_minute(Gui const * const me);
 #if CONFIG_KODEOS_BLE
 static const char *gui_ble_name_shown(Gui const * const me);
 static void gui_ble_name_send(Gui const * const me);
@@ -3581,16 +3586,11 @@ static void gui_secret_begin(void);
 static void gui_secret_end(void);
 #endif
 static bool gui_secret_active(void);
-static void gui_zone_ask(Gui * const me, const char *zone);
+static bool gui_zone_ask(Gui * const me, const char *zone);
 static void gui_zone_answer(Gui * const me, KodeConfigAnsEvt const * const a);
 static void gui_zone_take(Gui * const me, KodeConfigAnsEvt const * const a);
 static void gui_zone_migrate(Gui * const me, bool stored);
 static void gui_zone_say(Gui const * const me);
-static uint8_t gui_zone_find(const char *zone);
-static const char *gui_zone_label(const char *zone);
-static uint8_t gui_zone_row(Gui const * const me);
-static void gui_zone_fill(Gui * const me);
-static void gui_zone_pick(Gui * const me, uint16_t tag);
 static void gui_lock_load(Gui * const me);
 static uint8_t gui_lock_find(uint32_t s);
 static const GuiLock *gui_lock_choice(uint32_t s);
@@ -15620,7 +15620,6 @@ static bool gui_test_sheet_given_back(GuiSheet kind)
         case GUI_SHEET_SCREEN:
         case GUI_SHEET_BAT:
         case GUI_SHEET_ABOUT:
-        case GUI_SHEET_ZONE:
         case GUI_SHEET_TIME:
         case GUI_SHEET_AUTOLOCK:
         case GUI_SHEET_WIFI:
@@ -19194,7 +19193,6 @@ static GuiSetLook gui_more_look(uint8_t which)
     static const void *const GLYPHS[GUI_MORE_COUNT] = {
         [GUI_MORE_SCREEN] = &kui_glyph_sun,
         [GUI_MORE_BAT]    = &kui_glyph_battery,
-        [GUI_MORE_ZONE]   = &kui_glyph_clock_30,
         [GUI_MORE_KODY]   = &kui_glyph_scene_30,
         [GUI_MORE_TEST]   = &kui_glyph_check_30,
         [GUI_MORE_ABOUT]  = &kui_glyph_info_30,
@@ -19205,7 +19203,6 @@ static GuiSetLook gui_more_look(uint8_t which)
     static const char *const TITLES[GUI_MORE_COUNT] = {
         [GUI_MORE_SCREEN] = "Screen",
         [GUI_MORE_BAT]    = "Battery",
-        [GUI_MORE_ZONE]   = "Time zone",
         [GUI_MORE_KODY]   = "Kody",
         [GUI_MORE_TEST]   = "Self-test",
         [GUI_MORE_ABOUT]  = "About",
@@ -20221,7 +20218,6 @@ static void gui_page_title_show(Gui * const me)
         case GUI_SHEET_BLE:   { title = "Bluetooth"; break; }
         case GUI_SHEET_BAT:   { title = "Battery";   break; }
         case GUI_SHEET_TIME:  { title = "Time";      break; }
-        case GUI_SHEET_ZONE:  { title = "Time zone"; break; }
         case GUI_SHEET_ABOUT: { title = "About";     break; }
         case GUI_SHEET_TEST:  { title = "Self-test"; break; }
         default:              { break; }
@@ -20289,9 +20285,9 @@ static void gui_sheet_header_text(Gui * const me, const char *title,
  * THE DISC'S OTHER TENANT, one at a time: a monogram and a glyph in the
  * same 112 px would be drawn one over the other, so this is said after
  * gui_sheet_header_glyph() has set the ground and hidden the label it
- * hides. Two sheets use it - About's "k" and the Time zone list's - and
- * there is no glyph_k for either: a letter a font already draws does not
- * need to become a 40 px image (kui.h says so where the glyphs are declared).
+ * hides. About uses it for its "k", and there is no glyph_k for it: a
+ * letter a font already draws does not need to become a 40 px image (kui.h
+ * says so where the glyphs are declared).
  *
  * The ink is an argument because it does not survive: a sheet that inherited
  * the last letter's ink would wear a stranger's colour on its own.
@@ -20324,11 +20320,11 @@ static void gui_sheet_header_mono(Gui * const me, const char *text,
  * is about. The slot takes a glyph or a short string - one of the two, never
  * both - and a row with neither still wears the pill's own empty ink disc,
  * which is what an option not yet taken needs (an open network in the scan,
- * a zone the clock is not in, Forget all): the disc IS the ring an unchosen
+ * an auto-lock time not chosen, Forget all): the disc IS the ring an unchosen
  * option wears, and hiding it would leave a hole before the text and stop
  * the column reading as one choice. A row that has nothing to put in the
- * slot AND no reason to keep the ring - About's MAC, Last start, Up for,
- * Time zone and Update, none of them one option in a column of choices -
+ * slot AND no reason to keep the ring - About's MAC, Last start, Up for
+ * and Update, none of them one option in a column of choices -
  * says so through gui_sheet_row_plain().
  *
  * The cursor ring is swapped here, once per row, rather than on every move:
@@ -20361,7 +20357,7 @@ static lv_obj_t *gui_sheet_row(Gui * const me, const char *name,
  * unchosen one still needs the ring the chosen one's check sits inside, or
  * the column stops reading as one choice.
  * Only a row that stands in no column of choices - About's MAC, Last start,
- * Up for, Time zone and Update, and every bar - has no ring to keep, and
+ * Up for and Update, and every bar - has no ring to keep, and
  * says so explicitly instead of the caller's colour being read as a hint.
  *
  * @param me   The AO.
@@ -21291,14 +21287,12 @@ static void gui_sheet_select(Gui * const me, uint8_t want)
  *        page held to its ends.
  *
  * Where a sheet that has just opened shows its ring. Row 0 is the top
- * already on every sheet but the two lists of choices, and nothing moves.
- * A list opens on the choice that is on (gui_sheet_first_row()) and puts it
+ * already on every sheet but the list of choices, and nothing moves.
+ * The list opens on the choice that is on (gui_sheet_first_row()) and puts it
  * in the slot the row that opened it stood in on its page, under the finger
- * that tapped that row - the top slot for About's Time zone, the second for
- * Screen's Auto-lock - so a second tap there picks the choice that is
- * already on and changes nothing. A zone typed on the console, which the
- * table does not hold, is the exception: its list opens on UTC's row, and a
- * second tap there picks UTC. The least scroll gui_sheet_select() asks
+ * that tapped that row - the second slot, Screen's Auto-lock - so a second
+ * tap there picks the choice that is already on and changes nothing. The
+ * least scroll gui_sheet_select() asks
  * for would leave that choice at the foot of the page, and another one
  * under the finger. Where the page's ends do not allow the slot - a choice
  * above it at the top of the table, or one of the last ones - the page goes
@@ -22016,10 +22010,6 @@ static void gui_sheet_fill(Gui * const me)
             gui_time_fill(me);
             break;
         }
-        case GUI_SHEET_ZONE: {
-            gui_zone_fill(me);
-            break;
-        }
         case GUI_SHEET_TEST: {
             gui_test_fill(me);
             break;
@@ -22271,8 +22261,6 @@ static bool gui_sheet_row_acts(Gui const * const me, uint16_t tag)
                    && (((uint16_t)GUI_TAG_MORE + (uint16_t)GUI_MORE_COUNT) > tag);
             break;
         }
-        case GUI_SHEET_ZONE:
-        case GUI_SHEET_TIME:
         case GUI_SHEET_AUTOLOCK: {
             acts = true;
             break;
@@ -22348,7 +22336,7 @@ static void gui_sheet_act(Gui * const me, uint8_t idx, int8_t step)
              * drags and the pad steps; Auto-lock, Rest after, the scene
              * and Haptics step round their values where they stand, and the
              * switches flip (gui_screen_act()); the rows that need a
-             * page of their own - Battery, Time zone, Kody, Self-test and
+             * page of their own - Battery, Time, Kody, Self-test and
              * About - are doors, on the top button and a tap. */
             if ( (uint16_t)GUI_TAG_BRIGHT_VALUE == tag )
             {
@@ -22391,19 +22379,10 @@ static void gui_sheet_act(Gui * const me, uint8_t idx, int8_t step)
             gui_time_act(me, tag, step);
             break;
         }
-        case GUI_SHEET_ZONE: {
-            /* A zone is picked or it is not, so the horizontal pad has
-             * nothing to step here either: the top button and a tap pick the
-             * row, and the cursor walks the list on up and down. */
-            if ( 0 == step )
-            {
-                gui_zone_pick(me, tag);
-            }
-            break;
-        }
         case GUI_SHEET_AUTOLOCK: {
-            /* The same as a zone: a time is picked on the top button or a
-             * tap, and left and right have nothing to step. */
+            /* A time is picked on the top button or a tap, and left and
+             * right have nothing to step: the cursor walks the list on up
+             * and down. */
             if ( 0 == step )
             {
                 gui_lock_pick(me, tag);
@@ -24834,10 +24813,6 @@ static void gui_more_value(Gui const * const me, uint8_t which, char *out,
             (void)snprintf(out, cap, "%u %%%s", (unsigned)me->soc, how);
             break;
         }
-        case GUI_MORE_ZONE: {
-            (void)snprintf(out, cap, "%s", gui_zone_label(me->zone));
-            break;
-        }
 #if CONFIG_KODEOS_WIFI
         case GUI_MORE_WIFI: {
             const char * const w = gui_radio_words(me, me->wifi_on, me->wifi_linked,
@@ -24921,9 +24896,9 @@ static void gui_more_row(Gui * const me, uint8_t which)
 /**
  * @brief Write More: kshell's flat Settings list.
  *
- * Wi-Fi, Bluetooth and the battery, the time and the zone, the settings that
- * change where they stand, the rails' pages, and About last: each row with its
- * glyph, its name and what its page reads.
+ * Wi-Fi, Bluetooth and the battery, the time (its zone is on its page),
+ * the settings that change where they stand, the rails' pages, and About
+ * last: each row with its glyph, its name and what its page reads.
  *
  * @param me The AO.
  */
@@ -24942,9 +24917,8 @@ static void gui_more_fill(Gui * const me)
     gui_more_row(me, (uint8_t)GUI_MORE_BLE);
 #endif
     gui_more_row(me, (uint8_t)GUI_MORE_BAT);
-    me->time_shown = gui_time_minute(me, NULL);
+    me->time_shown = gui_time_minute(me);
     gui_more_row(me, (uint8_t)GUI_MORE_TIME);
-    gui_more_row(me, (uint8_t)GUI_MORE_ZONE);
     gui_screen_fill_more(me);
     gui_rails_fill(me);
     gui_more_row(me, (uint8_t)GUI_MORE_TEST);
@@ -24952,36 +24926,161 @@ static void gui_more_fill(Gui * const me)
 }
 
 /**
- * @brief The Time page: the hour and the minute, each changing where it stands.
+ * @brief The rows of the Time page that step a part of the local time, in
+ *        the page's order under the Time zone row.
+ */
+typedef struct {
+    uint16_t           tag;    /**< The row's tag.                 */
+    kgui_clock_field_t field;  /**< The part of the time it steps. */
+    const char        *name;   /**< The row's name.                */
+} GuiTimeRow;
+
+/** @brief The hour and the minute, then the date. */
+static const GuiTimeRow s_time_rows[] = {
+    { (uint16_t)GUI_TAG_TIME_HOUR,  KGUI_CLOCK_HOUR,   "Hour"   },
+    { (uint16_t)GUI_TAG_TIME_MIN,   KGUI_CLOCK_MINUTE, "Minute" },
+    { (uint16_t)GUI_TAG_TIME_DAY,   KGUI_CLOCK_DAY,    "Day"    },
+    { (uint16_t)GUI_TAG_TIME_MONTH, KGUI_CLOCK_MONTH,  "Month"  },
+    { (uint16_t)GUI_TAG_TIME_YEAR,  KGUI_CLOCK_YEAR,   "Year"   },
+};
+
+/** @brief How many rows s_time_rows holds. */
+#define GUI_TIME_ROWS  (sizeof(s_time_rows) / sizeof(s_time_rows[0]))
+
+/**
+ * @brief The Time page: the zone, the hour and the minute, the day, the
+ *        month and the year, each changing where it stands.
  *
- * A tap or right is one more, left is one less, in the zone in use. The date
- * stays as it is.
+ * A tap, the top button or right is one more, left is one less
+ * (gui_time_act()). The zone comes first because it decides what the other
+ * five read, and it is all a board on Wi-Fi needs. The same page opens from
+ * Settings and from the face's yellow pill.
  *
  * @param me The AO.
  */
 static void gui_time_fill(Gui * const me)
 {
     struct tm t;
-    char      line[8];
+    char      line[GUI_TIME_VALUE_MAX];
 
     gui_sheet_header(me, NULL, KUI_COLOR_TEXT, "Time", "");
-    me->time_shown = gui_time_minute(me, &t);
-    (void)snprintf(line, sizeof(line), "%02d", t.tm_hour);
-    gui_screen_row(me, (uint16_t)GUI_TAG_TIME_HOUR, "Hour", line, false, false, &kui_glyph_clock_30);
-    (void)snprintf(line, sizeof(line), "%02d", t.tm_min);
-    gui_screen_row(me, (uint16_t)GUI_TAG_TIME_MIN, "Minute", line, false, false, &kui_glyph_clock_30);
+    me->time_shown = gui_time_minute(me);
+    gui_time_now(me, &t);
+    gui_screen_row(me, (uint16_t)GUI_TAG_TIME_ZONE, "Time zone",
+                   kgui_clock_zone_label(me->zone), false, false, &kui_glyph_clock_30);
+    for ( size_t i = 0U; GUI_TIME_ROWS > i; ++i )
+    {
+        gui_time_words(&t, s_time_rows[i].field, line, sizeof(line));
+        gui_screen_row(me, s_time_rows[i].tag, s_time_rows[i].name, line, false, false,
+                       &kui_glyph_clock_30);
+    }
+}
+
+/**
+ * @brief The local time the Time page reads and steps from.
+ *
+ * While the clock was never told the time it is the day this image was
+ * built, at noon: the rows show it, and the first press steps from what
+ * they show.
+ *
+ * @param me The AO.
+ * @param t  Receives the local time.
+ */
+static void gui_time_now(Gui const * const me, struct tm *t)
+{
+    (void)memset(t, 0, sizeof(*t));
+    if ( !gui_local_tm(me, t) )
+    {
+        static const char MONTHS[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+        kdrv_slot_desc_t self;
+        char mon[4];
+        int  d = 1;
+        int  y = KGUI_CLOCK_YEAR_MIN;
+
+        (void)memset(mon, 0, sizeof(mon));
+        if ( kdrv_running_desc(&self) == KODE_OK )
+        {
+            (void)sscanf(self.date, "%3s %d %d", mon, &d, &y);
+        }
+        const char * const at = strstr(MONTHS, mon);
+
+        t->tm_mon = 0;
+        if ( ('\0' != mon[0]) && (NULL != at) )
+        {
+            /* cppcheck-suppress misra-c2012-18.4 ; strstr() found it inside MONTHS: the difference is its offset there */
+            ptrdiff_t const off = at - MONTHS;
+
+            t->tm_mon = (int)off / GUI_DATE_MONTH_LEN;
+        }
+        if ( (KGUI_CLOCK_YEAR_MIN > y) || (KGUI_CLOCK_YEAR_MAX < y) )
+        {
+            y = KGUI_CLOCK_YEAR_MIN;
+        }
+        t->tm_mday  = d;
+        t->tm_year  = y - KGUI_CLOCK_TM_YEAR0;
+        t->tm_hour  = GUI_TIME_NOON;
+        t->tm_isdst = -1;
+    }
+}
+
+/**
+ * @brief What one row of the Time page shows for @p t.
+ *
+ * The hour and the minute with two figures, in 24 hours whatever the face
+ * shows; the day as a person writes it; the month by its English name; the
+ * year whole.
+ *
+ * @param t     The local time.
+ * @param field The row.
+ * @param out   Receives the words.
+ * @param cap   Its size.
+ */
+static void gui_time_words(struct tm const *t, kgui_clock_field_t field, char *out, size_t cap)
+{
+    static const char *const MONTHS[KGUI_CLOCK_MONTHS] = {
+        "January", "February", "March", "April", "May", "June", "July",
+        "August", "September", "October", "November", "December",
+    };
+
+    switch ( field )
+    {
+        case KGUI_CLOCK_HOUR: {
+            (void)snprintf(out, cap, "%02d", t->tm_hour);
+            break;
+        }
+        case KGUI_CLOCK_MINUTE: {
+            (void)snprintf(out, cap, "%02d", t->tm_min);
+            break;
+        }
+        case KGUI_CLOCK_DAY: {
+            (void)snprintf(out, cap, "%d", t->tm_mday);
+            break;
+        }
+        case KGUI_CLOCK_MONTH: {
+            const char *name = "";
+
+            if ( (0 <= t->tm_mon) && (KGUI_CLOCK_MONTHS > t->tm_mon) )
+            {
+                name = MONTHS[t->tm_mon];
+            }
+            (void)snprintf(out, cap, "%s", name);
+            break;
+        }
+        default: {
+            (void)snprintf(out, cap, "%d", t->tm_year + KGUI_CLOCK_TM_YEAR0);
+            break;
+        }
+    }
 }
 
 /**
  * @brief Read the clock as the Time page and the rail's Time row number it.
  *
- * @param me  The AO.
- * @param out Receives the local time, zeroed while the time is unknown; NULL
- *            when only the minute is wanted.
+ * @param me The AO.
  * @return The minute as gui_face_minute() numbers it, 0 while the time is
  *         unknown.
  */
-static uint32_t gui_time_minute(Gui const * const me, struct tm *out)
+static uint32_t gui_time_minute(Gui const * const me)
 {
     struct tm t;
     uint32_t  minute = 0U;
@@ -24990,10 +25089,6 @@ static uint32_t gui_time_minute(Gui const * const me, struct tm *out)
     if ( gui_local_tm(me, &t) )
     {
         minute = gui_face_minute(&t);
-    }
-    if ( NULL != out )
-    {
-        *out = t;
     }
     return minute;
 }
@@ -25006,7 +25101,7 @@ static uint32_t gui_time_minute(Gui const * const me, struct tm *out)
  * (gui_face_time_paint()), and it does nothing until the minute the rows
  * read differs from the clock's: the minute rolling over, a `time set`, a
  * time server's answer, a new zone or the clock becoming unknown. Under the
- * Time page the two values are rewritten in place; under the rail the Time
+ * Time page the five values are rewritten in place; under the rail the Time
  * row's value is. Never rebuilt, so a finger on a row and the ring stay
  * where they are.
  *
@@ -25016,7 +25111,7 @@ static void gui_time_follow(Gui * const me)
 {
     struct tm t;
     char      line[GUI_MORE_VALUE_MAX];
-    uint32_t const minute = gui_time_minute(me, &t);
+    uint32_t const minute = gui_time_minute(me);
 
     if ( minute == me->time_shown )
     {
@@ -25030,15 +25125,23 @@ static void gui_time_follow(Gui * const me)
     }
     else
     {
-        (void)snprintf(line, sizeof(line), "%02d", t.tm_hour);
-        gui_sheet_row_sub(me, gui_sheet_find(me, (uint16_t)GUI_TAG_TIME_HOUR), line);
-        (void)snprintf(line, sizeof(line), "%02d", t.tm_min);
-        gui_sheet_row_sub(me, gui_sheet_find(me, (uint16_t)GUI_TAG_TIME_MIN), line);
+        gui_time_now(me, &t);
+        for ( size_t i = 0U; GUI_TIME_ROWS > i; ++i )
+        {
+            gui_time_words(&t, s_time_rows[i].field, line, sizeof(line));
+            gui_sheet_row_sub(me, gui_sheet_find(me, s_time_rows[i].tag), line);
+        }
     }
 }
 
 /**
- * @brief Change the hour or the minute and set the clock with it.
+ * @brief Step one row of the Time page and set the clock with it.
+ *
+ * The zone is AO_Boot's to change (gui_time_zone_step()); every other row
+ * steps its part of the local time where it stands (kgui_clock_step_to())
+ * and sets the clock to it. Like the Screen rows, a press clicks after the
+ * change, and one that changes nothing - a year at either end, a time the
+ * clock would not count as known, a zone AO_Boot is not asked for - thuds.
  *
  * @param me   The AO.
  * @param tag  The row.
@@ -25047,61 +25150,176 @@ static void gui_time_follow(Gui * const me)
 static void gui_time_act(Gui * const me, uint16_t tag, int8_t step)
 {
     struct tm t;
-    int const dir = (0 > step) ? -1 : 1;
+    int64_t   when = 0;
+    size_t    i    = 0U;
 
-    (void)memset(&t, 0, sizeof(t));
-    if ( !gui_local_tm(me, &t) )
+    if ( (uint16_t)GUI_TAG_TIME_ZONE == tag )
     {
-        /* A clock never told: the day this image was built, as the apocrifa
-         * does, until something knows better. */
-        static const char MONTHS[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-        kdrv_slot_desc_t self;
-        char mon[4];
-        int  d = 1;
-        int  y = 2026;
-
-        (void)memset(mon, 0, sizeof(mon));
-        if ( kdrv_running_desc(&self) == KODE_OK )
+        if ( gui_time_zone_step(me, step) )
         {
-            (void)sscanf(self.date, "%3s %d %d", mon, &d, &y);
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
         }
-        const char * const at = strstr(MONTHS, mon);
-
-        t.tm_mon  = 0;
-        if ( ('\0' != mon[0]) && (NULL != at) )
+        else
         {
-            /* cppcheck-suppress misra-c2012-18.4 ; strstr() found it inside MONTHS: the difference is its offset there */
-            ptrdiff_t const off = at - MONTHS;
-
-            t.tm_mon = (int)off / GUI_DATE_MONTH_LEN;
+            (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
         }
-        t.tm_mday = d;
-        t.tm_year = y - 1900;
-        t.tm_hour = 12;
+        return;
     }
-    if ( (uint16_t)GUI_TAG_TIME_HOUR == tag )
+    while ( (GUI_TIME_ROWS > i) && (s_time_rows[i].tag != tag) )
     {
-        t.tm_hour = (t.tm_hour + (int)GUI_DAY_HOURS + dir) % (int)GUI_DAY_HOURS;
+        ++i;
     }
-    else if ( (uint16_t)GUI_TAG_TIME_MIN == tag )
-    {
-        t.tm_min = (t.tm_min + (int)GUI_HOUR_MIN + dir) % (int)GUI_HOUR_MIN;
-    }
-    else
+    if ( GUI_TIME_ROWS <= i )
     {
         return;
     }
-    t.tm_sec   = 0;
-    t.tm_isdst = -1;
-    time_t const when = mktime(&t);
-
-    if ( 0 < when )
+    gui_time_now(me, &t);
+    t.tm_sec = 0;
+    if ( !kgui_clock_step_to(&t, s_time_rows[i].field, step, &when) )
     {
-        khal_time_wall_set((uint64_t)when * 1000000ULL);
+        KLOG_D(TAG, "time: %s stays where it is", s_time_rows[i].name);
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        return;
+    }
+    gui_time_set(me, when);
+    (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    gui_sheet_refill(me);
+}
+
+/**
+ * @brief Set the clock by hand, from the Time page.
+ *
+ * The clock is told a person set it (kdrv_clocks_wall_note_set()). A board
+ * with no zone chosen stores the one the page shows: whoever sets the time
+ * by hand sets it in that zone, which is the page's first row, so the face
+ * asks nothing more.
+ *
+ * @param me   The AO.
+ * @param when The new time, UTC seconds.
+ */
+static void gui_time_set(Gui * const me, int64_t when)
+{
+    khal_time_wall_set((uint64_t)when * GUI_US_PER_S);
+    kdrv_clocks_wall_note_set();
+    gui_time_hand_note(me, when);
+    if ( me->zone_heard && (!me->zone_stored) )
+    {
+        KLOG_N(TAG, "time: set by hand in %s, which is now chosen",
+               kgui_clock_zone_label(me->zone));
+        (void)gui_zone_ask(me, me->zone);
+    }
+    me->face_painted = false;
+    gui_face_time_paint(me);
+}
+
+/**
+ * @brief Note the second the Time page set the clock to, and when.
+ *
+ * @param me   The AO.
+ * @param when The UTC second set.
+ */
+static void gui_time_hand_note(Gui * const me, int64_t when)
+{
+    me->time_by_hand = true;
+    me->hand_s       = when;
+    me->hand_ms      = khal_time_ms();
+}
+
+/**
+ * @brief Whether the clock is still the one the Time page set this boot.
+ *
+ * It is while it has run on from the second the page set, give or take a
+ * second (kgui_clock_hand_holds()), and the clock's own note still says a
+ * person set it. A `time set` from the console or the Kode channel, or a time
+ * server, that wrote it since makes it theirs: the page forgets it set it,
+ * and a change of zone moves the hour the clock reads instead of keeping it.
+ *
+ * @param me The AO.
+ * @return true while the clock is the page's.
+ */
+static bool gui_time_hand_holds(Gui * const me)
+{
+    bool holds = false;
+
+    if ( me->time_by_hand && (KDRV_CLOCKS_WALL_SET == kdrv_clocks_wall_source()) )
+    {
+        uint32_t const since_ms = khal_time_ms() - me->hand_ms;
+
+        holds = kgui_clock_hand_holds(me->hand_s, since_ms, khal_time_wall_us());
+    }
+    if ( me->time_by_hand && (!holds) )
+    {
+        KLOG_D(TAG, "time: written elsewhere since the Time page set it");
+    }
+    me->time_by_hand = holds;
+    return holds;
+}
+
+/**
+ * @brief Step the Time zone row: ask AO_Boot for the next zone of the table.
+ *
+ * The answer repaints the row (gui_zone_take()). A clock this page set by
+ * hand, that nobody wrote since (gui_time_hand_holds()), keeps the local
+ * time it reads across the change: the reading is taken now and put back
+ * once the new zone is in force (gui_time_keep_local()). Every step of zone
+ * is then a set of the clock, as the hour's own row is: AO_Scheduler hears
+ * it, and a step west of an hour or more makes it forget the minutes it ran
+ * (`the clock was set back N minutes`). A clock a time server, the console or
+ * an earlier boot set keeps its UTC, and the new zone moves the hour it reads.
+ *
+ * @param me   The AO.
+ * @param step Left is to the west; a tap and right are to the east.
+ * @return false when AO_Boot could not be asked: nothing changes.
+ */
+static bool gui_time_zone_step(Gui * const me, int8_t step)
+{
+    uint8_t const at = kgui_clock_zone_step(me->zone, step);
+    bool          asked;
+
+    me->zone_keep = false;
+    if ( gui_time_hand_holds(me) )
+    {
+        me->zone_keep    = gui_local_tm(me, &me->zone_keep_tm);
+        me->zone_keep_ms = khal_time_ms();
+    }
+    asked = gui_zone_ask(me, kgui_clock_zone_tz(at));
+    if ( !asked )
+    {
+        /* No answer comes: nothing is kept across a zone that never changes,
+         * nor across the next answer, which may be anybody's. */
+        me->zone_keep = false;
+    }
+    return asked;
+}
+
+/**
+ * @brief Put back the local time the Time page read before its zone changed.
+ *
+ * Called with the new zone in force (AO_Boot applies it before it answers):
+ * the same local reading, later by however long the answer took, becomes the
+ * clock's UTC.
+ *
+ * @param me The AO.
+ */
+static void gui_time_keep_local(Gui * const me)
+{
+    uint32_t const later_s = (khal_time_ms() - me->zone_keep_ms) / GUI_MS_PER_S;
+    int64_t        when    = 0;
+
+    me->zone_keep = false;
+    if ( !gui_time_hand_holds(me) )
+    {
+        /* Written elsewhere while AO_Boot answered: that time stands. */
+        return;
+    }
+    if ( kgui_clock_utc_of(&me->zone_keep_tm, later_s, &when) )
+    {
+        KLOG_N(TAG, "time: %02d:%02d set by hand, kept in %s",
+               me->zone_keep_tm.tm_hour, me->zone_keep_tm.tm_min,
+               kgui_clock_zone_label(me->zone));
+        khal_time_wall_set((uint64_t)when * GUI_US_PER_S);
         kdrv_clocks_wall_note_set();
-        me->face_painted = false;
-        gui_face_time_paint(me);
-        gui_sheet_refill(me);
+        gui_time_hand_note(me, when);
     }
 }
 
@@ -25116,7 +25334,6 @@ static void gui_more_act(Gui * const me, uint16_t tag)
     static const GuiSheet KINDS[GUI_MORE_COUNT] = {
         [GUI_MORE_SCREEN] = GUI_SHEET_SCREEN,
         [GUI_MORE_BAT]    = GUI_SHEET_BAT,
-        [GUI_MORE_ZONE]   = GUI_SHEET_ZONE,
         [GUI_MORE_KODY]   = GUI_SHEET_KODY,
         [GUI_MORE_TEST]   = GUI_SHEET_TEST,
         [GUI_MORE_ABOUT]  = GUI_SHEET_ABOUT,
@@ -25748,13 +25965,11 @@ static const GuiListPage *gui_sheet_list_page(Gui const * const me,
 /**
  * @brief Where the ring starts on a sheet that has just been opened.
  *
- * The first row on every sheet but the two lists of choices, which open on
- * the choice that is on - the zone the clock runs in (gui_zone_row(), UTC's
- * row for a zone the table does not hold), the auto-lock time
- * (gui_lock_find()): the answer the reader already has is the
- * place to look from, and the page shows it where the row that opened the
- * list stood (gui_sheet_ring_at()). A choice's row in its table is its row
- * on the card (gui_zone_fill(), gui_lock_fill()).
+ * The first row on every sheet but the list of choices, which opens on the
+ * choice that is on - the auto-lock time (gui_lock_find()): the answer the
+ * reader already has is the place to look from, and the page shows it where
+ * the row that opened the list stood (gui_sheet_ring_at()). A choice's row
+ * in its table is its row on the card (gui_lock_fill()).
  *
  * @param me The AO, its sheet already the one being opened.
  * @return The row to ring.
@@ -25763,11 +25978,7 @@ static uint8_t gui_sheet_first_row(Gui const * const me)
 {
     uint8_t row = 0U;
 
-    if ( GUI_SHEET_ZONE == me->sheet )
-    {
-        row = gui_zone_row(me);
-    }
-    else if ( GUI_SHEET_AUTOLOCK == me->sheet )
+    if ( GUI_SHEET_AUTOLOCK == me->sheet )
     {
         row = gui_lock_find(me->lock_s);
     }
@@ -29788,23 +29999,31 @@ static void on_face_loaded(lv_event_t *e)
 }
 
 /**
- * @brief A yellow pill is up: the tap or the top button opens its page.
+ * @brief A yellow pill is up: the tap or the top button opens the Time page,
+ *        whichever of the two it is.
  *
  * @param me The AO.
  * @return true when the press was the pill's.
  */
 static bool gui_face_prompt_open(Gui * const me)
 {
-    bool const unknown = !khal_time_wall_known();
-    bool const zone    = (!unknown) && me->zone_heard && (!me->zone_stored);
+    /* A press reaches here only off Rest, where the pill shows. */
+    kgui_clock_ask_t const ask = kgui_clock_ask(khal_time_wall_known(), me->zone_heard,
+                                                me->zone_stored, false);
 
-    if ( unknown || zone )
+    if ( KGUI_CLOCK_ASK_NONE != ask )
     {
-        KLOG_N(TAG, "face: the yellow pill asks for the %s", unknown ? "time" : "zone");
+        const char *what = "zone";
+
+        if ( KGUI_CLOCK_ASK_TIME == ask )
+        {
+            what = "time";
+        }
+        KLOG_N(TAG, "face: the yellow pill asks for the %s", what);
         me->prompt_open = true;
-        gui_sheet_open_kind(me, unknown ? GUI_SHEET_TIME : GUI_SHEET_ZONE);
+        gui_sheet_open_kind(me, GUI_SHEET_TIME);
     }
-    return unknown || zone;
+    return KGUI_CLOCK_ASK_NONE != ask;
 }
 
 /**
@@ -30314,7 +30533,7 @@ static bool gui_local_tm_of(uint64_t secs, struct tm *out)
  * @brief The wall clock as local time, in the zone the face runs in.
  *
  * The board keeps UTC; the zone is AO_Boot's, applied at boot and again
- * whenever the list of zones or the console changes it, and this AO shows
+ * whenever the Time page or the console changes it, and this AO shows
  * what AO_Boot answers (gui_zone_take()). ESP-IDF's FAT driver stamps the
  * files it writes in the same zone.
  *
@@ -30329,7 +30548,7 @@ static bool gui_local_tm(Gui const * const me, struct tm *out)
     (void)me;
     if ( khal_time_wall_known() )
     {
-        known = gui_local_tm_of(khal_time_wall_us() / 1000000ULL, out);
+        known = gui_local_tm_of(khal_time_wall_us() / GUI_US_PER_S, out);
     }
     return known;
 }
@@ -30420,11 +30639,12 @@ static void gui_face_time_paint(Gui * const me)
     {
         return;
     }
-    /* What the clock lacks is asked for in yellow, as the apocrifa does; at
-     * Rest nothing asks. */
-    kgui_screen_face_prompt((0U == min) && (!me->at_rest),
-                            (0U != min) && me->zone_heard && (!me->zone_stored)
-                            && (!me->at_rest));
+    /* What the clock lacks is asked for in yellow, as the apocrifa does, one
+     * thing at a time; at Rest nothing asks. */
+    kgui_clock_ask_t const ask = kgui_clock_ask(0U != min, me->zone_heard,
+                                                me->zone_stored, me->at_rest);
+
+    kgui_screen_face_prompt(KGUI_CLOCK_ASK_TIME == ask, KGUI_CLOCK_ASK_ZONE == ask);
     if ( 0U == min )
     {
         kgui_screen_face_time(-1, 0, me->clock_12h, false);
@@ -30457,51 +30677,6 @@ static void gui_face_time_paint(Gui * const me)
 /* ---- The time zone -------------------------------------------------------- */
 
 /**
- * @brief The zones the list offers, west to east, one row each.
- *
- * The label is what a reader recognises - a city, or two that keep the same
- * time - and the string is the POSIX TZ the clock runs in there, daylight
- * saving included where the place keeps it and left out where it does not:
- * Mexico City keeps none, so it is not Chicago, and neither do Bogota and
- * Lima, so they are not New York. GUI_ZONE_UTC's row is
- * where a board with nothing stored stands, and where the list's cursor
- * starts for a zone the table does not hold. Every string fits GUI_ZONE_MAX.
- */
-static const GuiZone s_zones[] = {
-    { "Honolulu",           "HST10"                        },
-    { "Los Angeles",        "PST8PDT,M3.2.0,M11.1.0"       },
-    { "Denver",             "MST7MDT,M3.2.0,M11.1.0"       },
-    { "Chicago",            "CST6CDT,M3.2.0,M11.1.0"       },
-    { "Mexico City",        "CST6"                         },
-    { "New York",           "EST5EDT,M3.2.0,M11.1.0"       },
-    { "Bogota, Lima",       "<-05>5"                       },
-    { "Sao Paulo",          "<-03>3"                       },
-    { "UTC",                GUI_ZONE_UTC                   },
-    { "London, Lisbon",     "GMT0BST,M3.5.0/1,M10.5.0"     },
-    { "Madrid, Paris",      "CET-1CEST,M3.5.0,M10.5.0/3"   },
-    { "Athens",             "EET-2EEST,M3.5.0/3,M10.5.0/4" },
-    { "Johannesburg",       "SAST-2"                       },
-    { "Istanbul, Moscow",   "<+03>-3"                      },
-    { "Dubai",              "<+04>-4"                      },
-    { "Mumbai",             "IST-5:30"                     },
-    { "Bangkok",            "<+07>-7"                      },
-    { "Beijing, Perth",     "<+08>-8"                      },
-    { "Tokyo, Seoul",       "JST-9"                        },
-    { "Sydney",             "AEST-10AEDT,M10.1.0,M4.1.0/3" },
-    { "Auckland",           "NZST-12NZDT,M9.5.0,M4.1.0/3"  },
-};
-
-/** @brief How many zones s_zones holds. */
-#define GUI_ZONE_COUNT  ((uint8_t)(sizeof(s_zones) / sizeof(s_zones[0])))
-
-/* The list is one sheet with a row per zone and nothing else in its body, so
- * the table has to fit the card's rows whole: a zone left off would be a city
- * the glass cannot choose, and every row after it would stand at a place in
- * the table it is not at (gui_sheet_first_row()). */
-_Static_assert(GUI_ZONE_COUNT <= GUI_SHEET_ROWS_MAX,
-               "the list of zones must fit one sheet's rows");
-
-/**
  * @brief Ask AO_Boot for the zone, or to take @p zone, through `config`.
  *
  * Posted to the setting's owner like the console's own request
@@ -30511,15 +30686,17 @@ _Static_assert(GUI_ZONE_COUNT <= GUI_SHEET_ROWS_MAX,
  *
  * @param me   The AO.
  * @param zone A zone to set, or NULL to read the one in force.
+ * @return true when the request was posted: an answer comes.
  */
-static void gui_zone_ask(Gui * const me, const char *zone)
+static bool gui_zone_ask(Gui * const me, const char *zone)
 {
     KodeConfigReqEvt * const e = Q_NEW_X(KodeConfigReqEvt, 1U, CONFIG_REQ_SIG);
+    bool posted = false;
 
     if ( NULL == e )
     {
         KLOG_W(TAG, "zone: out of events; the zone is not asked");
-        return;
+        return false;
     }
     me->zone_asks += 1U;
     e->seq = GUI_ZONE_SEQ_BASE + (me->zone_asks & GUI_ZONE_SEQ_MASK);
@@ -30533,10 +30710,12 @@ static void gui_zone_ask(Gui * const me, const char *zone)
     {
         (void)snprintf(e->s, sizeof(e->s), "%s", zone);
     }
-    if ( !kode_config_post(e, &me->super) )
+    posted = kode_config_post(e, &me->super);
+    if ( !posted )
     {
         KLOG_W(TAG, "zone: AO_Boot is busy; the zone is not asked");
     }
+    return posted;
 }
 
 /**
@@ -30561,8 +30740,10 @@ static void gui_zone_answer(Gui * const me, KodeConfigAnsEvt const * const a)
  * the one before it, and that is what the glass goes on showing. A zone that
  * moved repaints what shows it: the face, whose minute is a local one and so
  * is the hour Kody's scene is picked by (the face's tick wakes him in the new
- * hour's scene, gui_face_kody_tick()); More's Time zone row in place; the
- * list with its check on the new city.
+ * hour's scene, gui_face_kody_tick()); the Time page's zone row in place,
+ * whose other rows follow the clock on the page's tick (gui_time_follow()).
+ * A zone the Time page asked for over a clock it set by hand first puts that
+ * local time back (gui_time_keep_local()).
  *
  * @param me The AO.
  * @param a  The answer to a `zone` request.
@@ -30574,7 +30755,7 @@ static void gui_zone_take(Gui * const me, KodeConfigAnsEvt const * const a)
     if ( (uint8_t)KODE_OK != a->status )
     {
         KLOG_D(TAG, "zone: refused; the clock stays in %s",
-               gui_zone_label(me->zone));
+               kgui_clock_zone_label(me->zone));
     }
     moved = (strcmp(me->zone, a->value) != 0) || (!me->zone_heard)
             || (me->zone_stored != a->stored);
@@ -30585,25 +30766,24 @@ static void gui_zone_take(Gui * const me, KodeConfigAnsEvt const * const a)
     {
         gui_zone_migrate(me, a->stored);
     }
+    if ( me->zone_keep )
+    {
+        if ( moved && ((uint8_t)KODE_OK == a->status) )
+        {
+            gui_time_keep_local(me);
+        }
+        me->zone_keep = false;
+    }
     if ( moved )
     {
         gui_zone_say(me);
         me->face_painted = false;
         gui_face_time_paint(me);
-        if ( GUI_SHEET_MORE == me->sheet )
+        if ( GUI_SHEET_TIME == me->sheet )
         {
             gui_sheet_row_sub(me,
-                              gui_sheet_find(me, (uint16_t)GUI_TAG_MORE_ZONE),
-                              gui_zone_label(me->zone));
-        }
-        else if ( GUI_SHEET_ZONE == me->sheet )
-        {
-            gui_sheet_refill(me);
-        }
-        else
-        {
-            /* No sheet that shows the zone is up: the face is all there is
-             * to repaint. */
+                              gui_sheet_find(me, (uint16_t)GUI_TAG_TIME_ZONE),
+                              kgui_clock_zone_label(me->zone));
         }
     }
 }
@@ -30633,7 +30813,7 @@ static void gui_zone_migrate(Gui * const me, bool stored)
         && ('\0' != old[0]) )
     {
         KLOG_N(TAG, "zone: %s moves from kgui to the system", old);
-        gui_zone_ask(me, old);
+        (void)gui_zone_ask(me, old);
     }
     else if ( !stored )
     {
@@ -30641,7 +30821,7 @@ static void gui_zone_migrate(Gui * const me, bool stored)
          * stays for it: the same city, in this one's words. */
         static const char *const APOCRIFA[] = {
             "HST10", "PST8PDT,M3.2.0,M11.1.0", "MST7MDT,M3.2.0,M11.1.0",
-            "CST6CDT,M3.2.0,M11.1.0", "EST5EDT,M3.2.0,M11.1.0", "<-03>3", GUI_ZONE_UTC,
+            "CST6CDT,M3.2.0,M11.1.0", "EST5EDT,M3.2.0,M11.1.0", "<-03>3", KGUI_CLOCK_ZONE_UTC,
             "GMT0BST,M3.5.0/1,M10.5.0", "CET-1CEST,M3.5.0,M10.5.0/3",
             "CET-1CEST,M3.5.0,M10.5.0/3", "EET-2EEST,M3.5.0/3,M10.5.0/4", "<+03>-3",
             "<+04>-4", "IST-5:30", "<+07>-7", "<+08>-8", "JST-9",
@@ -30653,7 +30833,7 @@ static void gui_zone_migrate(Gui * const me, bool stored)
             && ((sizeof(APOCRIFA) / sizeof(APOCRIFA[0])) > at) )
         {
             KLOG_N(TAG, "zone: %s comes from the apocrifa", APOCRIFA[at]);
-            gui_zone_ask(me, APOCRIFA[at]);
+            (void)gui_zone_ask(me, APOCRIFA[at]);
         }
     }
     else
@@ -30685,146 +30865,7 @@ static void gui_zone_say(Gui const * const me)
     }
     else
     {
-        KLOG_D(TAG, "zone: %s (%s)", gui_zone_label(me->zone), me->zone);
-    }
-}
-
-/**
- * @brief Where @p zone stands in s_zones.
- *
- * Empty is GUI_ZONE_UTC's row: a board with nothing set runs in UTC.
- *
- * @param zone A POSIX TZ string, or empty.
- * @return Its row, or GUI_ZONE_COUNT when the table does not hold it.
- */
-static uint8_t gui_zone_find(const char *zone)
-{
-    const char *want  = zone;
-    uint8_t     found = GUI_ZONE_COUNT;
-
-    if ( '\0' == want[0] )
-    {
-        want = GUI_ZONE_UTC;
-    }
-    for ( uint8_t i = 0U; (GUI_ZONE_COUNT > i) && (GUI_ZONE_COUNT == found);
-         ++i )
-    {
-        if ( strcmp(s_zones[i].tz, want) == 0 )
-        {
-            found = i;
-        }
-    }
-    return found;
-}
-
-/**
- * @brief What the list, About's Time zone row and the log call @p zone.
- * @param zone A POSIX TZ string, or empty for UTC.
- * @return Its row's label, or "Custom" for a string the table does not hold;
- *         never NULL.
- */
-static const char *gui_zone_label(const char *zone)
-{
-    uint8_t const i     = gui_zone_find(zone);
-    const char   *label = "Custom";
-
-    if ( GUI_ZONE_COUNT > i )
-    {
-        label = s_zones[i].label;
-    }
-    return label;
-}
-
-/**
- * @brief The row of s_zones the clock runs in: its own, or UTC's for a zone
- *        the table does not hold.
- *
- * Where the list's cursor starts (gui_sheet_first_row()): a zone typed on the
- * console has no row of its own, and UTC's is where a board with nothing set
- * stands.
- *
- * @param me The AO.
- * @return A row of s_zones, always below GUI_ZONE_COUNT.
- */
-static uint8_t gui_zone_row(Gui const * const me)
-{
-    uint8_t row = gui_zone_find(me->zone);
-
-    if ( GUI_ZONE_COUNT <= row )
-    {
-        row = gui_zone_find("");
-    }
-    return row;
-}
-
-/**
- * @brief The list of zones: About's Time zone row, opened into a page of its
- *        own in About's place.
- *
- * The table's cities in its order, west to east, each a choice row - the
- * ringed slot of a column of choices - and the zone the clock runs in
- * checked in kode blue; none is, for a zone the console set that the table
- * does not hold. The header says which zone that is by the label About's row
- * shows, and wears About's own "k": this is the same page one level down.
- * Every row is tagged GUI_TAG_ZONE plus its place in s_zones, which is also
- * its place on the card, and that is what lets the ring start on the zone -
- * on UTC's row for a zone the table does not hold - before a row of the
- * list exists (gui_sheet_first_row()).
- *
- * @param me The AO.
- */
-static void gui_zone_fill(Gui * const me)
-{
-    uint8_t const on = gui_zone_find(me->zone);
-
-    gui_sheet_header(me, NULL, KUI_COLOR_OFF, "Time zone",
-                     gui_zone_label(me->zone));
-    gui_sheet_header_mono(me, "k", KUI_COLOR_TEXT_ON_BG);
-    for ( uint8_t i = 0U; GUI_ZONE_COUNT > i; ++i )
-    {
-        lv_color_t  col   = KUI_COLOR_SURFACE;
-        const void *glyph = NULL;
-
-        if ( i == on )
-        {
-            col   = KUI_COLOR_ACCENT;
-            glyph = &kui_glyph_check;
-        }
-        if ( gui_sheet_row(me, s_zones[i].label, NULL, col, glyph, NULL)
-            != NULL )
-        {
-            me->sheet_tag[me->sheet_n - 1U] =
-                (uint16_t)((uint16_t)GUI_TAG_ZONE + (uint16_t)i);
-        }
-    }
-}
-
-/**
- * @brief Pick a zone from the list: AO_Boot is asked to take it, and the card
- *        goes back to More.
- *
- * The top button's release and a tap on a row both end here
- * (gui_sheet_act()). The pick is a `config key="zone"` set, the same a
- * console line makes (gui_zone_ask()); AO_Boot applies and stores it, and its
- * answer repaints the face and More's row (gui_zone_take()). Nothing is
- * rebuilt from here, because a tap arrives inside the click callback of the
- * very row being picked: the way back is the list's close, posted
- * (gui_sheet_close()). The close and AO_Boot's answer may reach this queue in
- * either order: More is built from the zone in force, and an answer that
- * comes after repaints its row in place.
- *
- * @param me  The AO.
- * @param tag The row's tag: GUI_TAG_ZONE plus its place in s_zones.
- */
-static void gui_zone_pick(Gui * const me, uint16_t tag)
-{
-    /* A tag below the list's first, or past its last row, is no zone. */
-    if ( ((uint16_t)GUI_TAG_ZONE <= tag)
-        && ((uint16_t)(tag - (uint16_t)GUI_TAG_ZONE)
-            < (uint16_t)GUI_ZONE_COUNT) )
-    {
-        gui_zone_ask(me, s_zones[tag - (uint16_t)GUI_TAG_ZONE].tz);
-        gui_sheet_close(me);
+        KLOG_D(TAG, "zone: %s (%s)", kgui_clock_zone_label(me->zone), me->zone);
     }
 }
 
@@ -30943,8 +30984,7 @@ static void gui_lock_load(Gui * const me)
  * @brief The list of auto-lock times: the Screen sheet's Auto-lock row,
  *        opened into a page of its own in Screen's place.
  *
- * Built the way the list of zones is (gui_zone_fill()): the table's times in
- * its order, each a choice row - the ringed slot of a column of choices -
+ * The table's times in its order, each a choice row - the ringed slot of a column of choices -
  * and the time that is on checked in kode blue. The header says which time
  * that is, under Screen's own sun on the level's yellow: this is the same
  * page one level down. Every row is tagged GUI_TAG_LOCK plus its place in
@@ -33586,7 +33626,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
         me->zone_migrate = (khal_nvs_get_str(GUI_NVS_NAMESPACE, GUI_NVS_KEY_ZONE,
                                              old, sizeof(old)) == KODE_OK)
                            || (khal_nvs_get_u8(GUI_NVS_NAMESPACE, "tzi", &tzi) == KODE_OK);
-        gui_zone_ask(me, NULL);
+        (void)gui_zone_ask(me, NULL);
     }
     /* The scene chosen for the face, read beside it for the second of those
      * reasons: a scene the console sets while AO_Gui waits replaces it too. NVS
@@ -37626,8 +37666,7 @@ static QState gui_sheet_leave(Gui * const me, QStateHandler home)
          * bottom button, a drag down on its header and a pick all
          * close this way, and the card turns back into the page
          * where it stands, ringed on the row that opened the list -
-         * About's Time zone, Screen's Auto-lock - built from the
-         * choice that is on. */
+         * Screen's Auto-lock - built from the choice that is on. */
         uint16_t door = list->door;
         uint8_t  row;
 
