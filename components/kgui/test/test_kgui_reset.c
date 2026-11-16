@@ -44,10 +44,19 @@ void test_reset_why_says_what_is_gone_and_what_stays(void)
                              kgui_reset_why((uint8_t)KBOOT_RESET_STEP_WIPE, (uint32_t)KODE_ERROR));
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_APPS_STAY,
                              kgui_reset_why((uint8_t)KBOOT_RESET_STEP_APPS, (uint32_t)KODE_TIMEOUT));
+    TEST_ASSERT_EQUAL_STRING(KGUI_RESET_FILES_STAY,
+                             kgui_reset_why((uint8_t)KBOOT_RESET_STEP_FILES, (uint32_t)KODE_ERROR));
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_SOME_STAY,
                              kgui_reset_why((uint8_t)KBOOT_RESET_STEP_NVS, (uint32_t)KODE_NO_RESOURCES));
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_ALL_GONE,
                              kgui_reset_why((uint8_t)KBOOT_RESET_STEP_REQUEST, (uint32_t)KODE_ERROR));
+}
+
+void test_reset_why_stopped_at_the_files(void)
+{
+    /* The apps are removed by then and the settings not yet erased. */
+    TEST_ASSERT_EQUAL_STRING("Networks and apps gone.\nSettings stay.\nRestart, then try again.",
+                             kgui_reset_why((uint8_t)KBOOT_RESET_STEP_FILES, (uint32_t)KODE_TIMEOUT));
 }
 
 void test_reset_why_find_failing_otherwise_says_nothing_went(void)
@@ -62,8 +71,8 @@ void test_reset_why_never_names_a_step_of_the_firmware(void)
     static const uint8_t steps[] = {
         (uint8_t)KBOOT_RESET_STEP_FIND, (uint8_t)KBOOT_RESET_STEP_LINK,
         (uint8_t)KBOOT_RESET_STEP_INSTALL, (uint8_t)KBOOT_RESET_STEP_WIPE,
-        (uint8_t)KBOOT_RESET_STEP_APPS, (uint8_t)KBOOT_RESET_STEP_NVS,
-        (uint8_t)KBOOT_RESET_STEP_REQUEST,
+        (uint8_t)KBOOT_RESET_STEP_APPS, (uint8_t)KBOOT_RESET_STEP_FILES,
+        (uint8_t)KBOOT_RESET_STEP_NVS, (uint8_t)KBOOT_RESET_STEP_REQUEST,
     };
 
     for ( size_t i = 0U; (sizeof(steps) / sizeof(steps[0])) > i; ++i )
@@ -80,6 +89,7 @@ void test_reset_sub_is_not_done_until_something_went(void)
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_REFUSED_SUB, kgui_reset_sub((uint8_t)KBOOT_RESET_STEP_INSTALL));
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_PARTLY_SUB, kgui_reset_sub((uint8_t)KBOOT_RESET_STEP_WIPE));
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_PARTLY_SUB, kgui_reset_sub((uint8_t)KBOOT_RESET_STEP_APPS));
+    TEST_ASSERT_EQUAL_STRING(KGUI_RESET_PARTLY_SUB, kgui_reset_sub((uint8_t)KBOOT_RESET_STEP_FILES));
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_PARTLY_SUB, kgui_reset_sub((uint8_t)KBOOT_RESET_STEP_NVS));
     TEST_ASSERT_EQUAL_STRING(KGUI_RESET_PARTLY_SUB, kgui_reset_sub((uint8_t)KBOOT_RESET_STEP_REQUEST));
 }
@@ -100,6 +110,7 @@ int main(void)
     RUN_TEST(test_reset_why_no_welcome_app);
     RUN_TEST(test_reset_why_busy);
     RUN_TEST(test_reset_why_says_what_is_gone_and_what_stays);
+    RUN_TEST(test_reset_why_stopped_at_the_files);
     RUN_TEST(test_reset_why_find_failing_otherwise_says_nothing_went);
     RUN_TEST(test_reset_why_never_names_a_step_of_the_firmware);
     RUN_TEST(test_reset_sub_is_not_done_until_something_went);
