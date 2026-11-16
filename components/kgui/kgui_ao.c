@@ -3110,6 +3110,9 @@ typedef struct {
                                *   this AO made was refused: "who: why".    */
     bool     lp_refused_due; /**< That refusal arrived while parked and is
                                *   still to be said on the glass.            */
+    uint32_t park_seq;       /**< The DISPLAY_PARK_SIG this park answers (the
+                               *   glass's own rest, `rest parts=1`); 0 for a
+                               *   round's park.                             */
     bool     card_full_due;  /**< The card was found full while the glass
                                *   was out of sight (parked or at Rest): it
                                *   is said on the next face, Apps or
@@ -32686,6 +32689,25 @@ static void gui_lp_quiet(Gui * const me)
 }
 
 /**
+ * @brief Tell AO_Display this AO has stopped drawing, for the park it asked.
+ *
+ * Answered again for a second ask while parked: each rest of the glass waits
+ * for its own number.
+ *
+ * @param me The AO, parked, with park_seq set.
+ */
+static void gui_park_answer(Gui const * const me)
+{
+    KLOG_N(TAG, "screen: parked for the glass's rest");
+    if ( KODE_OK != kode_sys_screen_parked(me->park_seq) )
+    {
+        /* AO_Display's wait runs out and refuses the rest; its repaint, if
+         * the glass stays lit, brings the face back. */
+        KLOG_E(TAG, "screen: could not tell the display it stopped drawing");
+    }
+}
+
+/**
  * @brief Take the glass to rest: the entry of Gui_asleep.
  *
  * In this order: the tick stops and what the person was doing ends, the page
@@ -32697,13 +32719,24 @@ static void gui_lp_quiet(Gui * const me)
  * so nothing is drawn between them and the hand-over, and nothing after it:
  * the link going down frees both framebuffers. The round is answered last.
  *
- * @param me The AO, with lp_round and lp_target set.
+ * The glass's own rest (DISPLAY_PARK_SIG, park_seq set) parks the same way on
+ * the black page, and answers with the park's number instead: AO_Display
+ * takes no figures from it and no round is open.
+ *
+ * @param me The AO, with lp_round and lp_target set, or park_seq.
  */
 static void gui_lp_park(Gui * const me)
 {
     DisplayGlyphsEvt glyphs;
 
-    s_gui_state = "asleep";
+    if ( 0U != me->park_seq )
+    {
+        s_gui_state = "parked";
+    }
+    else
+    {
+        s_gui_state = "asleep";
+    }
     me->lp_rest = false;
     gui_lp_quiet(me);
 
@@ -32713,7 +32746,7 @@ static void gui_lp_park(Gui * const me)
      * wake. */
     gui_deep_off(me);
     lv_screen_load(kgui_screen_dark);
-    if ( (uint8_t)KODE_LP_ASLEEP == me->lp_target )
+    if ( (0U == me->park_seq) && ((uint8_t)KODE_LP_ASLEEP == me->lp_target) )
     {
         me->kody_sight = GUI_KODY_ASLEEP;
     }
@@ -32721,12 +32754,22 @@ static void gui_lp_park(Gui * const me)
     lv_refr_now(me->disp);
     gui_flush_wait_cb(me->disp);
 
-    /* The deep rest is a black glass, with no time on it. */
-    (void)memset(&glyphs, 0, sizeof(glyphs));
-    me->lp_strip.buf = NULL;
-    glyphs.rest_pct  = gui_lp_rest_pct(me);
-    display_glyphs_hand(&glyphs);
-    lowpower_ready(me->lp_who, me->lp_round, false, NULL);
+    if ( 0U != me->park_seq )
+    {
+        /* The glass's own rest: no round to answer and no figures to hand,
+         * only the park's number. The glass comes back with
+         * DISPLAY_REPAINT_SIG, to the face (gui_lp_resume()). */
+        gui_park_answer(me);
+    }
+    else
+    {
+        /* The deep rest is a black glass, with no time on it. */
+        (void)memset(&glyphs, 0, sizeof(glyphs));
+        me->lp_strip.buf = NULL;
+        glyphs.rest_pct  = gui_lp_rest_pct(me);
+        display_glyphs_hand(&glyphs);
+        lowpower_ready(me->lp_who, me->lp_round, false, NULL);
+    }
 }
 
 /**
@@ -32822,6 +32865,7 @@ static QState gui_lp_resume(Gui * const me)
     kgui_screen_face_bare(false, false);
     me->lp_parked = false;
     me->lp_rest   = false;
+    me->park_seq  = 0U;
     /* The BOT that woke the board is Rest's first press (Gui_face's init). */
     me->knock_pending = me->lp_woke_bot || me->lp_woke_top;
     me->knock_hint    = me->lp_woke_bot;
@@ -33418,6 +33462,7 @@ void Gui_ctor(void)
      * the glass is at the level the store holds, until Rest dims it. */
     me->at_rest         = false;
     me->card_full_due   = false;
+    me->park_seq        = 0U;
     me->woken           = false;
     me->usb_awake       = false;
     me->rail_3v3        = false;
@@ -33561,6 +33606,9 @@ static QState Gui_initial(Gui * const me, void const * const par)
     QActive_subscribe(&me->super, DISPLAY_STATE_SIG);
     QActive_subscribe(&me->super, DISPLAY_REPAINT_SIG);
 #if CONFIG_KODE_LOWPOWER
+    /* The glass's own rest asks whoever draws to stop, as an app's sleep of
+     * the screen does: parked like a round, answered with the park's number. */
+    QActive_subscribe(&me->super, DISPLAY_PARK_SIG);
     me->lp_who = lowpower_join(&me->super, "gui");
     if ( KODE_LOWPOWER_WHO_NONE != me->lp_who )
     {
@@ -36015,6 +36063,22 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             break;
         }
 #if CONFIG_KODE_LOWPOWER
+        case DISPLAY_PARK_SIG: {
+            /* The glass's own rest (`rest parts=1`, an app's sleep of the
+             * screen): parked as for a round. A write or the factory reset
+             * keeps the glass lit, and AO_Display's wait refuses the rest. */
+            if ( me->rs_busy || me->writing || me->sheet_locked )
+            {
+                KLOG_N(TAG, "screen: a write holds the glass; not parked");
+                status = Q_HANDLED();
+            }
+            else
+            {
+                me->park_seq = Q_EVT_CAST(DisplayParkEvt)->seq;
+                status = Q_TRAN(&Gui_asleep);
+            }
+            break;
+        }
         case LOWPOWER_ROUND_SIG: {
             LowPowerRoundEvt const * const r = Q_EVT_CAST(LowPowerRoundEvt);
 
@@ -36991,7 +37055,9 @@ static QState Gui_rest_asleep(Gui * const me, QEvt const * const e)
  * Entered on a round (Gui_running), from wherever the board was: the exits of
  * the states it leaves end what they had under way. The entry draws the page,
  * hands AO_Display the figures of the time and answers the round
- * (gui_lp_park()). Left on the wake, for the face (gui_lp_resume()), when
+ * (gui_lp_park()). Entered too on DISPLAY_PARK_SIG, the glass's own rest,
+ * answered with the park's number and no figures. Left on the wake, for the
+ * face (gui_lp_resume()), when
  * AO_Display says the glass is back (DISPLAY_REPAINT_SIG). A button,
  * a touch or a home changes nothing here; the time is AO_Display's, written
  * into the panel's memory once a minute.
@@ -37024,6 +37090,13 @@ static QState Gui_asleep(Gui * const me, QEvt const * const e)
         }
         case GUI_TICK_SIG: {
             /* A tick that was queued when the rest began: not re-armed. */
+            status = Q_HANDLED();
+            break;
+        }
+        case DISPLAY_PARK_SIG: {
+            /* Parked already: the new ask is answered with its own number. */
+            me->park_seq = Q_EVT_CAST(DisplayParkEvt)->seq;
+            gui_park_answer(me);
             status = Q_HANDLED();
             break;
         }
