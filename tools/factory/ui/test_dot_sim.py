@@ -69,7 +69,7 @@ MAC_P4 = "38:44:be:07:e6:54"
 WINDOW = "704,628"
 
 INFO = [
-    f'serial={SERIAL} product="KODE-DOT" board="DVT"',
+    f'serial={SERIAL} product="KODE-DOT" board="1.0"',
     f"mac_p4={MAC_P4}",
     'slot=factory addr=0x020000 size_kb=4096 state=inactive project="kodeos" version="00.00.25" idf="v6.1"',
     'slot=ota_0 addr=0x420000 size_kb=4096 state=running project="kodeos" version="00.00.26" idf="v6.1"',

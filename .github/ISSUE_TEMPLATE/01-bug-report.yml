@@ -27,7 +27,7 @@ body:
       description: |
         Run `info` on the console (USB-C) and paste the whole answer. It names the board's serial and the version held in every kodeOS slot and in the C5.
       placeholder: |
-        >|serial=KODE78YR5EEV0XX product=KODE-DOT board=DVT
+        >|serial=KODE78YR5EEV0XX product="KODE-DOT" board="1.0"
         >|mac_p4=e8:f6:0a:e7:6c:1d
         >|slot=factory addr=0x020000 size_kb=4096 state=running project=kodeos version=00.00.19 idf=v6.1
         ...
