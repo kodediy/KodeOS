@@ -211,11 +211,15 @@ class Scenario:
                            Kode could not keep).
     @param rfid_tag        The ID the station's tag holds before the run.
     @param rfid_dead_write True: `rfid_write` changes nothing and says so.
+    @param pads_charger    What the charger says with the 5 V on the pads:
+                           "charging" (current at once), "slow" (current from
+                           the fourth `bat_info`), "full" (no current, charge
+                           done) or "idle" (no current, not charging).
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
                  photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
-                 rfid_tag=None, rfid_dead_write=False):
+                 rfid_tag=None, rfid_dead_write=False, pads_charger="charging"):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -225,6 +229,7 @@ class Scenario:
         self.lock_refused = lock_refused
         self.rfid_tag = rfid_tag
         self.rfid_dead_write = rfid_dead_write
+        self.pads_charger = pads_charger
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -706,7 +711,16 @@ class FakeKode:
 
     def v_bat_info(self, a):
         if self.relays == 0xFE:
-            rec = "vbat_mv=4000 vbus_mv=4550 vbus=on boost=off current_ma=514 soc=80 charging=1 fault=0"
+            self.bat_asks = getattr(self, "bat_asks", 0) + 1
+            how = self.sc.pads_charger
+            if how == "full":
+                rec = "vbat_mv=4187 vbus_mv=4700 vbus=on boost=off current_ma=-4 soc=100 charging=3 fault=0"
+            elif how == "idle" or (how == "slow" and self.bat_asks < 4):
+                rec = "vbat_mv=4150 vbus_mv=4700 vbus=on boost=off current_ma=-4 soc=98 charging=0 fault=0"
+            elif how == "slow":
+                rec = "vbat_mv=4160 vbus_mv=4650 vbus=on boost=off current_ma=93 soc=98 charging=2 fault=0"
+            else:
+                rec = "vbat_mv=4000 vbus_mv=4550 vbus=on boost=off current_ma=514 soc=80 charging=1 fault=0"
         elif self.relays == 0xFC:
             rec = (f"vbat_mv=3900 vbus_mv=0 vbus=off boost={'on' if self.boost else 'off'} "
                    f"current_ma={-1150 if self.boost else -20} soc=80 charging=0 fault=0")

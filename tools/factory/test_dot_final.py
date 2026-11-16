@@ -252,6 +252,9 @@ RELAY_FORBIDDEN = 0x01     # R2 closed with R1 at rest: the PC's 5 V into the lo
 RELAY_SETTLE_S = 0.02
 GND_SETTLE_S = 0.1
 CHARGE_SETTLE_S = 1.5
+CHARGE_CURRENT_WAIT_S = 5.0    # how long the charging current is waited for after the settle
+CHARGE_CURRENT_STEP_S = 0.5
+CHARGE_DONE = "3"              # `bat_info charging=`: the BQ25896's charge-termination state
 DELIVERY_SETTLE_S = 0.5
 BOOST_SETTLE_S = 0.6
 LOOP_COUNT = 20
@@ -1443,15 +1446,24 @@ class Station:
                 bad.append(f"vbus={f.get('vbus')}")
             if vbus is None or not CHARGE_VBUS_MIN_MV <= vbus <= CHARGE_VBUS_MAX_MV:
                 bad.append(f"vbus_mv={vbus} ({CHARGE_VBUS_MIN_MV} to {CHARGE_VBUS_MAX_MV})")
-            if cur is None or not cur > 0:
-                bad.append(f"current_ma={cur} (must be > 0)")
+            full = False
+            t_cur = CLOCK.monotonic()                      # the charger takes a moment after the jump, longer near full
+            while (cur is None or not cur > 0) and CLOCK.monotonic() - t_cur < CHARGE_CURRENT_WAIT_S:
+                if str(f.get("charging")) == CHARGE_DONE:  # a full cell takes no current: VBUS on the pads is the proof
+                    full = True
+                    break
+                sleep(CHARGE_CURRENT_STEP_S)
+                f, vbus, cur = pads.bat()
+            if not full and (cur is None or not cur > 0):
+                bad.append(f"current_ma={cur} (must be > 0, or the charger done)")
             vals = [value("a0_v", a0, "V"), value("a2_v", a2, "V"), value("a3_v", a[3], "V"),
                     value("vbus_mv", vbus if vbus is not None else "", "mV"),
                     value("current_ma", cur if cur is not None else "", "mA")] + rest[:2]
             fin("pads_charge", FAIL if bad else PASS,
-                f"A0={a0} V A2={a2} V vbus={f.get('vbus')} {vbus} mV {cur} mA" + ("; " + ", ".join(bad) if bad else ""),
+                f"A0={a0} V A2={a2} V vbus={f.get('vbus')} {vbus} mV {cur} mA" + ("; cell full, charge done" if full else "")
+                + ("; " + ", ".join(bad) if bad else ""),
                 f"A2 < {CHARGE_A2_MAX_V:.1f} V; A0 >= {CHARGE_A0_MIN_V:.1f} V; "
-                f"vbus {CHARGE_VBUS_MIN_MV}-{CHARGE_VBUS_MAX_MV} mV; current > 0", t0, vals, detail=str(f))
+                f"vbus {CHARGE_VBUS_MIN_MV}-{CHARGE_VBUS_MAX_MV} mV; current > 0 or charge done", t0, vals, detail=str(f))
             if a0 < POGO_5V_MIN_V:
                 pads.relays(RELAY_REST)
                 self.begin("pads_delivery")
