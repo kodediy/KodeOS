@@ -346,9 +346,8 @@ class TestRelays(Base):
             self.assertEqual(steps[s]["status"], "PASS", (s, steps[s]))
 
     def test_the_charge_row_waits_for_the_charger_and_takes_a_full_cell(self):
-        # Seen at the station (2026-11-16) with the cell at 98 %: 1.6 s after
-        # the jump the charger had not started again, -4 mA, and the row
-        # failed a good Kode; seconds later it was charging at 93 mA.
+        # Near full, the charger starts again seconds after the 5 V reaches
+        # the pads: the first readings show no current, a later one does.
         r = self.run_case(sim.Scenario("pass", pads_charger="slow"))
         st = r.results()["steps"]["pads_charge"]
         self.assertEqual(st["status"], "PASS", st)
