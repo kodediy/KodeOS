@@ -209,7 +209,6 @@ ROW_SEQ = ["sd", "imu", "audio", "haptic", "mag", "pmic", "gauge", "ioexp", "clo
 RUN_IDS = ROW_SEQ + CAM_IDS + ["led", "buttons", "tp"]
 BACKGROUND = ["pads", "nfc", "rfid", "radio"]     # the PC's work beside the operator, longest first
 # Steps that are run and reported in full but do not decide the verdict: none.
-# NFC was one, and a Kode whose reader was dead left the station passed.
 OPTIONAL = set()
 # What the NFC step writes before the serial, so the serial is a real write.
 NFC_OTHER_TEXT = "KODE E5"
