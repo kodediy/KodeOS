@@ -413,6 +413,28 @@ class PayloadConversation(unittest.TestCase):
         self.assertEqual(bytes(fake.received), data)
         self.assertIn("no console", out)
 
+    def test_a_transfer_that_stops_says_what_to_try_next(self):
+        _, died, _ = self.talk("install", sample(10 * 1024), stall_after_acks=3)
+        self.assertIn(kcli.LINK_HINT, str(died.code))
+
+    def test_a_board_that_never_says_ready_says_what_to_try_next(self):
+        _, died, _ = self.talk("install", sample(500), ignore_installs=2)
+        self.assertIn(kcli.LINK_HINT, str(died.code))
+
+    def test_a_console_that_never_answers_ping_says_what_to_try_next(self):
+        _, died, _ = self.talk("install", sample(700), alive=False)
+        self.assertIn("ping (pre-flight)", str(died.code))
+        self.assertIn(kcli.LINK_HINT, str(died.code))
+
+    def test_a_board_that_never_closes_says_what_to_try_next(self):
+        _, died, _ = self.talk("install", sample(2500), close_line=None)
+        self.assertIn(kcli.LINK_HINT, str(died.code))
+
+    def test_a_board_that_answers_an_error_gets_no_hint(self):
+        _, died, _ = self.talk("install", sample(500),
+                               ready_line=">err code=4 msg=busy")
+        self.assertNotIn(kcli.LINK_HINT, str(died.code))
+
     def test_a_console_that_never_answers_ping_sends_nothing(self):
         fake, died, _ = self.talk("install", sample(700), alive=False)
         self.assertIsNotNone(died)
