@@ -69,7 +69,7 @@ MAC_P4 = "38:44:be:07:e6:54"
 WINDOW = "704,628"
 
 INFO = [
-    f'serial={SERIAL} product="KODE-DOT" board="DVT"',
+    f'serial={SERIAL} product="KODE-DOT" board="1.0"',
     f"mac_p4={MAC_P4}",
     'slot=factory addr=0x020000 size_kb=4096 state=inactive project="kodeos" version="00.00.25" idf="v6.1"',
     'slot=ota_0 addr=0x420000 size_kb=4096 state=running project="kodeos" version="00.00.26" idf="v6.1"',
@@ -215,11 +215,15 @@ class Scenario:
                            "charging" (current at once), "slow" (current from
                            the fourth `bat_info`), "full" (no current, charge
                            done) or "idle" (no current, not charging).
+    @param boost_late      True: `test_dot_boost state=on` answers on=0 with
+                           the boost on, as a record taken before the
+                           charger's next poll does.
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
                  photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
-                 rfid_tag=None, rfid_dead_write=False, pads_charger="charging"):
+                 rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
+                 boost_late=False):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -230,6 +234,7 @@ class Scenario:
         self.rfid_tag = rfid_tag
         self.rfid_dead_write = rfid_dead_write
         self.pads_charger = pads_charger
+        self.boost_late = boost_late
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -703,7 +708,8 @@ class FakeKode:
     def v_test_dot_boost(self, a):
         self.boost = a.get("state") == "on"
         cur = -1150 if self.boost else -20
-        self.answer([f"boost on={1 if self.boost else 0} fault=0x00 current_ma={cur}"], delay=0.3)
+        said = self.boost and not self.sc.boost_late       # late: the record still shows the charger before
+        self.answer([f"boost on={1 if said else 0} fault=0x00 current_ma={cur}"], delay=0.3)
 
     def v_test_dot_loop(self, a):
         n = int(a.get("count", "20"))

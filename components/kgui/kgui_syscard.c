@@ -120,6 +120,9 @@ const char *kgui_reset_why(uint8_t step, uint32_t status)
             case (uint8_t)KBOOT_RESET_STEP_APPS:
                 why = KGUI_RESET_APPS_STAY;
                 break;
+            case (uint8_t)KBOOT_RESET_STEP_FILES:
+                why = KGUI_RESET_FILES_STAY;
+                break;
             case (uint8_t)KBOOT_RESET_STEP_NVS:
                 why = KGUI_RESET_SOME_STAY;
                 break;
