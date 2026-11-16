@@ -888,8 +888,9 @@ enum {
                                      * absent is 24 h                        */
 #define GUI_NVS_KEY_SLEEP  "kody_sleep" /* uint32_t record: seconds without
                                      * input before the Lock rests, 0 for
-                                     * never; absent while it follows the
-                                     * auto-lock                             */
+                                     * never, GUI_SLEEP_LOCK while it follows
+                                     * the auto-lock; absent is
+                                     * GUI_SLEEP_DEFAULT_S                   */
 #define GUI_NVS_KEY_RECENTS "recents" /* str: the apps last run, by project
                                      * name, one a line, the latest first,
                                      * KGUI_SHELF_MAX at most (kgui_shelf.h) */
@@ -31301,8 +31302,8 @@ static void gui_clock_config(Gui * const me, KodeConfigReqEvt const * const r)
  * @brief Make a row of s_sleeps the time to Rest, and keep it.
  *
  * The one place the setting is written, for the console and for the Screen
- * card's Rest after row alike. `lock` erases the key: following the
- * auto-lock is the absence of a time of its own.
+ * card's Rest after row alike. `lock` is stored as GUI_SLEEP_LOCK, like any
+ * other choice: an absent key is the default time, GUI_SLEEP_DEFAULT_S.
  *
  * @param me  The AO.
  * @param idx A place in s_sleeps, below GUI_SLEEP_COUNT.
@@ -31312,15 +31313,8 @@ static void gui_sleep_set(Gui * const me, uint8_t idx)
     kode_status_t st;
 
     me->sleep_s = s_sleeps[idx];
-    if ( GUI_SLEEP_LOCK == me->sleep_s )
-    {
-        st = khal_nvs_erase(GUI_NVS_NAMESPACE, GUI_NVS_KEY_SLEEP);
-    }
-    else
-    {
-        st = khal_nvs_set_blob(GUI_NVS_NAMESPACE, GUI_NVS_KEY_SLEEP,
-                               &me->sleep_s, sizeof(me->sleep_s));
-    }
+    st = khal_nvs_set_blob(GUI_NVS_NAMESPACE, GUI_NVS_KEY_SLEEP,
+                           &me->sleep_s, sizeof(me->sleep_s));
     if ( KODE_OK != st )
     {
         KLOG_W(TAG, "the store refused kgui/%s; Kody's sleep holds until "
@@ -31332,9 +31326,9 @@ static void gui_sleep_set(Gui * const me, uint8_t idx)
 /**
  * @brief Answer `config key="kody_sleep"`, setting it first when asked.
  *
- * `lock` erases the key, as `scene=auto` does: following the auto-lock is
- * the absence of a time of its own. A set counts from the face's last input,
- * like the auto-lock's.
+ * `lock` is stored like any other choice, so it holds across a restart; a
+ * key never set reads as the default time. A set counts from the face's last
+ * input, like the auto-lock's.
  *
  * @param me The AO.
  * @param r  The request; its value is an index into s_sleeps.
