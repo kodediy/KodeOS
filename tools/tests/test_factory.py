@@ -364,6 +364,13 @@ class TestRelays(Base):
         self.assertEqual(st["status"], "FAIL", st)
         self.assertIn("current_ma=-4", st["measured"])
 
+    def test_the_delivery_row_takes_the_boost_from_bat_info_too(self):
+        # The verb's record may be the charger before its next poll: on=0
+        # with the boost on. `bat_info` after the settle says it.
+        r = self.run_case(sim.Scenario("pass", boost_late=True))
+        st = r.results()["steps"]["pads_delivery"]
+        self.assertEqual(st["status"], "PASS", st)
+
 
 class TestRefusal(Base):
 

@@ -1543,8 +1543,12 @@ class Station:
                        f"{DELIVERY_CURRENT_MIN_MA}, negative)")
         if not DELIVERY_A0_MIN_V <= e0 <= DELIVERY_A0_MAX_V:
             bad.append(f"A0={e0} V ({DELIVERY_A0_MIN_V:.1f} to {DELIVERY_A0_MAX_V:.2f})")
-        if not truthy(b.get("on")):
-            bad.append(f"boost on={b.get('on')}")
+        # The verb's record is the charger as AO_Power last polled it, and may
+        # come before the boost shows there: what `bat_info` says after the
+        # settle counts as well.
+        boost_seen = truthy(b.get("on")) or f2.get("boost") == "on"
+        if not boost_seen:
+            bad.append(f"boost on={b.get('on')} and bat_info boost={f2.get('boost')}")
         if not fault_ok(b.get("fault", "?")):
             bad.append(f"fault={b.get('fault')}")
         restored = pads.boost_off()
@@ -1555,7 +1559,7 @@ class Station:
                 value("current_ma", cur if cur is not None else "", "mA"), value("fault", b.get("fault", "")),
                 value("boost_off", "yes" if restored else "NO")]
         fin("pads_delivery", FAIL if bad else PASS,
-            f"A0={e0} V boost={b.get('on')} fault={b.get('fault')} limit 1.2 A, off={'yes' if restored else 'NO'}"
+            f"A0={e0} V boost={1 if boost_seen else 0} fault={b.get('fault')} limit 1.2 A, off={'yes' if restored else 'NO'}"
             + ("; " + ", ".join(bad) if bad else ""),
             f"A0 {DELIVERY_A0_MIN_V:.1f} to {DELIVERY_A0_MAX_V:.2f} V with the boost on (limit 1.2 A), no fault and "
             f"a gauge current from {DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA} mA",
