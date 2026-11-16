@@ -1061,7 +1061,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_WHY_REST_BOT    "bottom released"                /**< What it says of Rest asked for with the bottom button on the face. */
 #define GUI_WHY_REST_IDLE   "kody_sleep"                     /**< What it says of Rest asked for by the time without input. */
 #define GUI_WHY_REST_WOKEN  "woken and left alone"           /**< What it says of Rest asked for again by a Lock that was woken and nothing touched. */
-#define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install says when AO_AppMgr stays busy. */
+#define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install or Pair new device says when its owner stays busy. */
 #define GUI_HINT_CARD_FULL  "SD card is full"                /**< What the glass says when an app's copy does not fit the card. */
 #define GUI_OFF_IDLE        0U                               /**< The face's red arc is not drawn. */
 #define GUI_OFF_FILL        1U                               /**< It fills while the bottom button stays down. */
@@ -24190,7 +24190,13 @@ static void gui_ble_act(Gui * const me, uint16_t tag)
         /* AO_Radio answers with BLE_STATE_SIG, and what it says there is
          * what puts the row's line up. */
         KLOG_I(TAG, "pair new device: asked");
-        ble_pair_open_request();
+        if ( !ble_pair_open_request() )
+        {
+            /* AO_Radio's queue had no room: nothing was asked, so the row
+             * would wait for an answer that never comes. */
+            KLOG_N(TAG, "pair new device: AO_Radio is busy");
+            kgui_hint(GUI_HINT_ROOM_BUSY);
+        }
     }
     else if ( (uint16_t)GUI_TAG_BLE_FORGET == tag )
     {
