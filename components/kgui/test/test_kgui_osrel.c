@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /**
  * @file test_kgui_osrel.c
- * @brief Host tests of the update service's answer and About's row
- *        (kgui_osrel.h).
+ * @brief Host tests of the update service's answer, About's row and the card
+ *        at boot (kgui_osrel.h).
  */
 #include <stdio.h>
 #include <string.h>
@@ -298,6 +298,202 @@ void test_row_words_fit_the_longest_version_and_a_short_buffer(void)
     kgui_osrel_row_text(KGUI_OSREL_ROW_AVAILABLE, "0.1.2", NULL, 0U);
 }
 
+void test_offer_follows_the_boot_question(void)
+{
+    /* The question goes out, then its answer decides. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_ASKED,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_ASKING));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_ASKED,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_ASKING));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_AVAILABLE));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_CURRENT));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_FAILED));
+    /* An answer already known when the boot's question would go out. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_AVAILABLE));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_CURRENT));
+    /* A question that could not go out, or nobody to ask: once per boot. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_FAILED));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_NEVER));
+}
+
+void test_offer_due_goes_only_when_the_release_is_taken_back(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_CURRENT));
+    /* A later question that failed, or is on its way, keeps the release kept. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_FAILED));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_ASKING));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_AVAILABLE));
+}
+
+void test_offer_rises_once_a_boot(void)
+{
+    static const kgui_osrel_check_t CHECKS[] = {
+        KGUI_OSREL_NEVER, KGUI_OSREL_ASKING, KGUI_OSREL_CURRENT,
+        KGUI_OSREL_AVAILABLE, KGUI_OSREL_FAILED,
+    };
+
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_SHOWN, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_DUE));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_SHOWN, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_SHOWN));
+    /* Nothing was due: writing the card changes nothing. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_NONE));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_ASKED, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_ASKED));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_UNASKED, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_UNASKED));
+    /* Shown and none stay what they are until the next boot. */
+    for ( size_t i = 0U; (sizeof(CHECKS) / sizeof(CHECKS[0])) > i; ++i )
+    {
+        TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_SHOWN,
+                          kgui_osrel_offer_follow(KGUI_OSREL_OFFER_SHOWN, CHECKS[i]));
+        TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                          kgui_osrel_offer_follow(KGUI_OSREL_OFFER_NONE, CHECKS[i]));
+    }
+}
+
+void test_offer_words(void)
+{
+    TEST_ASSERT_EQUAL_STRING("unasked", kgui_osrel_offer_word(KGUI_OSREL_OFFER_UNASKED));
+    TEST_ASSERT_EQUAL_STRING("asked", kgui_osrel_offer_word(KGUI_OSREL_OFFER_ASKED));
+    TEST_ASSERT_EQUAL_STRING("due", kgui_osrel_offer_word(KGUI_OSREL_OFFER_DUE));
+    TEST_ASSERT_EQUAL_STRING("shown", kgui_osrel_offer_word(KGUI_OSREL_OFFER_SHOWN));
+    TEST_ASSERT_EQUAL_STRING("none", kgui_osrel_offer_word(KGUI_OSREL_OFFER_NONE));
+    TEST_ASSERT_EQUAL_STRING("?", kgui_osrel_offer_word((kgui_osrel_offer_t)99));
+}
+
+/** @brief A free glass on @p screen: nothing up, nothing moving, no hand on the board. */
+static kgui_osrel_glass_t glass_free(kgui_osrel_screen_t screen)
+{
+    kgui_osrel_glass_t g;
+
+    (void)memset(&g, 0, sizeof(g));
+    g.screen = screen;
+    return g;
+}
+
+void test_may_rise_on_the_face_apps_or_settings_when_free(void)
+{
+    kgui_osrel_glass_t g = glass_free(KGUI_OSREL_SCREEN_FACE);
+
+    TEST_ASSERT_TRUE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g));
+    g = glass_free(KGUI_OSREL_SCREEN_APPS);
+    TEST_ASSERT_TRUE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g));
+    g = glass_free(KGUI_OSREL_SCREEN_SETTINGS);
+    TEST_ASSERT_TRUE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g));
+}
+
+void test_may_rise_never_at_rest_or_on_any_other_screen(void)
+{
+    kgui_osrel_glass_t g = glass_free(KGUI_OSREL_SCREEN_REST);
+
+    TEST_ASSERT_FALSE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g));
+    /* The boot's wait, the way back from an app, a guided test, the station's test, asleep. */
+    g = glass_free(KGUI_OSREL_SCREEN_OTHER);
+    TEST_ASSERT_FALSE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g));
+    TEST_ASSERT_FALSE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, NULL));
+}
+
+void test_may_rise_only_while_the_offer_is_due(void)
+{
+    static const kgui_osrel_offer_t NOT_DUE[] = {
+        KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_OFFER_SHOWN,
+        KGUI_OSREL_OFFER_NONE,
+    };
+    kgui_osrel_glass_t const g = glass_free(KGUI_OSREL_SCREEN_FACE);
+
+    for ( size_t i = 0U; (sizeof(NOT_DUE) / sizeof(NOT_DUE[0])) > i; ++i )
+    {
+        TEST_ASSERT_FALSE(kgui_osrel_offer_may_rise(NOT_DUE[i], &g));
+    }
+}
+
+void test_may_rise_waits_for_each_thing_that_holds_the_glass(void)
+{
+    static const kgui_osrel_screen_t SCREENS[] = {
+        KGUI_OSREL_SCREEN_FACE, KGUI_OSREL_SCREEN_APPS, KGUI_OSREL_SCREEN_SETTINGS,
+    };
+
+    for ( size_t i = 0U; (sizeof(SCREENS) / sizeof(SCREENS[0])) > i; ++i )
+    {
+        kgui_osrel_glass_t g;
+
+        g = glass_free(SCREENS[i]);
+        g.card = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "card");
+        g = glass_free(SCREENS[i]);
+        g.locked = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "locked");
+        g = glass_free(SCREENS[i]);
+        g.writing = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "writing");
+        g = glass_free(SCREENS[i]);
+        g.resetting = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "resetting");
+        g = glass_free(SCREENS[i]);
+        g.parked = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "parked");
+        g = glass_free(SCREENS[i]);
+        g.moving = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "moving");
+        g = glass_free(SCREENS[i]);
+        g.hand = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "hand");
+        g = glass_free(SCREENS[i]);
+        g.greeting = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "greeting");
+    }
+}
+
+void test_card_button_follows_the_network_then_the_battery(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_OSREL_CARD_READY, kgui_osrel_card(true, true));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_CARD_CHARGE, kgui_osrel_card(true, false));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_CARD_OFFLINE, kgui_osrel_card(false, true));
+    /* Both missing: the network first, as About's row says. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_CARD_OFFLINE, kgui_osrel_card(false, false));
+}
+
+void test_card_words(void)
+{
+    char text[KGUI_OSREL_TEXT_MAX];
+    char small[8];
+    char charge[KGUI_OSREL_TEXT_MAX];
+
+    kgui_osrel_card_version("0.1.2", text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("Version 0.1.2", text);
+    kgui_osrel_card_version("1234.1234.1234", text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("Version 1234.1234.1234", text);
+    kgui_osrel_card_version(NULL, text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("Version ", text);
+    kgui_osrel_card_version("0.1.2", small, sizeof(small));
+    TEST_ASSERT_EQUAL_STRING("Version", small);
+    kgui_osrel_card_version("0.1.2", NULL, 0U);
+
+    /* The charge is the module's own threshold, said as a number. */
+    (void)snprintf(charge, sizeof(charge), "Charge to %u %% or\nplug in a cable.",
+                   (unsigned)KGUI_OSREL_MIN_PCT);
+    kgui_osrel_card_why(KGUI_OSREL_CARD_CHARGE, text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING(charge, text);
+    TEST_ASSERT_EQUAL_STRING("Charge to 20 % or\nplug in a cable.", text);
+    kgui_osrel_card_why(KGUI_OSREL_CARD_OFFLINE, text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("Join Wi-Fi to update.", text);
+    kgui_osrel_card_why(KGUI_OSREL_CARD_READY, text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("", text);
+    kgui_osrel_card_why(KGUI_OSREL_CARD_CHARGE, NULL, 0U);
+
+    TEST_ASSERT_EQUAL_STRING("kodeOS", KGUI_OSREL_CARD_WORD);
+    TEST_ASSERT_EQUAL_STRING("New release available", KGUI_OSREL_CARD_TITLE);
+    TEST_ASSERT_EQUAL_STRING("Update", KGUI_OSREL_CARD_BUTTON);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -319,5 +515,15 @@ int main(void)
     RUN_TEST(test_row_what_the_top_button_does);
     RUN_TEST(test_row_words);
     RUN_TEST(test_row_words_fit_the_longest_version_and_a_short_buffer);
+    RUN_TEST(test_offer_follows_the_boot_question);
+    RUN_TEST(test_offer_due_goes_only_when_the_release_is_taken_back);
+    RUN_TEST(test_offer_rises_once_a_boot);
+    RUN_TEST(test_offer_words);
+    RUN_TEST(test_may_rise_on_the_face_apps_or_settings_when_free);
+    RUN_TEST(test_may_rise_never_at_rest_or_on_any_other_screen);
+    RUN_TEST(test_may_rise_only_while_the_offer_is_due);
+    RUN_TEST(test_may_rise_waits_for_each_thing_that_holds_the_glass);
+    RUN_TEST(test_card_button_follows_the_network_then_the_battery);
+    RUN_TEST(test_card_words);
     return UNITY_END();
 }

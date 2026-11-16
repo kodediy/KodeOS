@@ -249,7 +249,7 @@ enum {
  * Screen's auto-lock times; then the kinds
  * that belong to no page at all - a row of the launcher, a write in flight,
  * a write that failed, the ending, a peer asking to pair, an app that
- * stopped, a battery that is critical. The first seven
+ * stopped, a battery that is critical, a newer kodeOS. The first seven
  * LIST and the rest SPEAK, which is the whole difference between them: a
  * listing sheet's body is rows, a speaking sheet's is lines of text and up
  * to one button, and `me->sheet_n` tells the pad which grammar it is under.
@@ -280,7 +280,8 @@ typedef enum {
     GUI_SHEET_REMOVE,
     GUI_SHEET_REMOVING,
     GUI_SHEET_RESET,      /* "Factory reset?" */
-    GUI_SHEET_RESETTING   /* the wait for AO_Boot, then why it did not happen */
+    GUI_SHEET_RESETTING,  /* the wait for AO_Boot, then why it did not happen */
+    GUI_SHEET_UPDATE      /* a newer kodeOS, offered at boot */
 } GuiSheet;
 
 /**
@@ -300,9 +301,9 @@ static const char *gui_sheet_kind_name(GuiSheet kind)
         "none", "wifi", "ble", "screen", "bat", "about", "more", "time",
         "autolock", "details", "opening", "failure", "poweroff", "pairing",
         "selftest", "kody", "keypad", "stopped", "battery", "remove", "removing",
-        "reset", "resetting"
+        "reset", "resetting", "update"
     };
-    _Static_assert((sizeof(NAMES) / sizeof(NAMES[0])) == ((size_t)GUI_SHEET_RESETTING + 1U),
+    _Static_assert((sizeof(NAMES) / sizeof(NAMES[0])) == ((size_t)GUI_SHEET_UPDATE + 1U),
                    "one name per GuiSheet, in the enum's order");
     const char *name = "?";
 
@@ -334,9 +335,9 @@ typedef struct {
  * @brief The row of a sheet kind in the table of system cards.
  *
  * THE TABLE: a write in flight, the failure of one, a pairing, an app that
- * stopped, a battery that is critical, the ending, and the factory reset's
- * question and its wait. Every question about which cards are system cards
- * is asked of it, through this function.
+ * stopped, a battery that is critical, the ending, the factory reset's
+ * question and its wait, and a newer kodeOS. Every question about which
+ * cards are system cards is asked of it, through this function.
  *
  * @param kind Which sheet.
  * @return Its row; NULL for a kind that is no system card.
@@ -352,6 +353,7 @@ static const GuiSysCard *gui_syscard_of(GuiSheet kind)
         { GUI_SHEET_POWEROFF,  true  },
         { GUI_SHEET_RESET,     false },
         { GUI_SHEET_RESETTING, false },
+        { GUI_SHEET_UPDATE,    true  },
     };
     const GuiSysCard *found = NULL;
 
@@ -3016,6 +3018,7 @@ typedef struct {
                                *   it named, in PSRAM: NULL until the first
                                *   question, and when there was no room.    */
     uint8_t  os_check;       /**< kgui_osrel_check_t: where the check stands. */
+    uint8_t  os_offer;       /**< kgui_osrel_offer_t: where the boot's card stands. */
     uint8_t  write_what;     /**< kwrite_t: what the write on the glass is
                                *   and how it ends - the Opening sheet's
                                *   title, name and sentence, and the
@@ -3395,6 +3398,13 @@ static void gui_os_ask(Gui * const me, const char *why);
 static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r);
 static kgui_osrel_row_t gui_os_row(Gui const * const me);
 static const char *gui_os_version(Gui const * const me);
+static void gui_os_install(Gui * const me, GuiAsk from);
+static void gui_update_follow(Gui * const me);
+static void gui_update_boot_ask(Gui * const me);
+static void gui_update_tick(Gui * const me);
+static bool gui_update_may_rise(Gui const * const me);
+static void gui_update_fill(Gui * const me);
+static void gui_update_act(Gui * const me);
 static const char *gui_boot_reason_name(void);
 static void gui_uptime_text(char *dst, size_t cap);
 static void gui_sheet_open_kind(Gui * const me, GuiSheet kind);
@@ -4075,6 +4085,9 @@ static void gui_dump(Gui * const me)
     /* And the empty launcher: which look it wears, and whether Kody is
      * being drawn there. */
     KLOG_N(TAG, "  empty: %s", gui_empty_state(me));
+    /* The card at boot: whether it waits, rose, or has nothing to offer. */
+    KLOG_N(TAG, "  update: offer %s",
+           kgui_osrel_offer_word((kgui_osrel_offer_t)me->os_offer));
 
     /* The sheet, when there is one. s_gui_state above already says "sheet", so
      * this line is the detail behind it: which one, how many rows it built
@@ -20108,6 +20121,12 @@ static void gui_sheet_action_act(Gui * const me)
             gui_reset_go(me);
             break;
         }
+        case GUI_SHEET_UPDATE: {
+            /* Update: About's install of the release the card names; grey,
+             * the log says why and the card stays (gui_update_act()). */
+            gui_update_act(me);
+            break;
+        }
         default: {
             /* A listing sheet, or one that shows no button (a pairing card
              * is left by closing it): there is no answer for this to reach. */
@@ -21560,14 +21579,16 @@ static void gui_lines_join(char *out, size_t size, const char *l1, const char *l
  *
  * @param kind Which sheet.
  * @return true for a write, its failure, an app that stopped, a critical
- *         battery, a pairing, "Turn off?" and the factory reset's two cards.
+ *         battery, a pairing, "Turn off?", the factory reset's two cards and
+ *         a newer kodeOS.
  */
 static bool gui_sheet_framed(GuiSheet kind)
 {
     return (GUI_SHEET_OPENING == kind) || (GUI_SHEET_FAILURE == kind)
            || (GUI_SHEET_STOPPED == kind) || (GUI_SHEET_BATTERY == kind)
            || (GUI_SHEET_PAIRING == kind) || (GUI_SHEET_POWEROFF == kind)
-           || (GUI_SHEET_RESET == kind) || (GUI_SHEET_RESETTING == kind);
+           || (GUI_SHEET_RESET == kind) || (GUI_SHEET_RESETTING == kind)
+           || (GUI_SHEET_UPDATE == kind);
 }
 
 /**
@@ -22057,6 +22078,11 @@ static void gui_sheet_fill(Gui * const me)
             /* THE WAIT for AO_Boot, or why the reset did not happen
              * (gui_resetting_fill()). */
             gui_resetting_fill(me);
+            break;
+        }
+        case GUI_SHEET_UPDATE: {
+            /* A NEWER kodeOS, offered once a boot (gui_update_fill()). */
+            gui_update_fill(me);
             break;
         }
         case GUI_SHEET_OPENING: {
@@ -24670,10 +24696,11 @@ static void gui_os_failed(Gui * const me, const char *why)
 /**
  * @brief Ask the update service which kodeOS is the latest.
  *
- * Asked when About opens, when Wi-Fi gets its address under that page, and
- * on the top button on its row: never by itself, since About is the only
- * place that shows the answer. Nothing is asked with no service, with no
- * address, or while a question is out. The answer comes back as
+ * Asked once a boot when Wi-Fi gets its first address (the card at boot,
+ * gui_update_boot_ask()), when About opens, when Wi-Fi gets its address
+ * under that page, and on the top button on its row. Nothing is asked with
+ * no service, with no address, or while a question is out. The answer comes
+ * back as
  * NET_HTTP_RSP_SIG (gui_os_answer()), into a block of PSRAM taken at the
  * first question and lent to AO_Net until then.
  *
@@ -24724,7 +24751,8 @@ static void gui_os_ask(Gui * const me, const char *why)
  *
  * A release newer than the running image is kept and offered; an equal or
  * older one, and a service with no release at all, leave the board up to
- * date. About's row follows when that page is up.
+ * date. The boot's offer follows (gui_update_follow()), and About's row
+ * when that page is up.
  *
  * @param me The AO.
  * @param r  AO_Net's answer; the body is in the block the question lent.
@@ -24778,6 +24806,7 @@ static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r)
                (unsigned)r->rc, (unsigned)r->result.status);
         gui_os_failed(me, "no answer from the service");
     }
+    gui_update_follow(me);
     if ( GUI_SHEET_ABOUT == me->sheet )
     {
         gui_sheet_refill(me);
@@ -24799,6 +24828,231 @@ static kgui_osrel_row_t gui_os_row(Gui const * const me)
     view.power   = kgui_osrel_power_ok(me->soc, me->vbus);
     view.check   = (kgui_osrel_check_t)me->os_check;
     return kgui_osrel_row(&view);
+}
+
+/**
+ * @brief Start the update of kodeOS: the write's card, then the image.
+ *
+ * About's Software update row and the card at boot both end here. The image
+ * goes into the inactive kodeOS slot, and AO_AppMgr ends every write there
+ * with AO_Boot's switch and a restart into it, which is what the Opening card
+ * says. The card rises first, at 0 %, about no row and wearing the k, and
+ * the image is asked for once it has (gui_write_ask()): AO_AppMgr's reports
+ * then fill it.
+ *
+ * @param me   The AO.
+ * @param from GUI_ASK_OS for the card's kodeos.bin, GUI_ASK_OS_NET for the
+ *             release the service named.
+ */
+static void gui_os_install(Gui * const me, GuiAsk from)
+{
+    me->write_what = (uint8_t)KWRITE_OS;
+    me->write_pct  = 0U;
+    me->run_after  = false;
+    me->open_hold  = false;
+    me->sheet_row  = -1;
+    (void)snprintf(me->write_name, sizeof(me->write_name), "kodeOS");
+    gui_write_ask(me, from, "");
+    gui_sheet_open_kind(me, GUI_SHEET_OPENING);
+}
+
+/* ---- The card at boot ------------------------------------------------------------ */
+
+/**
+ * @brief What holds the glass now, as the card's rule reads it
+ *        (kgui_osrel_offer_may_rise()).
+ *
+ * The screen is read from the state's name, as gui_in_guided_test() reads
+ * it: the face awake, Rest, Apps and the settings screen by their own names;
+ * a card over any of them, a test, the way back from an app and the board
+ * asleep go by others.
+ *
+ * @param me The AO.
+ * @return The glass.
+ */
+static kgui_osrel_glass_t gui_update_glass(Gui const * const me)
+{
+    kgui_osrel_glass_t g;
+
+    g.screen = KGUI_OSREL_SCREEN_OTHER;
+    if ( strcmp(s_gui_state, "face") == 0 )
+    {
+        g.screen = KGUI_OSREL_SCREEN_FACE;
+    }
+    else if ( strcmp(s_gui_state, "rest") == 0 )
+    {
+        g.screen = KGUI_OSREL_SCREEN_REST;
+    }
+    else if ( strcmp(s_gui_state, "browsing") == 0 )
+    {
+        g.screen = KGUI_OSREL_SCREEN_APPS;
+    }
+    else if ( strcmp(s_gui_state, "settings") == 0 )
+    {
+        g.screen = KGUI_OSREL_SCREEN_SETTINGS;
+    }
+    else
+    {
+        /* Any other state holds the glass. */
+    }
+    g.card      = gui_card_on_glass(me);
+    g.locked    = me->sheet_locked;
+    g.writing   = me->writing;
+    g.resetting = me->rs_busy;
+#if CONFIG_KODE_LOWPOWER
+    g.parked    = me->lp_parked;
+#else
+    g.parked    = false;    /* no AO_LowPower: the glass is never handed over */
+#endif
+    g.moving    = me->curtain_up || me->page_grow || me->level_grow || gui_list_moving(me);
+    g.hand      = me->touch_pressed || (0U != me->btn_held);
+    g.greeting  = kgui_welcome_pending(&me->welcome);
+    return g;
+}
+
+/**
+ * @brief Whether the card at boot may rise now.
+ * @param me The AO.
+ * @return true for a due offer on a free glass.
+ */
+static bool gui_update_may_rise(Gui const * const me)
+{
+    kgui_osrel_glass_t const g = gui_update_glass(me);
+
+    return kgui_osrel_offer_may_rise((kgui_osrel_offer_t)me->os_offer, &g);
+}
+
+/**
+ * @brief The check moved: the boot's offer follows it (kgui_osrel_offer_follow()).
+ * @param me The AO.
+ */
+static void gui_update_follow(Gui * const me)
+{
+    kgui_osrel_offer_t const was = (kgui_osrel_offer_t)me->os_offer;
+    kgui_osrel_offer_t const now = kgui_osrel_offer_follow(was, (kgui_osrel_check_t)me->os_check);
+
+    me->os_offer = (uint8_t)now;
+    if ( (KGUI_OSREL_OFFER_DUE == now) && (KGUI_OSREL_OFFER_DUE != was)
+        && (!gui_update_may_rise(me)) )
+    {
+        KLOG_D(TAG, "update: the card waits for the glass");
+    }
+    else if ( (KGUI_OSREL_OFFER_NONE == now) && (KGUI_OSREL_OFFER_NONE != was) )
+    {
+        KLOG_D(TAG, "update: no card this boot");
+    }
+    else
+    {
+        /* Nothing new to say. */
+    }
+}
+
+/**
+ * @brief Wi-Fi has its first address since the boot: the boot's question.
+ *
+ * Once per boot, asked as About asks it (gui_os_ask()); an answer already on
+ * its way for About is the boot's answer too.
+ *
+ * @param me The AO.
+ */
+static void gui_update_boot_ask(Gui * const me)
+{
+    if ( (uint8_t)KGUI_OSREL_OFFER_UNASKED == me->os_offer )
+    {
+        gui_os_ask(me, "boot");
+        gui_update_follow(me);
+    }
+}
+
+/**
+ * @brief The tick's share: the card at boot rises once the glass is free.
+ *
+ * Posted (gui_sheet_open_kind()), and asked again where the open is answered
+ * (gui_sheet_open_taken()): a card refused there leaves the offer due, and a
+ * later tick asks again.
+ *
+ * @param me The AO.
+ */
+static void gui_update_tick(Gui * const me)
+{
+    if ( ((uint8_t)KGUI_OSREL_OFFER_DUE == me->os_offer) && gui_update_may_rise(me) )
+    {
+        gui_sheet_open_kind(me, GUI_SHEET_UPDATE);
+    }
+}
+
+/**
+ * @brief What the card's Update can do now.
+ * @param me The AO.
+ * @return READY, or why it is grey.
+ */
+static kgui_osrel_card_t gui_update_card(Gui const * const me)
+{
+    return kgui_osrel_card(me->wifi_linked, kgui_osrel_power_ok(me->soc, me->vbus));
+}
+
+/**
+ * @brief Write the card at boot: kodeOS, the version it offers, and Update.
+ *
+ * On the system screen's frame, as the pairing card. Update is the yellow
+ * pill while it can install, and grey with a line that says why while there
+ * is no network or not the charge (rule 6). Writing the card spends the
+ * boot's offer: it comes back at the next boot.
+ *
+ * @param me The AO.
+ */
+static void gui_update_fill(Gui * const me)
+{
+    kgui_osrel_card_t const card = gui_update_card(me);
+    GuiActRole              role = GUI_ACT_DISABLED;
+    char                    second[KGUI_OSREL_TEXT_MAX];
+    char                    why[KGUI_OSREL_TEXT_MAX];
+
+    if ( (uint8_t)KGUI_OSREL_OFFER_DUE == me->os_offer )
+    {
+        KLOG_N(TAG, "update: the card rises for kodeOS %s", gui_os_version(me));
+    }
+    me->os_offer     = (uint8_t)kgui_osrel_offer_shown((kgui_osrel_offer_t)me->os_offer);
+    me->sheet_locked = false;
+    kgui_osrel_card_version(gui_os_version(me), second, sizeof(second));
+    kgui_osrel_card_why(card, why, sizeof(why));
+    gui_frame_begin(me);
+    kgui_sys_word(&me->sys, KGUI_OSREL_CARD_WORD);
+    kgui_sys_text(&me->sys, KGUI_SYS_ROOM_TOP, KGUI_SYS_ROOM_END, KGUI_OSREL_CARD_TITLE,
+                  second, why);
+    if ( KGUI_OSREL_CARD_READY == card )
+    {
+        role = GUI_ACT_PRIMARY;
+    }
+    gui_sheet_action(me, KGUI_OSREL_CARD_BUTTON, role);
+}
+
+/**
+ * @brief Update, on the card at boot: About's install of the release it names.
+ *
+ * Grey, it installs nothing and the log says why; the card stays.
+ *
+ * @param me The AO.
+ */
+static void gui_update_act(Gui * const me)
+{
+    kgui_osrel_card_t const card = gui_update_card(me);
+
+    if ( KGUI_OSREL_CARD_OFFLINE == card )
+    {
+        KLOG_N(TAG, "update: no Wi-Fi address; Update waits");
+    }
+    else if ( KGUI_OSREL_CARD_CHARGE == card )
+    {
+        KLOG_N(TAG, "update: %u %% and no cable, under %u %%; Update waits",
+               (unsigned)me->soc, (unsigned)KGUI_OSREL_MIN_PCT);
+    }
+    else
+    {
+        KLOG_N(TAG, "update: Update on the card; updating kodeOS to %s from the "
+                    "update service", gui_os_version(me));
+        gui_os_install(me, GUI_ASK_OS_NET);
+    }
 }
 
 /**
@@ -25594,19 +25848,7 @@ static void gui_about_act(Gui * const me, uint16_t tag)
         KLOG_N(TAG, "updating kodeOS to %s from the update service",
                gui_os_version(me));
     }
-    /* The image goes into the inactive kodeOS slot, and AO_AppMgr ends
-     * every write there with AO_Boot's switch and a restart into it, which
-     * is what the Opening card says. The card rises first, at 0 %, about no
-     * row and wearing the k, and the image is asked for once it has
-     * (gui_write_ask()): AO_AppMgr's reports then fill it. */
-    me->write_what = (uint8_t)KWRITE_OS;
-    me->write_pct  = 0U;
-    me->run_after  = false;
-    me->open_hold  = false;
-    me->sheet_row  = -1;
-    (void)snprintf(me->write_name, sizeof(me->write_name), "kodeOS");
-    gui_write_ask(me, from, "");
-    gui_sheet_open_kind(me, GUI_SHEET_OPENING);
+    gui_os_install(me, from);
 }
 
 /**
@@ -25840,6 +26082,9 @@ static void gui_sheet_open_kind(Gui * const me, GuiSheet kind)
  * glass: any kind that is no system card, over a system card. A click that
  * reached the page under the card (a press that began before the card rose)
  * would otherwise open it on top of the card's question.
+ * The card at boot is asked again here, on the glass of this step and not
+ * of the tick that posted it (gui_update_may_rise()): refused, its offer
+ * stays due for a later tick.
  * A refusal changes nothing and says so at debug level.
  *
  * @param me        The AO.
@@ -25868,6 +26113,11 @@ static bool gui_sheet_open_taken(Gui * const me, QEvt const * const e,
         /* Asked for by the face's yellow pill: over the face, from nowhere. */
         gui_sheet_kind_take(me, kind);
         taken = true;
+    }
+    else if ( (GUI_SHEET_UPDATE == kind) && (!gui_update_may_rise(me)) )
+    {
+        KLOG_D(TAG, "sheet refused: %s, the glass is not free",
+               gui_sheet_kind_name(kind));
     }
     else if ( over_face && !sys_card )
     {
@@ -34180,6 +34430,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             gui_remove_tick(me);
             gui_launch_tick(me);
             gui_syscard_tick(me);
+            gui_update_tick(me);
             gui_off_arc_tick(me);
             gui_evict_tick(me);
             gui_list_tick(me);
@@ -34989,6 +35240,14 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 /* The critical card says the charge. */
                 gui_sheet_refill(me);
             }
+            else if ( (GUI_SHEET_UPDATE == me->sheet)
+                     && (kgui_osrel_power_ok(was_soc, was_vbus)
+                         != kgui_osrel_power_ok(me->soc, me->vbus)) )
+            {
+                /* The card at boot: Update turns yellow or grey with the
+                 * charge and the cable, and its line follows. */
+                gui_sheet_refill(me);
+            }
             else
             {
                 /* Every other sheet, and no sheet at all: the control above was
@@ -35227,7 +35486,8 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 me->scan_own_join = false;
                 me->scan_answered = false;
             }
-            bool const joined = got_ip && (!me->wifi_linked);
+            bool const was_linked = me->wifi_linked;
+            bool const joined     = got_ip && (!was_linked);
 
             me->wifi_linked = ((uint8_t)KDRV_WIFI_GOT_IP == w->state);
             me->wifi_rssi   = w->rssi;
@@ -35258,6 +35518,18 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             }
             /* And the keypad, whose join this may be the answer to. */
             gui_kbd_wifi_state(me, w);
+            /* The boot's question, on the first address since the boot,
+             * whatever is on the glass (gui_update_boot_ask()). */
+            if ( joined )
+            {
+                gui_update_boot_ask(me);
+            }
+            /* The card at boot: Update turns grey or yellow with the link,
+             * and its line follows. */
+            if ( (GUI_SHEET_UPDATE == me->sheet) && (was_linked != me->wifi_linked) )
+            {
+                gui_sheet_refill(me);
+            }
             /* About's update row reads the link, and an address that
              * arrives under that page is the one its question waited for. */
             if ( (GUI_SHEET_ABOUT == me->sheet) && (!same) )
@@ -38116,6 +38388,13 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
             {
                 KLOG_D(TAG, "sheet closed: %s",
                        gui_sheet_kind_name(me->sheet));
+            }
+            if ( GUI_SHEET_UPDATE == me->sheet )
+            {
+                /* Left without Update (which takes the card over in place,
+                 * and passes no exit): BOT, HOME, or a door that took the
+                 * glass. The offer is spent for this boot. */
+                KLOG_N(TAG, "update: the card closed; offered again at the next boot");
             }
             if ( over_face )
             {

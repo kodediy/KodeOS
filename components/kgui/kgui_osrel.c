@@ -388,3 +388,133 @@ void kgui_osrel_row_text(kgui_osrel_row_t row, const char *version, char *out, s
         }
     }
 }
+
+kgui_osrel_offer_t kgui_osrel_offer_follow(kgui_osrel_offer_t offer, kgui_osrel_check_t check)
+{
+    kgui_osrel_offer_t next = offer;
+
+    if ( (KGUI_OSREL_OFFER_UNASKED == offer) || (KGUI_OSREL_OFFER_ASKED == offer) )
+    {
+        if ( KGUI_OSREL_ASKING == check )
+        {
+            next = KGUI_OSREL_OFFER_ASKED;
+        }
+        else if ( KGUI_OSREL_AVAILABLE == check )
+        {
+            next = KGUI_OSREL_OFFER_DUE;
+        }
+        else
+        {
+            /* Nothing newer, no answer, or nobody to ask: once per boot. */
+            next = KGUI_OSREL_OFFER_NONE;
+        }
+    }
+    else if ( (KGUI_OSREL_OFFER_DUE == offer) && (KGUI_OSREL_CURRENT == check) )
+    {
+        /* The release was taken back since. */
+        next = KGUI_OSREL_OFFER_NONE;
+    }
+    else
+    {
+        /* Due stays due on any other answer; shown and none stay until the next boot. */
+    }
+    return next;
+}
+
+kgui_osrel_offer_t kgui_osrel_offer_shown(kgui_osrel_offer_t offer)
+{
+    kgui_osrel_offer_t next = offer;
+
+    if ( KGUI_OSREL_OFFER_DUE == offer )
+    {
+        next = KGUI_OSREL_OFFER_SHOWN;
+    }
+    return next;
+}
+
+const char *kgui_osrel_offer_word(kgui_osrel_offer_t offer)
+{
+    static const char *const WORDS[] = { "unasked", "asked", "due", "shown", "none" };
+    _Static_assert((sizeof(WORDS) / sizeof(WORDS[0])) == ((size_t)KGUI_OSREL_OFFER_NONE + 1U),
+                   "one word per kgui_osrel_offer_t, in the enum's order");
+    const char *word = "?";
+
+    if ( (size_t)offer < (sizeof(WORDS) / sizeof(WORDS[0])) )
+    {
+        word = WORDS[offer];
+    }
+    return word;
+}
+
+bool kgui_osrel_offer_may_rise(kgui_osrel_offer_t offer, const kgui_osrel_glass_t *glass)
+{
+    bool may = false;
+
+    if ( (KGUI_OSREL_OFFER_DUE == offer) && (NULL != glass) )
+    {
+        bool const free_screen = (KGUI_OSREL_SCREEN_FACE == glass->screen)
+                                 || (KGUI_OSREL_SCREEN_APPS == glass->screen)
+                                 || (KGUI_OSREL_SCREEN_SETTINGS == glass->screen);
+        bool const held = glass->card || glass->locked || glass->writing
+                          || glass->resetting || glass->parked || glass->moving
+                          || glass->hand || glass->greeting;
+
+        may = free_screen && (!held);
+    }
+    return may;
+}
+
+kgui_osrel_card_t kgui_osrel_card(bool linked, bool power)
+{
+    kgui_osrel_card_t card = KGUI_OSREL_CARD_READY;
+
+    if ( !linked )
+    {
+        card = KGUI_OSREL_CARD_OFFLINE;
+    }
+    else if ( !power )
+    {
+        card = KGUI_OSREL_CARD_CHARGE;
+    }
+    else
+    {
+        /* It installs. */
+    }
+    return card;
+}
+
+void kgui_osrel_card_version(const char *version, char *out, size_t size)
+{
+    const char *ver = "";
+
+    if ( (NULL == out) || (0U == size) )
+    {
+        return;
+    }
+    if ( NULL != version )
+    {
+        ver = version;
+    }
+    (void)snprintf(out, size, "Version %s", ver);
+}
+
+void kgui_osrel_card_why(kgui_osrel_card_t card, char *out, size_t size)
+{
+    if ( (NULL == out) || (0U == size) )
+    {
+        return;
+    }
+    if ( KGUI_OSREL_CARD_OFFLINE == card )
+    {
+        (void)snprintf(out, size, "Join Wi-Fi to update.");
+    }
+    else if ( KGUI_OSREL_CARD_CHARGE == card )
+    {
+        (void)snprintf(out, size, "Charge to %u %% or\nplug in a cable.",
+                       (unsigned)KGUI_OSREL_MIN_PCT);
+    }
+    else
+    {
+        out[0] = '\0';
+    }
+}
