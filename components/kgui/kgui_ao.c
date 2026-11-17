@@ -1066,7 +1066,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_WHY_REST_BOT    "bottom released"                /**< What it says of Rest asked for with the bottom button on the face. */
 #define GUI_WHY_REST_IDLE   "kody_sleep"                     /**< What it says of Rest asked for by the time without input. */
 #define GUI_WHY_REST_WOKEN  "woken and left alone"           /**< What it says of Rest asked for again by a Lock that was woken and nothing touched. */
-#define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install or Pair new device says when its owner stays busy. */
+#define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install, Pair new device or a radio's request says when its owner stays busy. */
 #define GUI_HINT_CARD_FULL  "SD card is full"                /**< What the glass says when an app's copy does not fit the card. */
 #define GUI_OFF_IDLE        0U                               /**< The face's red arc is not drawn. */
 #define GUI_OFF_FILL        1U                               /**< It fills while the bottom button stays down. */
@@ -2992,6 +2992,8 @@ typedef struct {
      * sheet is up except the uptime, which the sheet reads for itself. */
     uint32_t c5_fw[3];       /**< The C5's major, minor and patch.          */
     bool     c5_fw_known;    /**< The link answered the version RPC.        */
+    bool     c5_state_owed;  /**< AO_Radio had no room for About's question:
+                               *   About's next look asks again.            */
     bool     sd_mounted;     /**< A card is mounted (STORAGE_INFO_SIG).     */
     bool     settings_owed;  /**< gui_settings_ask() waits for kode_up().   */
     bool     ble_name_owed;  /**< The stored Bluetooth name waits for kode_up(). */
@@ -3065,6 +3067,8 @@ typedef struct {
     char     saved_ssid[GUI_WIFI_SAVED_MAX][GUI_SSID_BYTES];
     uint8_t  saved_n;
     bool     saved_fresh;
+    bool     saved_owed;     /**< AO_Radio had no room for the listing: the
+                               *   page's next look asks again.             */
 
     /* THE KEYPAD'S ERRAND (GUI_SHEET_KEYPAD). What it is for is here; what is
      * typed is NOT: that lives in kgui_keyboard.c alone, and is never in this
@@ -3342,6 +3346,7 @@ static void gui_wifi_fill(Gui * const me);
 static bool gui_wifi_scan_due(Gui const * const me, uint32_t now, bool entering);
 static void gui_wifi_act(Gui * const me, uint8_t idx);
 static void gui_wifi_forget(Gui * const me, uint8_t idx);
+static void gui_wifi_list_ask(Gui * const me);
 static void gui_wifi_link_row(Gui * const me);
 static void gui_wifi_link_text(Gui const * const me, char *out, size_t cap);
 static void gui_kbd_begin(Gui * const me, const char *ssid, bool hidden,
@@ -3386,6 +3391,9 @@ static void gui_fade_tick(Gui * const me);
 static lv_obj_t *gui_ble_dot(Gui const * const me);
 static void gui_ble_blink(Gui * const me);
 static void gui_wish_lost(Gui * const me);
+#if CONFIG_KODEOS_RADIO
+static void gui_radio_refused(const char *what);
+#endif
 #if CONFIG_KODEOS_WIFI
 static void gui_wifi_switch(Gui * const me);
 #endif
@@ -5172,6 +5180,22 @@ static void gui_pair_done(Gui * const me, uint8_t outcome)
 }
 
 /**
+ * @brief Ask AO_Radio to refuse the pairing in flight.
+ *
+ * Nothing on the glass waits for the answer. When AO_Radio has no room for the
+ * refusal it is said in the log, and the security manager's own timeout ends
+ * the pairing.
+ */
+static void gui_pair_reject(void)
+{
+    if ( !ble_pair_reject_request() )
+    {
+        KLOG_N(TAG, "pairing: AO_Radio had no room for the refusal; "
+                    "the security manager's timeout ends it");
+    }
+}
+
+/**
  * @brief The glass is taken: refuse the pairing instead of covering the work.
  *
  * A flash write is destructive and a guided test is being scored, and neither
@@ -5186,7 +5210,7 @@ static void gui_pair_refuse(BlePairEvt const * const p)
 {
     if ( (uint8_t)KDRV_BLE_PAIR_SHOW == p->phase )
     {
-        ble_pair_reject_request();
+        gui_pair_reject();
     }
 }
 
@@ -5208,7 +5232,7 @@ static void gui_pair_yield(Gui * const me)
 {
     if ( (GUI_SHEET_PAIRING == me->sheet) && me->pair_live )
     {
-        ble_pair_reject_request();
+        gui_pair_reject();
         me->pair_live = false;
         /* The code goes with the card: it is spent, and the outcome that
          * comes back is not counted on to wipe it. */
@@ -19449,7 +19473,12 @@ static const char *gui_haptic_quiet_word(void)
 static void gui_settings_act(Gui * const me, uint8_t which)
 {
     KLOG_D(TAG, "control %u acted", (unsigned)which);
-    (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    /* A radio's switch buzzes for itself: a click once AO_Radio has it, a
+     * thud when AO_Radio had no room (gui_wifi_switch(), gui_ble_switch()). */
+    if ( ((uint8_t)GUI_SET_WIFI != which) && ((uint8_t)GUI_SET_BLE != which) )
+    {
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    }
     switch ( (GuiSetCtl)which )
     {
 #if CONFIG_KODEOS_WIFI
@@ -22278,7 +22307,9 @@ static void gui_sheet_fill_again_as(Gui * const me, GuiSheet kind)
  *        pressed or tapped, and so clicks.
  *
  * A reading does nothing, and a press on it is not an act. The Screen card
- * is not asked: its rows click after the change (gui_screen_act()).
+ * is not asked: its rows click after the change (gui_screen_act()). Nor are
+ * the radios' switches and Forget all: they click once AO_Radio has the
+ * request and thud when it had no room.
  *
  * @param me  The AO.
  * @param tag The row's tag.
@@ -22291,15 +22322,12 @@ static bool gui_sheet_row_acts(Gui const * const me, uint16_t tag)
     switch ( me->sheet )
     {
         case GUI_SHEET_WIFI: {
-            acts = ((uint16_t)GUI_TAG_WIFI_SWITCH == tag)
-                   || ((uint16_t)GUI_TAG_WIFI_HIDDEN == tag)
+            acts = ((uint16_t)GUI_TAG_WIFI_HIDDEN == tag)
                    || ((uint16_t)GUI_TAG_WIFI_SAVED <= tag);
             break;
         }
         case GUI_SHEET_BLE: {
-            acts = ((uint16_t)GUI_TAG_BLE_SWITCH == tag)
-                   || ((uint16_t)GUI_TAG_BLE_PAIR == tag)
-                   || ((uint16_t)GUI_TAG_BLE_FORGET == tag);
+            acts = ((uint16_t)GUI_TAG_BLE_PAIR == tag);
             break;
         }
         case GUI_SHEET_ABOUT: {
@@ -23278,11 +23306,35 @@ static void gui_wifi_forget(Gui * const me, uint8_t idx)
     {
         return;     /* the listing moved under the row; forget nothing */
     }
-    KLOG_I(TAG, "forgetting '%s'", me->saved_ssid[i]);
-    wifi_forget_request(me->saved_ssid[i]);
-    /* The owner's answer is what redraws the row away: the listing comes
-     * back without it, and its end marker asks for the rebuild. */
-    wifi_list_request();
+    if ( wifi_forget_request(me->saved_ssid[i]) )
+    {
+        KLOG_I(TAG, "forgetting '%s'", me->saved_ssid[i]);
+        /* The owner's answer is what redraws the row away: the listing comes
+         * back without it, and its end marker asks for the rebuild. */
+        gui_wifi_list_ask(me);
+    }
+    else
+    {
+        gui_radio_refused("forgetting a network");
+    }
+}
+
+/**
+ * @brief Ask AO_Radio for the saved networks.
+ *
+ * When AO_Radio has no room nothing answers, so the listing is owed and the
+ * page's next look asks again. That look comes GUI_WIFI_SCAN_RETRY_MS from
+ * now, as after a refused sweep, unless a sweep's end restarts the period.
+ *
+ * @param me The AO.
+ */
+static void gui_wifi_list_ask(Gui * const me)
+{
+    me->saved_owed = !wifi_list_request();
+    if ( me->saved_owed )
+    {
+        me->sheet_ask_ms = khal_time_ms() - (GUI_WIFI_SCAN_MS - GUI_WIFI_SCAN_RETRY_MS);
+    }
 }
 
 /**
@@ -24257,17 +24309,25 @@ static void gui_ble_act(Gui * const me, uint16_t tag)
     }
     else if ( (uint16_t)GUI_TAG_BLE_FORGET == tag )
     {
-        /* With a central attached nothing happens, and the row already says
-         * why. */
-        if ( !me->ble_console )
+        if ( me->ble_console )
         {
+            /* With a central attached nothing happens, and the row already
+             * says why. */
+            (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        }
+        else if ( ble_unpair_request() )
+        {
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
             KLOG_I(TAG, "forgetting %u bonded peer%s",
                    (unsigned)me->ble_bonds,
                    (1U == me->ble_bonds) ? "" : "s");
-            ble_unpair_request();
             /* The count comes back through BLE_STATE_SIG, and that is what
              * takes the row away - the same shape the Wi-Fi forget uses. */
             ble_state_request();
+        }
+        else
+        {
+            gui_radio_refused("forgetting the paired devices");
         }
     }
     else
@@ -24294,6 +24354,24 @@ static lv_obj_t *gui_ble_dot(Gui const * const me)
     return dot;
 }
 
+#if CONFIG_KODEOS_RADIO
+/**
+ * @brief A request the person made that AO_Radio had no room for.
+ *
+ * Nothing was asked, so nothing answers and nothing is painted for it: the
+ * press thuds, the hint line says the radio is busy and the log says what
+ * was refused.
+ *
+ * @param what What was refused, for the log.
+ */
+static void gui_radio_refused(const char *what)
+{
+    KLOG_N(TAG, "%s refused: AO_Radio had no room", what);
+    (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+    kgui_hint(GUI_HINT_ROOM_BUSY);
+}
+#endif
+
 #if CONFIG_KODEOS_WIFI
 /**
  * @brief A switch of a radio pressed: the page says so at once.
@@ -24301,30 +24379,47 @@ static lv_obj_t *gui_ble_dot(Gui const * const me)
  * The person has said what they want and the radio's seconds on the way there
  * are not theirs to wait for. The radio's own announcements
  * only take over once they agree, or after GUI_WISH_LOST_MS (gui_wish_lost()).
+ * A switch AO_Radio had no room for paints nothing (gui_radio_refused()).
  *
  * @param me The AO.
  */
 static void gui_wifi_switch(Gui * const me)
 {
-    bool const on = !me->wifi_on;
+    bool const  on   = !me->wifi_on;
+    const char *what = "Wi-Fi off";
+    uint8_t     wish = (uint8_t)GUI_WISH_OFF;
+    bool        asked;
 
-    me->wifi_on      = on;
-    me->wifi_wish    = (uint8_t)(on ? GUI_WISH_ON : GUI_WISH_OFF);
-    me->wifi_wish_ms = khal_time_ms();
     if ( on )
     {
-        wifi_start_request();
+        what  = "Wi-Fi on";
+        wish  = (uint8_t)GUI_WISH_ON;
+        asked = wifi_start_request();
     }
     else
     {
-        me->scan_out      = false;
-        me->scan_answered = false;
-        wifi_stop_request();
+        asked = wifi_stop_request();
     }
-    gui_cc_paint(me);
-    if ( GUI_SHEET_WIFI == me->sheet )
+    if ( asked )
     {
-        gui_sheet_refill(me);
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+        me->wifi_on      = on;
+        me->wifi_wish    = wish;
+        me->wifi_wish_ms = khal_time_ms();
+        if ( !on )
+        {
+            me->scan_out      = false;
+            me->scan_answered = false;
+        }
+        gui_cc_paint(me);
+        if ( GUI_SHEET_WIFI == me->sheet )
+        {
+            gui_sheet_refill(me);
+        }
+    }
+    else
+    {
+        gui_radio_refused(what);
     }
 }
 #endif
@@ -24333,28 +24428,46 @@ static void gui_wifi_switch(Gui * const me)
 /**
  * @brief The Bluetooth switch pressed: start or stop the radio, and the page says so at once.
  *
+ * A switch AO_Radio had no room for paints nothing (gui_radio_refused()).
+ *
  * @param me The AO.
  */
 static void gui_ble_switch(Gui * const me)
 {
-    bool const on = !me->ble_on;
+    bool const  on   = !me->ble_on;
+    const char *what = "Bluetooth off";
+    uint8_t     wish = (uint8_t)GUI_WISH_OFF;
+    bool        asked;
 
-    me->ble_on      = on;
-    me->ble_wish    = (uint8_t)(on ? GUI_WISH_ON : GUI_WISH_OFF);
-    me->ble_wish_ms = khal_time_ms();
     if ( on )
     {
-        ble_start_request();
+        what  = "Bluetooth on";
+        wish  = (uint8_t)GUI_WISH_ON;
+        asked = ble_start_request();
     }
     else
     {
-        me->adv_on = false;
-        ble_stop_request();
+        asked = ble_stop_request();
     }
-    gui_cc_paint(me);
-    if ( GUI_SHEET_BLE == me->sheet )
+    if ( asked )
     {
-        gui_sheet_refill(me);
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+        me->ble_on      = on;
+        me->ble_wish    = wish;
+        me->ble_wish_ms = khal_time_ms();
+        if ( !on )
+        {
+            me->adv_on = false;
+        }
+        gui_cc_paint(me);
+        if ( GUI_SHEET_BLE == me->sheet )
+        {
+            gui_sheet_refill(me);
+        }
+    }
+    else
+    {
+        gui_radio_refused(what);
     }
 }
 #endif
@@ -25995,8 +26108,9 @@ static void gui_about_act(Gui * const me, uint16_t tag)
  *     seconds: about thirty lines per period, enough to break a screenshot
  *     mid-stream. The GUI asks for the one number it cannot get any other
  *     way and nothing more.
- *   - About, every GUI_SET_RSSI_MS, for the uptime alone - the one row on
- *     that page that is different every time it is looked at.
+ *   - About, every GUI_SET_RSSI_MS, for the uptime - the one row on that
+ *     page that is different every time it is looked at - and for the C5's
+ *     state while AO_Radio has had no room for the page's first question.
  *   - Wi-Fi, every tick, for the countdown on the Kode ecosystem row while the
  *     channel waits: it only compares two integers, and writes the line when
  *     the seconds changed.
@@ -26108,9 +26222,9 @@ static void gui_sheet_tick(Gui * const me)
                         me->sheet_ask_ms = now - (GUI_WIFI_SCAN_MS - GUI_WIFI_SCAN_RETRY_MS);
                     }
                 }
-                if ( entering || !me->wifi_linked )
+                if ( entering || !me->wifi_linked || me->saved_owed )
                 {
-                    wifi_list_request();
+                    gui_wifi_list_ask(me);
                 }
                 break;
             }
@@ -26136,6 +26250,15 @@ static void gui_sheet_tick(Gui * const me)
                     gui_uptime_text(up, sizeof(up));
                     gui_sheet_row_sub(me, idx, up);
                 }
+#if CONFIG_KODEOS_RADIO
+                if ( me->c5_state_owed )
+                {
+                    /* AO_Radio had no room for the question About asked as it
+                     * came up (gui_sheet_ask_first()): asked on each look until
+                     * it has. */
+                    me->c5_state_owed = !radio_state_request();
+                }
+#endif
                 break;
             }
             default: {
@@ -32432,7 +32555,8 @@ static void gui_rails_fill(Gui * const me)
  * @brief Ask AO_Radio to switch the header's 3.3 V the other way.
  *
  * One switch at a time: a press while one waits is refused with a thud. The
- * row says Switching until EXP_POWER_SIG ends it.
+ * row says Switching until EXP_POWER_SIG ends it. A switch AO_Radio had no
+ * room for is refused the same way, and the row stays as it was.
  *
  * @param me The AO.
  * @return true when the switch was asked.
@@ -32450,11 +32574,17 @@ static bool gui_rail_3v3_ask(Gui * const me)
     {
         bool const on = !me->rail_3v3;
 
-        me->rail_3v3_asked = true;
-        exp_power_request(on);
-        KLOG_N(TAG, "header 3.3 V: %s asked", gui_on_off(on));
-        gui_sheet_refill(me);
-        asked = true;
+        if ( exp_power_request(on) )
+        {
+            me->rail_3v3_asked = true;
+            KLOG_N(TAG, "header 3.3 V: %s asked", gui_on_off(on));
+            gui_sheet_refill(me);
+            asked = true;
+        }
+        else
+        {
+            gui_radio_refused("header 3.3 V");
+        }
     }
 #else
     (void)me;
@@ -33730,6 +33860,7 @@ void Gui_ctor(void)
     me->scan_answered   = false;
     me->scan_fresh      = true;
     me->saved_fresh     = true;
+    me->saved_owed      = false;
 #endif
     me->list_answered   = false;
     me->apps_answered   = false;
@@ -34385,7 +34516,9 @@ static void gui_settings_ask(void)
     gui_vol_ask();
     gui_off_after_ask();
 #if CONFIG_KODEOS_WIFI
-    wifi_state_request();
+    /* Refused, it is asked again as Settings comes up and by its tick's signal
+     * request, which WIFI_STATE_SIG answers too. */
+    (void)wifi_state_request();
 #if CONFIG_KODEOS_CHANNEL
     (void)channel_state_request();
 #endif
@@ -38058,7 +38191,8 @@ static QState gui_settings_events(Gui * const me, QEvt const * const e)
                  * meanwhile would take it for its answer. */
                 if ( GUI_SHEET_KEYPAD != me->sheet )
                 {
-                    wifi_rssi_request();
+                    /* Refused, this tick asks again GUI_SET_RSSI_MS later. */
+                    (void)wifi_rssi_request();
                 }
 #endif
             }
@@ -38376,7 +38510,8 @@ static void gui_sheet_ask_first(Gui * const me)
         gui_os_ask(me, "About");
         storage_request(KDRV_MEDIUM_SD, STORAGE_OP_INFO);
 #if CONFIG_KODEOS_RADIO
-        radio_state_request();
+        /* Refused, About's next look asks again (gui_sheet_tick()). */
+        me->c5_state_owed = !radio_state_request();
 #endif
     }
 }
