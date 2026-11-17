@@ -67,7 +67,7 @@ See [Release pipeline](https://docs.kode.diy/internals/release-pipeline).
 
 ## Tests for the tools
 
-The tests live in `tools/tests/`. `test_kble.py`, `test_kmirror.py`, `test_kappdata.py`, `test_kpayload.py`, `test_mkapps.py`, `test_assemble_release.sh`, `test_check_line_blanks.sh`, `test_flash_sh.sh` and `test_validate_release_tag.sh` test the scripts above, and `test_factory.py` tests the station program against its simulator. The station keeps two more tests next to its program, `factory/test_dot_pads.py` and `factory/test_dot_parallel.py`. They need no board. `tools/tool_tests.sh` runs all of them, and CI runs that script.
+The tests live in `tools/tests/`. `test_kble.py`, `test_kmirror.py`, `test_kappdata.py`, `test_kpayload.py`, `test_mkapps.py`, `test_assemble_release.sh`, `test_check_line_blanks.sh`, `test_flash_sh.sh`, `test_write_unchecked.py` and `test_validate_release_tag.sh` test the scripts above, and `test_factory.py` tests the station program against its simulator. The station keeps two more tests next to its program, `factory/test_dot_pads.py` and `factory/test_dot_parallel.py`. They need no board. `tools/tool_tests.sh` runs all of them, and CI runs that script.
 
 This part is for a person who changes the mirror. `kmirror.py` reads the mirror over two connections, the cable and Bluetooth. It has a separate reader and a separate decoder for each connection. `test_kmirror.py` checks that the two decoders give the same result, and it checks the golden header below.
 
