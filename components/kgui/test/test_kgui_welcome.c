@@ -95,6 +95,41 @@ void test_the_clock_wraps(void)
     TEST_ASSERT_TRUE(kgui_welcome_due(&w, true, true, t0 + KGUI_WELCOME_GREET_MS));
 }
 
+/* ---- While the greeting has the face ---- */
+
+void test_the_greeting_holds_the_face_until_its_line_is_through(void)
+{
+    kgui_welcome_t w;
+
+    kgui_welcome_load(&w, "pending");
+    /* Owed: it holds whatever the face shows. */
+    TEST_ASSERT_TRUE(kgui_welcome_greeting(&w, false));
+    TEST_ASSERT_FALSE(kgui_welcome_due(&w, true, true, 0U));
+    TEST_ASSERT_TRUE(kgui_welcome_due(&w, true, true, KGUI_WELCOME_GREET_MS));
+    /* Said, on the very tick it is: its line waits for Kody, then shows. */
+    TEST_ASSERT_TRUE(kgui_welcome_greeting(&w, true));
+    kgui_welcome_notice(&w, true);
+    TEST_ASSERT_TRUE(kgui_welcome_greeting(&w, true));
+    /* Through: the face has no line left. */
+    TEST_ASSERT_FALSE(kgui_welcome_greeting(&w, false));
+    kgui_welcome_notice(&w, false);
+    /* A later line on the face is somebody else's. */
+    TEST_ASSERT_FALSE(kgui_welcome_greeting(&w, true));
+}
+
+void test_no_greeting_holds_nothing(void)
+{
+    kgui_welcome_t w;
+
+    kgui_welcome_load(&w, NULL);
+    TEST_ASSERT_FALSE(kgui_welcome_greeting(&w, false));
+    TEST_ASSERT_FALSE(kgui_welcome_greeting(&w, true));
+    /* A Welcome that died on its way out is not greeted. */
+    kgui_welcome_load(&w, "pending");
+    kgui_welcome_drop(&w);
+    TEST_ASSERT_FALSE(kgui_welcome_greeting(&w, true));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -105,5 +140,7 @@ int main(void)
     RUN_TEST(test_a_card_over_the_face_makes_it_wait);
     RUN_TEST(test_due_once);
     RUN_TEST(test_the_clock_wraps);
+    RUN_TEST(test_the_greeting_holds_the_face_until_its_line_is_through);
+    RUN_TEST(test_no_greeting_holds_nothing);
     return UNITY_END();
 }

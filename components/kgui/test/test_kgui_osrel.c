@@ -19,6 +19,9 @@
     "\"sha256\":\"03a0331d32b75b1d6d76d9beda89a3003e5433f113380f9e499f52e9a289e0a9\"," \
     "\"publishedAt\":\"2026-11-04T11:58:25.326Z\"}"
 
+/** The boot's first question. */
+#define FIRST 1U
+
 void setUp(void)
 {
 }
@@ -234,6 +237,8 @@ void test_row_follows_the_check(void)
     TEST_ASSERT_EQUAL(KGUI_OSREL_ROW_CHECKING, row(true, false, true, true, KGUI_OSREL_ASKING));
     TEST_ASSERT_EQUAL(KGUI_OSREL_ROW_CURRENT, row(true, false, true, true, KGUI_OSREL_CURRENT));
     TEST_ASSERT_EQUAL(KGUI_OSREL_ROW_FAILED, row(true, false, true, true, KGUI_OSREL_FAILED));
+    /* A question AO_Net never took to the service did not check either. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_ROW_FAILED, row(true, false, true, true, KGUI_OSREL_UNREACHED));
     TEST_ASSERT_EQUAL(KGUI_OSREL_ROW_AVAILABLE, row(true, false, true, true, KGUI_OSREL_AVAILABLE));
     TEST_ASSERT_EQUAL(KGUI_OSREL_ROW_CHARGE, row(true, false, true, false, KGUI_OSREL_AVAILABLE));
     /* The battery only matters to an install. */
@@ -302,45 +307,87 @@ void test_offer_follows_the_boot_question(void)
 {
     /* The question goes out, then its answer decides. */
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_ASKED,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_ASKING));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_ASKING, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_ASKED,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_ASKING));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_ASKING, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_AVAILABLE));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_AVAILABLE, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_CURRENT));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_CURRENT, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_FAILED));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_FAILED, FIRST));
     /* An answer already known when the boot's question would go out. */
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_AVAILABLE));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_AVAILABLE, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_CURRENT));
-    /* A question that could not go out, or nobody to ask: once per boot. */
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_CURRENT, FIRST));
+    /* No memory for the answer, an answer that did not read, or nobody to
+     * ask: once per boot. */
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_FAILED));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_FAILED, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_NEVER));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_NEVER, FIRST));
+}
+
+void test_offer_asks_again_when_the_question_did_not_reach_the_service(void)
+{
+    /* AO_Net refused it (its one worker busy with the Kode channel's join),
+     * or did not take it: the boot asks again. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_AGAIN,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_UNREACHED, FIRST));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_AGAIN,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_UNREACHED, FIRST));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_AGAIN,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_AGAIN, KGUI_OSREL_UNREACHED,
+                                              (uint8_t)(KGUI_OSREL_BOOT_ASKS - 1U)));
+    /* Asked again: its answer decides, as the first one's would have. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_ASKED,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_AGAIN, KGUI_OSREL_ASKING, 2U));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_AGAIN, KGUI_OSREL_AVAILABLE, 2U));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_AGAIN, KGUI_OSREL_CURRENT, 2U));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_AGAIN, KGUI_OSREL_FAILED, 2U));
+}
+
+void test_offer_asks_again_a_bounded_number_of_times(void)
+{
+    /* More than one question, and a wait between them. */
+    TEST_ASSERT_TRUE(1U < KGUI_OSREL_BOOT_ASKS);
+    TEST_ASSERT_TRUE(0U < KGUI_OSREL_BOOT_AGAIN_MS);
+    /* The last question spent, the boot gives up: no card. */
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_UNREACHED,
+                                              (uint8_t)KGUI_OSREL_BOOT_ASKS));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_AGAIN, KGUI_OSREL_UNREACHED,
+                                              (uint8_t)KGUI_OSREL_BOOT_ASKS));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_UNREACHED, UINT8_MAX));
 }
 
 void test_offer_due_goes_only_when_the_release_is_taken_back(void)
 {
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_CURRENT));
-    /* A later question that failed, or is on its way, keeps the release kept. */
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_CURRENT, FIRST));
+    /* A later question that failed, did not reach the service, or is on its
+     * way, keeps the release kept. */
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_FAILED));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_FAILED, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_ASKING));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_UNREACHED, FIRST));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
-                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_AVAILABLE));
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_ASKING, FIRST));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_DUE,
+                      kgui_osrel_offer_follow(KGUI_OSREL_OFFER_DUE, KGUI_OSREL_AVAILABLE, FIRST));
 }
 
 void test_offer_rises_once_a_boot(void)
 {
     static const kgui_osrel_check_t CHECKS[] = {
         KGUI_OSREL_NEVER, KGUI_OSREL_ASKING, KGUI_OSREL_CURRENT,
-        KGUI_OSREL_AVAILABLE, KGUI_OSREL_FAILED,
+        KGUI_OSREL_AVAILABLE, KGUI_OSREL_FAILED, KGUI_OSREL_UNREACHED,
     };
 
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_SHOWN, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_DUE));
@@ -349,13 +396,14 @@ void test_offer_rises_once_a_boot(void)
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_NONE));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_ASKED, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_ASKED));
     TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_UNASKED, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_UNASKED));
+    TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_AGAIN, kgui_osrel_offer_shown(KGUI_OSREL_OFFER_AGAIN));
     /* Shown and none stay what they are until the next boot. */
     for ( size_t i = 0U; (sizeof(CHECKS) / sizeof(CHECKS[0])) > i; ++i )
     {
         TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_SHOWN,
-                          kgui_osrel_offer_follow(KGUI_OSREL_OFFER_SHOWN, CHECKS[i]));
+                          kgui_osrel_offer_follow(KGUI_OSREL_OFFER_SHOWN, CHECKS[i], FIRST));
         TEST_ASSERT_EQUAL(KGUI_OSREL_OFFER_NONE,
-                          kgui_osrel_offer_follow(KGUI_OSREL_OFFER_NONE, CHECKS[i]));
+                          kgui_osrel_offer_follow(KGUI_OSREL_OFFER_NONE, CHECKS[i], FIRST));
     }
 }
 
@@ -366,6 +414,7 @@ void test_offer_words(void)
     TEST_ASSERT_EQUAL_STRING("due", kgui_osrel_offer_word(KGUI_OSREL_OFFER_DUE));
     TEST_ASSERT_EQUAL_STRING("shown", kgui_osrel_offer_word(KGUI_OSREL_OFFER_SHOWN));
     TEST_ASSERT_EQUAL_STRING("none", kgui_osrel_offer_word(KGUI_OSREL_OFFER_NONE));
+    TEST_ASSERT_EQUAL_STRING("again", kgui_osrel_offer_word(KGUI_OSREL_OFFER_AGAIN));
     TEST_ASSERT_EQUAL_STRING("?", kgui_osrel_offer_word((kgui_osrel_offer_t)99));
 }
 
@@ -392,8 +441,10 @@ void test_may_rise_on_the_face_apps_or_settings_when_free(void)
 
 void test_may_rise_never_at_rest_or_on_any_other_screen(void)
 {
-    kgui_osrel_glass_t g = glass_free(KGUI_OSREL_SCREEN_REST);
+    kgui_osrel_glass_t g = glass_free(KGUI_OSREL_SCREEN_FACE);
 
+    /* The face at Rest is still the face's screen state: Rest is its look. */
+    g.rest = true;
     TEST_ASSERT_FALSE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g));
     /* The boot's wait, the way back from an app, a guided test, the station's test, asleep. */
     g = glass_free(KGUI_OSREL_SCREEN_OTHER);
@@ -405,7 +456,7 @@ void test_may_rise_only_while_the_offer_is_due(void)
 {
     static const kgui_osrel_offer_t NOT_DUE[] = {
         KGUI_OSREL_OFFER_UNASKED, KGUI_OSREL_OFFER_ASKED, KGUI_OSREL_OFFER_SHOWN,
-        KGUI_OSREL_OFFER_NONE,
+        KGUI_OSREL_OFFER_NONE, KGUI_OSREL_OFFER_AGAIN,
     };
     kgui_osrel_glass_t const g = glass_free(KGUI_OSREL_SCREEN_FACE);
 
@@ -432,8 +483,14 @@ void test_may_rise_waits_for_each_thing_that_holds_the_glass(void)
         g.locked = true;
         TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "locked");
         g = glass_free(SCREENS[i]);
+        g.prompt = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "prompt");
+        g = glass_free(SCREENS[i]);
         g.writing = true;
         TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "writing");
+        g = glass_free(SCREENS[i]);
+        g.deciding = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "deciding");
         g = glass_free(SCREENS[i]);
         g.resetting = true;
         TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "resetting");
@@ -449,6 +506,9 @@ void test_may_rise_waits_for_each_thing_that_holds_the_glass(void)
         g = glass_free(SCREENS[i]);
         g.greeting = true;
         TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "greeting");
+        g = glass_free(SCREENS[i]);
+        g.rest = true;
+        TEST_ASSERT_FALSE_MESSAGE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, &g), "rest");
     }
 }
 
@@ -516,6 +576,8 @@ int main(void)
     RUN_TEST(test_row_words);
     RUN_TEST(test_row_words_fit_the_longest_version_and_a_short_buffer);
     RUN_TEST(test_offer_follows_the_boot_question);
+    RUN_TEST(test_offer_asks_again_when_the_question_did_not_reach_the_service);
+    RUN_TEST(test_offer_asks_again_a_bounded_number_of_times);
     RUN_TEST(test_offer_due_goes_only_when_the_release_is_taken_back);
     RUN_TEST(test_offer_rises_once_a_boot);
     RUN_TEST(test_offer_words);

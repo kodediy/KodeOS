@@ -25,6 +25,7 @@ typedef struct {
     bool     pending;  /**< The key said `pending`, and the greeting has not come. */
     bool     armed;    /**< Kody has been put in his scene: the clock runs. */
     uint32_t woke_ms;  /**< When he was. */
+    bool     said;     /**< The greeting went to the face this boot, and its line is not through. */
 } kgui_welcome_t;
 
 /**
@@ -61,6 +62,26 @@ void kgui_welcome_drop(kgui_welcome_t *w);
  *         face is bare; the mark is spent then.
  */
 bool kgui_welcome_due(kgui_welcome_t *w, bool woke, bool bare, uint32_t now_ms);
+
+/**
+ * @brief The face's notices, read on every tick: the greeting's line is
+ *        through once no notice waits for the face or shows on it.
+ *
+ * @param w      The mark.
+ * @param notice A notice waits for the face or is on it.
+ */
+void kgui_welcome_notice(kgui_welcome_t *w, bool notice);
+
+/**
+ * @brief Whether the greeting still has the face: owed, or said and its line
+ *        not through.
+ *
+ * @param w      The mark.
+ * @param notice A notice waits for the face or is on it.
+ * @return true while the greeting is owed, and from the tick it is said
+ *         until no notice is left on the face.
+ */
+bool kgui_welcome_greeting(const kgui_welcome_t *w, bool notice);
 
 /**
  * @brief Whether the console may write a word in the key.

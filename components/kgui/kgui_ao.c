@@ -117,6 +117,7 @@ LV_IMAGE_DECLARE(kgui_glyph_power_46);
 enum {
     GUI_TICK_SIG = MAX_SIG,     /**< The render-pass QTimeEvt. */
     GUI_KEEP_RETRY_SIG,         /**< The card's copy was refused: ask again (gui_keep_read_next()). */
+    GUI_OS_AGAIN_SIG,           /**< The boot's question never reached the update service: ask again (gui_update_again()). */
     GUI_SETTINGS_TOGGLE_SIG,    /**< The settings door. The face and Apps open
                                  *   the settings screen over themselves on it,
                                  *   as a curtain,
@@ -3019,6 +3020,8 @@ typedef struct {
                                *   question, and when there was no room.    */
     uint8_t  os_check;       /**< kgui_osrel_check_t: where the check stands. */
     uint8_t  os_offer;       /**< kgui_osrel_offer_t: where the boot's card stands. */
+    uint8_t  os_asks;        /**< How many times the boot's question has gone out. */
+    QTimeEvt os_again;       /**< The boot's question goes out again (KGUI_OSREL_BOOT_AGAIN_MS). */
     uint8_t  write_what;     /**< kwrite_t: what the write on the glass is
                                *   and how it ends - the Opening sheet's
                                *   title, name and sentence, and the
@@ -3400,7 +3403,11 @@ static kgui_osrel_row_t gui_os_row(Gui const * const me);
 static const char *gui_os_version(Gui const * const me);
 static void gui_os_install(Gui * const me, GuiAsk from);
 static void gui_update_follow(Gui * const me);
+static void gui_update_question(Gui * const me);
+#if CONFIG_KODEOS_WIFI
 static void gui_update_boot_ask(Gui * const me);
+#endif
+static void gui_update_again(Gui * const me);
 static void gui_update_tick(Gui * const me);
 static bool gui_update_may_rise(Gui const * const me);
 static void gui_update_fill(Gui * const me);
@@ -4086,8 +4093,9 @@ static void gui_dump(Gui * const me)
      * being drawn there. */
     KLOG_N(TAG, "  empty: %s", gui_empty_state(me));
     /* The card at boot: whether it waits, rose, or has nothing to offer. */
-    KLOG_N(TAG, "  update: offer %s",
-           kgui_osrel_offer_word((kgui_osrel_offer_t)me->os_offer));
+    KLOG_N(TAG, "  update: offer %s, asked %u of %u",
+           kgui_osrel_offer_word((kgui_osrel_offer_t)me->os_offer),
+           (unsigned)me->os_asks, (unsigned)KGUI_OSREL_BOOT_ASKS);
 
     /* The sheet, when there is one. s_gui_state above already says "sheet", so
      * this line is the detail behind it: which one, how many rows it built
@@ -14563,13 +14571,20 @@ static void gui_syscard_arrive(Gui * const me, GuiSheet was)
  * report, a failure, a pairing, a question's answer. The launch scene that
  * flew out of the card is over, or its end would ask for a run the takeover
  * has already put another name on. A system card arriving then arrives as
- * any other does.
+ * any other does. The card at boot taken by anything but its own write's
+ * card (Update) is gone for this boot, and the log says so.
  *
  * @param me  The AO, with the new kind in me->sheet and the card filled.
  * @param was The kind that was up before.
  */
 static void gui_sheet_taken_over(Gui * const me, GuiSheet was)
 {
+    if ( (GUI_SHEET_UPDATE == was) && (GUI_SHEET_UPDATE != me->sheet)
+        && (GUI_SHEET_OPENING != me->sheet) )
+    {
+        KLOG_N(TAG, "update: the card gave its place to %s; offered again at the next boot",
+               gui_sheet_kind_name(me->sheet));
+    }
     gui_launch_end();
     gui_syscard_arrive(me, was);
 }
@@ -14735,8 +14750,9 @@ static void gui_battery_fill(Gui * const me)
  *        critical.
  *
  * The card is not raised over a locked card (a write is running), over
- * another system card (it would take the pairing's code or a question away),
- * while a guided test has the glass, or while the board rests with the glass
+ * another system card (it would take the pairing's code or a question away)
+ * but the card at boot, whose place it takes, while a guided test has the
+ * glass, or while the board rests with the glass
  * parked; the reading or the wake that finds the way clear raises it, because
  * the entry is only counted once it has risen. Nor is it raised while the
  * cable is in: it asks for the cable.
@@ -14754,7 +14770,7 @@ static void gui_battery_check(Gui * const me, bool critical)
         parked = me->lp_parked;
 #endif
         if ( kgui_crit_waits(me->sheet_locked, gui_sheet_is_system(me->sheet),
-                             gui_in_guided_test(), parked) )
+                             GUI_SHEET_UPDATE == me->sheet, gui_in_guided_test(), parked) )
         {
             KLOG_D(TAG, "battery: critical at %u %%; the glass is taken, the card waits",
                    (unsigned)me->soc);
@@ -17828,7 +17844,8 @@ static void gui_drag_touch(Gui * const me, TouchEvt const * const t,
  * sheet to open each want the screen or the card as it will be, and none of
  * them waits for a spring. A release is not among them: it belongs to a press
  * the motion disarmed, and a hold's release must not cut the curtain home
- * started short.
+ * started short. Nor is the card at boot, which nobody asked for: it waits
+ * for the motion to end (gui_update_glass()), and the state refuses it.
  *
  * @param e The event.
  * @return Its name, or NULL when the event is not one of these.
@@ -17857,7 +17874,10 @@ static const char *gui_input_event(QEvt const * const e)
             break;
         }
         case GUI_SHEET_OPEN_SIG: {
-            word = "a sheet";
+            if ( (uint8_t)GUI_SHEET_UPDATE != Q_EVT_CAST(SheetOpenEvt)->kind )
+            {
+                word = "a sheet";
+            }
             break;
         }
         default: {
@@ -18383,10 +18403,12 @@ static void gui_idle_rearm(Gui * const me)
  *
  * Silence is not inactivity, so the count is held - restarted on every pass
  * - while a sheet is up (no sheet closes by itself, and closing one starts
- * the count afresh), while a finger rests on the glass or a button is held
- * down (neither publishes anything while it lasts: a pad button held at the
- * end of the list has stopped repeating, and a side button held past its
- * hold is armed no more, and both are still a hand on the board - btn_held),
+ * the count afresh; the card at boot is the exception, and the door takes it
+ * down, gui_sheet_events()), while a finger rests on the glass or a button
+ * is held down (neither publishes anything while it lasts: a pad button held
+ * at the end of the list has stopped repeating, and a side button held past
+ * its hold is armed no more, and both are still a hand on the board -
+ * btn_held),
  * while a write runs and while a curtain is still moving. When it
  * runs out it POSTS the door and restarts, so it asks once: the tick is the
  * parent's, and a child must hand it up rather than transition out of it.
@@ -18397,9 +18419,9 @@ static void gui_idle_rearm(Gui * const me)
  */
 static void gui_idle_check(Gui * const me)
 {
-    if ( (GUI_SHEET_NONE != me->sheet) || me->touch_pressed
-        || (0U != me->btn_held) || me->writing || me->curtain_up
-        || gui_list_moving(me) )
+    if ( ((GUI_SHEET_NONE != me->sheet) && (GUI_SHEET_UPDATE != me->sheet))
+        || me->touch_pressed || (0U != me->btn_held) || me->writing
+        || me->curtain_up || gui_list_moving(me) )
     {
         gui_idle_rearm(me);
     }
@@ -20040,7 +20062,11 @@ static lv_obj_t *gui_sheet_action_btn(Gui const * const me)
  */
 static void gui_sheet_action_act(Gui * const me)
 {
-    (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    if ( GUI_SHEET_UPDATE != me->sheet )
+    {
+        /* The card at boot buzzes by what its button did (gui_update_act()). */
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    }
     switch ( me->sheet )
     {
         case GUI_SHEET_FAILURE: {
@@ -24684,12 +24710,15 @@ static const char *gui_os_version(Gui const * const me)
 /**
  * @brief A check ended with nothing to show.
  *
- * @param me  The AO.
- * @param why What went wrong, for the log.
+ * @param me    The AO.
+ * @param check KGUI_OSREL_UNREACHED when the question never reached the
+ *              service (AO_Net refused it or did not take it), which the
+ *              boot asks again; KGUI_OSREL_FAILED for anything else.
+ * @param why   What went wrong, for the log.
  */
-static void gui_os_failed(Gui * const me, const char *why)
+static void gui_os_failed(Gui * const me, kgui_osrel_check_t check, const char *why)
 {
-    me->os_check = (uint8_t)KGUI_OSREL_FAILED;
+    me->os_check = (uint8_t)check;
     KLOG_I(TAG, "update: not checked (%s)", why);
 }
 
@@ -24697,10 +24726,10 @@ static void gui_os_failed(Gui * const me, const char *why)
  * @brief Ask the update service which kodeOS is the latest.
  *
  * Asked once a boot when Wi-Fi gets its first address (the card at boot,
- * gui_update_boot_ask()), when About opens, when Wi-Fi gets its address
- * under that page, and on the top button on its row. Nothing is asked with
- * no service, with no address, or while a question is out. The answer comes
- * back as
+ * gui_update_question()), and again while that question never reaches the
+ * service; when About opens, when Wi-Fi gets its address under that page,
+ * and on the top button on its row. Nothing is asked with no service, with
+ * no address, or while a question is out. The answer comes back as
  * NET_HTTP_RSP_SIG (gui_os_answer()), into a block of PSRAM taken at the
  * first question and lent to AO_Net until then.
  *
@@ -24727,7 +24756,7 @@ static void gui_os_ask(Gui * const me, const char *why)
     }
     if ( NULL == me->os )
     {
-        gui_os_failed(me, "no memory for the answer");
+        gui_os_failed(me, KGUI_OSREL_FAILED, "no memory for the answer");
         return;
     }
     if ( net_http_ask(&me->super, false, GUI_OS_SERVICE, NULL, 0U, NULL,
@@ -24738,7 +24767,7 @@ static void gui_os_ask(Gui * const me, const char *why)
     }
     else
     {
-        gui_os_failed(me, "AO_Net did not take the question");
+        gui_os_failed(me, KGUI_OSREL_UNREACHED, "AO_Net did not take the question");
     }
 #else
     /* Unreached: without AO_Net gui_os_service() is false. */
@@ -24779,7 +24808,7 @@ static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r)
         }
         if ( !kgui_osrel_parse(me->os->answer, r->result.kept, gui_os_plain(), &rel) )
         {
-            gui_os_failed(me, "the service's answer did not read");
+            gui_os_failed(me, KGUI_OSREL_FAILED, "the service's answer did not read");
         }
         else if ( kgui_osrel_newer(rel.version, running) )
         {
@@ -24800,11 +24829,20 @@ static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r)
         me->os_check = (uint8_t)KGUI_OSREL_CURRENT;
         KLOG_I(TAG, "update: the service names no release");
     }
+    else if ( !reached )
+    {
+        /* AO_Net answered for the service: its one worker had another job
+         * (the Kode channel joins on the same first address), the address
+         * went, or the guard ran out. */
+        KLOG_I(TAG, "update: the service gave status %u, HTTP %u",
+               (unsigned)r->rc, (unsigned)r->result.status);
+        gui_os_failed(me, KGUI_OSREL_UNREACHED, "the question did not reach the service");
+    }
     else
     {
         KLOG_I(TAG, "update: the service gave status %u, HTTP %u",
                (unsigned)r->rc, (unsigned)r->result.status);
-        gui_os_failed(me, "no answer from the service");
+        gui_os_failed(me, KGUI_OSREL_FAILED, "no answer from the service");
     }
     gui_update_follow(me);
     if ( GUI_SHEET_ABOUT == me->sheet )
@@ -24859,13 +24897,25 @@ static void gui_os_install(Gui * const me, GuiAsk from)
 /* ---- The card at boot ------------------------------------------------------------ */
 
 /**
+ * @brief Whether a notice line is owed to the face: waiting for it, waiting
+ *        for Kody's reaction to begin, or on its way on and off the glass.
+ * @param me The AO.
+ * @return true while the line is not through.
+ */
+static bool gui_face_notice_owed(Gui const * const me)
+{
+    return ((uint8_t)GUI_VISIT_NONE != me->visit_kind)
+           || ((uint8_t)GUI_VISIT_NONE != me->pill_wait)
+           || me->pill_due || me->pill_up;
+}
+
+/**
  * @brief What holds the glass now, as the card's rule reads it
  *        (kgui_osrel_offer_may_rise()).
  *
- * The screen is read from the state's name, as gui_in_guided_test() reads
- * it: the face awake, Rest, Apps and the settings screen by their own names;
- * a card over any of them, a test, the way back from an app and the board
- * asleep go by others.
+ * The screen is the state the glass is in (me->screen): the face, awake or
+ * at Rest, Apps and the settings screen; a test, the way back from an app
+ * and the board asleep leave it NULL. A card over any of them is a card.
  *
  * @param me The AO.
  * @return The glass.
@@ -24875,19 +24925,15 @@ static kgui_osrel_glass_t gui_update_glass(Gui const * const me)
     kgui_osrel_glass_t g;
 
     g.screen = KGUI_OSREL_SCREEN_OTHER;
-    if ( strcmp(s_gui_state, "face") == 0 )
+    if ( Q_STATE_CAST(&Gui_face) == me->screen )
     {
         g.screen = KGUI_OSREL_SCREEN_FACE;
     }
-    else if ( strcmp(s_gui_state, "rest") == 0 )
-    {
-        g.screen = KGUI_OSREL_SCREEN_REST;
-    }
-    else if ( strcmp(s_gui_state, "browsing") == 0 )
+    else if ( Q_STATE_CAST(&Gui_browsing) == me->screen )
     {
         g.screen = KGUI_OSREL_SCREEN_APPS;
     }
-    else if ( strcmp(s_gui_state, "settings") == 0 )
+    else if ( Q_STATE_CAST(&Gui_settings) == me->screen )
     {
         g.screen = KGUI_OSREL_SCREEN_SETTINGS;
     }
@@ -24895,9 +24941,12 @@ static kgui_osrel_glass_t gui_update_glass(Gui const * const me)
     {
         /* Any other state holds the glass. */
     }
+    g.rest      = me->at_rest;
     g.card      = gui_card_on_glass(me);
+    g.prompt    = me->prompt_open;
     g.locked    = me->sheet_locked;
     g.writing   = me->writing;
+    g.deciding  = gui_install_deciding(me);
     g.resetting = me->rs_busy;
 #if CONFIG_KODE_LOWPOWER
     g.parked    = me->lp_parked;
@@ -24906,7 +24955,7 @@ static kgui_osrel_glass_t gui_update_glass(Gui const * const me)
 #endif
     g.moving    = me->curtain_up || me->page_grow || me->level_grow || gui_list_moving(me);
     g.hand      = me->touch_pressed || (0U != me->btn_held);
-    g.greeting  = kgui_welcome_pending(&me->welcome);
+    g.greeting  = kgui_welcome_greeting(&me->welcome, gui_face_notice_owed(me));
     return g;
 }
 
@@ -24924,18 +24973,37 @@ static bool gui_update_may_rise(Gui const * const me)
 
 /**
  * @brief The check moved: the boot's offer follows it (kgui_osrel_offer_follow()).
+ *
+ * An offer that turns to AGAIN arms the one-shot that asks again
+ * (gui_update_again()), and the log says so once for that wait.
+ *
  * @param me The AO.
  */
 static void gui_update_follow(Gui * const me)
 {
     kgui_osrel_offer_t const was = (kgui_osrel_offer_t)me->os_offer;
-    kgui_osrel_offer_t const now = kgui_osrel_offer_follow(was, (kgui_osrel_check_t)me->os_check);
+    kgui_osrel_offer_t const now = kgui_osrel_offer_follow(was, (kgui_osrel_check_t)me->os_check,
+                                                           me->os_asks);
 
     me->os_offer = (uint8_t)now;
     if ( (KGUI_OSREL_OFFER_DUE == now) && (KGUI_OSREL_OFFER_DUE != was)
         && (!gui_update_may_rise(me)) )
     {
         KLOG_D(TAG, "update: the card waits for the glass");
+    }
+    else if ( (KGUI_OSREL_OFFER_AGAIN == now) && (KGUI_OSREL_OFFER_AGAIN != was) )
+    {
+        (void)QTimeEvt_disarm(&me->os_again);
+        QTimeEvt_armX(&me->os_again, KQP_TICKS_PER_MS(KGUI_OSREL_BOOT_AGAIN_MS), 0U);
+        KLOG_I(TAG, "update: the question did not reach the service; asked again in %u s "
+                    "(%u of %u)", (unsigned)KGUI_OSREL_BOOT_AGAIN_MS / GUI_MS_PER_S,
+               (unsigned)me->os_asks, (unsigned)KGUI_OSREL_BOOT_ASKS);
+    }
+    else if ( (KGUI_OSREL_OFFER_NONE == now) && (KGUI_OSREL_OFFER_NONE != was)
+             && ((uint8_t)KGUI_OSREL_UNREACHED == me->os_check) )
+    {
+        KLOG_I(TAG, "update: the question did not reach the service in %u tries; "
+                    "no card this boot", (unsigned)me->os_asks);
     }
     else if ( (KGUI_OSREL_OFFER_NONE == now) && (KGUI_OSREL_OFFER_NONE != was) )
     {
@@ -24948,19 +25016,68 @@ static void gui_update_follow(Gui * const me)
 }
 
 /**
- * @brief Wi-Fi has its first address since the boot: the boot's question.
+ * @brief The boot's question goes out, the first time or again.
  *
- * Once per boot, asked as About asks it (gui_os_ask()); an answer already on
- * its way for About is the boot's answer too.
+ * Asked as About asks it (gui_os_ask()), and counted whether AO_Net takes it
+ * or not, so that it goes out KGUI_OSREL_BOOT_ASKS times at most; an answer
+ * already on its way for About is the boot's answer too.
+ *
+ * @param me The AO.
+ */
+static void gui_update_question(Gui * const me)
+{
+    if ( KGUI_OSREL_BOOT_ASKS > me->os_asks )
+    {
+        ++me->os_asks;
+    }
+    me->os_offer = (uint8_t)KGUI_OSREL_OFFER_UNASKED;
+    gui_os_ask(me, "boot");
+    gui_update_follow(me);
+}
+
+#if CONFIG_KODEOS_WIFI
+/**
+ * @brief Wi-Fi has an address: the boot's question, while the boot has one.
+ *
+ * The first address since the boot asks it; a later one asks it only while
+ * the question is waiting to go out again, which it then does at once.
  *
  * @param me The AO.
  */
 static void gui_update_boot_ask(Gui * const me)
 {
-    if ( (uint8_t)KGUI_OSREL_OFFER_UNASKED == me->os_offer )
+    if ( ((uint8_t)KGUI_OSREL_OFFER_UNASKED == me->os_offer)
+        || ((uint8_t)KGUI_OSREL_OFFER_AGAIN == me->os_offer) )
     {
-        gui_os_ask(me, "boot");
-        gui_update_follow(me);
+        gui_update_question(me);
+    }
+}
+#endif
+
+/**
+ * @brief The wait after a question that never reached the service is over
+ *        (GUI_OS_AGAIN_SIG): it goes out again.
+ *
+ * An offer that moved on meanwhile (an answer About asked for, an address
+ * that asked at once) leaves nothing to do. With no address now, the
+ * question waits for the next one (gui_update_boot_ask()) and spends no try.
+ *
+ * @param me The AO.
+ */
+static void gui_update_again(Gui * const me)
+{
+    if ( (uint8_t)KGUI_OSREL_OFFER_AGAIN != me->os_offer )
+    {
+        /* Answered meanwhile, or asked already. */
+    }
+    else if ( me->wifi_linked )
+    {
+        gui_update_question(me);
+    }
+    else
+    {
+        me->os_offer = (uint8_t)KGUI_OSREL_OFFER_UNASKED;
+        KLOG_D(TAG, "update: no address; the question waits for the next one");
     }
 }
 
@@ -24975,6 +25092,8 @@ static void gui_update_boot_ask(Gui * const me)
  */
 static void gui_update_tick(Gui * const me)
 {
+    /* The greeting holds the card until its line is through. */
+    kgui_welcome_notice(&me->welcome, gui_face_notice_owed(me));
     if ( ((uint8_t)KGUI_OSREL_OFFER_DUE == me->os_offer) && gui_update_may_rise(me) )
     {
         gui_sheet_open_kind(me, GUI_SHEET_UPDATE);
@@ -25011,6 +25130,9 @@ static void gui_update_fill(Gui * const me)
     if ( (uint8_t)KGUI_OSREL_OFFER_DUE == me->os_offer )
     {
         KLOG_N(TAG, "update: the card rises for kodeOS %s", gui_os_version(me));
+        /* Rest and the auto-lock count under this card: from its rise, the
+         * whole of their time. */
+        gui_idle_rearm(me);
     }
     me->os_offer     = (uint8_t)kgui_osrel_offer_shown((kgui_osrel_offer_t)me->os_offer);
     me->sheet_locked = false;
@@ -25030,7 +25152,8 @@ static void gui_update_fill(Gui * const me)
 /**
  * @brief Update, on the card at boot: About's install of the release it names.
  *
- * Grey, it installs nothing and the log says why; the card stays.
+ * Grey, it installs nothing, buzzes as a refusal does and the log says why;
+ * the card stays. Yellow, it clicks as every answer button does.
  *
  * @param me The AO.
  */
@@ -25040,15 +25163,18 @@ static void gui_update_act(Gui * const me)
 
     if ( KGUI_OSREL_CARD_OFFLINE == card )
     {
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
         KLOG_N(TAG, "update: no Wi-Fi address; Update waits");
     }
     else if ( KGUI_OSREL_CARD_CHARGE == card )
     {
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
         KLOG_N(TAG, "update: %u %% and no cable, under %u %%; Update waits",
                (unsigned)me->soc, (unsigned)KGUI_OSREL_MIN_PCT);
     }
     else
     {
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
         KLOG_N(TAG, "update: Update on the card; updating kodeOS to %s from the "
                     "update service", gui_os_version(me));
         gui_os_install(me, GUI_ASK_OS_NET);
@@ -26083,8 +26209,9 @@ static void gui_sheet_open_kind(Gui * const me, GuiSheet kind)
  * reached the page under the card (a press that began before the card rose)
  * would otherwise open it on top of the card's question.
  * The card at boot is asked again here, on the glass of this step and not
- * of the tick that posted it (gui_update_may_rise()): refused, its offer
- * stays due for a later tick.
+ * of the tick that posted it (gui_update_may_rise()), before the face's
+ * pill is read, and it never takes the pill's ask: refused, its offer stays
+ * due for a later tick.
  * A refusal changes nothing and says so at debug level.
  *
  * @param me        The AO.
@@ -26101,23 +26228,29 @@ static bool gui_sheet_open_taken(Gui * const me, QEvt const * const e,
     GuiListPage const * const  list     = gui_sheet_list_page(me, kind);
     bool const                 sys_card = gui_sheet_over_face(kind);
     bool                       taken    = false;
-    bool const                 prompted = me->prompt_open;
+    bool                       prompted = false;
 
-    me->prompt_open = false;
+    if ( GUI_SHEET_UPDATE != kind )
+    {
+        /* The card at boot answers no pill: the page the pill asked for is
+         * still on its way, and the card waits for it (gui_update_glass()). */
+        prompted        = me->prompt_open;
+        me->prompt_open = false;
+    }
     if ( GUI_SHEET_NONE == kind )
     {
         /* Nothing was asked for. */
+    }
+    else if ( (GUI_SHEET_UPDATE == kind) && (!gui_update_may_rise(me)) )
+    {
+        KLOG_D(TAG, "sheet refused: %s, the glass is not free",
+               gui_sheet_kind_name(kind));
     }
     else if ( prompted )
     {
         /* Asked for by the face's yellow pill: over the face, from nowhere. */
         gui_sheet_kind_take(me, kind);
         taken = true;
-    }
-    else if ( (GUI_SHEET_UPDATE == kind) && (!gui_update_may_rise(me)) )
-    {
-        KLOG_D(TAG, "sheet refused: %s, the glass is not free",
-               gui_sheet_kind_name(kind));
     }
     else if ( over_face && !sys_card )
     {
@@ -28628,7 +28761,8 @@ static void gui_rest_knock(Gui * const me, bool on)
  * The count is the launcher's and the settings screen's (gui_idle_check()),
  * started when the Lock is entered and again on every button, hold and touch
  * on the face (gui_awake_input()), and held the same way: while a finger
- * rests on the glass or a button is held down, while a card is up or a write
+ * rests on the glass or a button is held down, while a card is up (but the
+ * card at boot, which the door takes down, gui_sheet_events()) or a write
  * runs or a curtain moves, and while a look waits or plays, which is Kody's
  * answer to an input. While a cable keeps the Lock awake (`usb_awake` with
  * VBUS present) nothing is asked and the count is left as it stands, so the
@@ -28651,8 +28785,8 @@ static void gui_rest_check(Gui * const me)
         look = kui_kody_is_reacting(me->face_kody);
     }
     if ( me->touch_pressed || (0U != me->btn_held)
-        || (GUI_SHEET_NONE != me->sheet) || me->curtain_up || me->writing
-        || look )
+        || ((GUI_SHEET_NONE != me->sheet) && (GUI_SHEET_UPDATE != me->sheet))
+        || me->curtain_up || me->writing || look )
     {
         gui_idle_rearm(me);
     }
@@ -33558,6 +33692,7 @@ void Gui_ctor(void)
     QActive_ctor(&me->super, Q_STATE_CAST(&Gui_initial));
     QTimeEvt_ctorX(&me->tick, &me->super, (enum_t)GUI_TICK_SIG, 0U);
     QTimeEvt_ctorX(&me->keep_retry, &me->super, (enum_t)GUI_KEEP_RETRY_SIG, 0U);
+    QTimeEvt_ctorX(&me->os_again, &me->super, (enum_t)GUI_OS_AGAIN_SIG, 0U);
     me->sel_idx         = -1;
     me->sel_name[0]     = '\0';
     me->level           = (uint8_t)GUI_LEVEL_ROOT;
@@ -35439,6 +35574,11 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
         case NET_HTTP_RSP_SIG: {
             /* The one HTTP question this AO asks: the update service's. */
             gui_os_answer(me, Q_EVT_CAST(NetHttpRspEvt));
+            status = Q_HANDLED();
+            break;
+        }
+        case GUI_OS_AGAIN_SIG: {
+            gui_update_again(me);
             status = Q_HANDLED();
             break;
         }
@@ -38628,8 +38768,22 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
              * here - a sheet answers its own release in gui_sheet_navigate()
              * - so the doors are simply the host's again once the card has
              * gone. Rest is one: the Lock does not go dim under a
-             * card. */
-            status = Q_HANDLED();
+             * card.
+             * The card at boot is the one exception: it rises with nobody
+             * asking, often with nobody there, so the auto-lock and Rest
+             * count under it (gui_idle_check(), gui_rest_check()) and their
+             * door takes it down with the glass, as a guided test does. */
+            bool const lock = ((QSignal)GUI_FACE_SIG == e->sig) && (!over_face);
+            bool const rest = ((QSignal)GUI_REST_SIG == e->sig) && over_face;
+
+            if ( (GUI_SHEET_UPDATE == me->sheet) && (lock || rest) )
+            {
+                status = gui_sheet_hand_up(me, e, home);
+            }
+            else
+            {
+                status = Q_HANDLED();
+            }
             break;
         }
         case BUTTON_EVT_SIG: {

@@ -43,22 +43,33 @@ void test_crit_that_waited_is_still_due(void)
     kgui_crit_t c = latch_with_a_cell();
 
     TEST_ASSERT_TRUE(kgui_crit_due(&c, true, false, 10U));
-    TEST_ASSERT_TRUE(kgui_crit_waits(false, false, false, true));
+    TEST_ASSERT_TRUE(kgui_crit_waits(false, false, false, false, true));
     TEST_ASSERT_TRUE(kgui_crit_due(&c, true, false, 8U));
     TEST_ASSERT_TRUE(kgui_crit_due(&c, true, false, 6U));
 }
 
 void test_crit_waits_for_each_thing_that_has_the_glass(void)
 {
-    TEST_ASSERT_TRUE(kgui_crit_waits(true, false, false, false));
-    TEST_ASSERT_TRUE(kgui_crit_waits(false, true, false, false));
-    TEST_ASSERT_TRUE(kgui_crit_waits(false, false, true, false));
-    TEST_ASSERT_TRUE(kgui_crit_waits(false, false, false, true));
+    TEST_ASSERT_TRUE(kgui_crit_waits(true, false, false, false, false));
+    TEST_ASSERT_TRUE(kgui_crit_waits(false, true, false, false, false));
+    TEST_ASSERT_TRUE(kgui_crit_waits(false, false, false, true, false));
+    TEST_ASSERT_TRUE(kgui_crit_waits(false, false, false, false, true));
+}
+
+void test_crit_takes_the_place_of_the_update_card(void)
+{
+    /* The offer of a newer kodeOS is a system card that gives way: the
+     * charge is the more urgent word. */
+    TEST_ASSERT_FALSE(kgui_crit_waits(false, true, true, false, false));
+    /* What else holds the glass still holds it. */
+    TEST_ASSERT_TRUE(kgui_crit_waits(true, true, true, false, false));
+    TEST_ASSERT_TRUE(kgui_crit_waits(false, true, true, true, false));
+    TEST_ASSERT_TRUE(kgui_crit_waits(false, true, true, false, true));
 }
 
 void test_crit_rises_on_a_clear_glass(void)
 {
-    TEST_ASSERT_FALSE(kgui_crit_waits(false, false, false, false));
+    TEST_ASSERT_FALSE(kgui_crit_waits(false, false, false, false, false));
 }
 
 void test_crit_opens_again_on_the_cable_and_on_the_climb(void)
@@ -106,6 +117,7 @@ int main(void)
     RUN_TEST(test_crit_is_due_once_per_entry);
     RUN_TEST(test_crit_that_waited_is_still_due);
     RUN_TEST(test_crit_waits_for_each_thing_that_has_the_glass);
+    RUN_TEST(test_crit_takes_the_place_of_the_update_card);
     RUN_TEST(test_crit_rises_on_a_clear_glass);
     RUN_TEST(test_crit_opens_again_on_the_cable_and_on_the_climb);
     RUN_TEST(test_crit_is_not_due_while_the_cable_is_in);
