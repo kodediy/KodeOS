@@ -1417,6 +1417,7 @@ typedef enum {
 #define GUI_NVS_KEY_BLE_NAME  "blename"
 #define GUI_CONFIG_KEY_BLE_NAME "ble_name" /* `config`'s name for kgui/blename. */
 #define GUI_BLE_NAME_NONE     "-"      /* `ble_name`'s value for no name: the serial. */
+#define GUI_BLE_NAME_BARE     "KODE-DOT" /* The name with neither a stored one nor a serial. */
 #define GUI_TAG_BLE_NAME      44U   /* the name it shows                    */
 #define GUI_TAG_BLE_FORGET    43U   /* forget every one of them             */
 #define GUI_TAG_BLE_PAIR      45U   /* show the board, so a new one pairs   */
@@ -24024,7 +24025,7 @@ static void gui_wifi_chan_row(Gui * const me)
 static const char *gui_ble_name_shown(Gui const * const me)
 {
     size_t const prefix = sizeof(GUI_BLE_PREFIX) - 1U;
-    const char  *shown  = "KODE-DOT";
+    const char  *shown  = GUI_BLE_NAME_BARE;
 
     if ( '\0' == me->ble_name[0] )
     {
@@ -24044,17 +24045,34 @@ static const char *gui_ble_name_shown(Gui const * const me)
     return shown;
 }
 
-/** @brief Ask the radio to show the name in force, at once and with no restart. */
+/**
+ * @brief Ask the radio to show the name in force, at once and with no restart.
+ *
+ * Posted leaving KQP_RADIO_POST_MARGIN of AO_Radio's queue, as its doors do.
+ * With no room the log says so, and the radio shows the name from the next
+ * boot.
+ *
+ * @param me The AO.
+ */
 static void gui_ble_name_send(Gui const * const me)
 {
-    QEvt const * const evt = ble_rsp_evt(('\0' != me->ble_name[0]) ? me->ble_name
-                                         : (khal_identity_valid() ? khal_identity_serial()
-                                                                  : "KODE-DOT"),
-                                         NULL, 0U);
+    const char *name = me->ble_name;
+    QEvt const *evt;
 
-    if ( NULL != evt )
+    if ( '\0' == me->ble_name[0] )
     {
-        QACTIVE_POST(AO_Radio, evt, &me->super);
+        name = GUI_BLE_NAME_BARE;
+        if ( khal_identity_valid() )
+        {
+            name = khal_identity_serial();
+        }
+    }
+    evt = ble_rsp_evt(name, NULL, 0U);
+    if ( (NULL != evt)
+        && !QACTIVE_POST_X(AO_Radio, evt, KQP_RADIO_POST_MARGIN, &me->super) )
+    {
+        KLOG_N(TAG, "bluetooth name: AO_Radio had no room; it shows from the "
+                    "next boot");
     }
 }
 
