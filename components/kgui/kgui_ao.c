@@ -1124,6 +1124,10 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
  */
 #define GUI_FACE_WINDOW_MS  15000U
 
+/** @brief How long Kody's scene takes to fade in after a face that lit at
+ *         boot without him, while his pack was read (gui_face_kody_fade_in()). */
+#define GUI_KODY_FADE_IN_MS 600U
+
 /** @brief How far, in pixels, a slide must have gone along the direction it
  *         was claimed in, when the finger lifts, to go back out of the
  *         launcher or to answer no to the Turn off card (gui_side_lift()): a
@@ -2602,6 +2606,11 @@ typedef struct {
                                       *   - back from an app, another scene -
                                       *   he is found in his loop, awake
                                       *   (gui_face_kody_rouse()).           */
+    bool         face_fade_in;      /**< The face lit at boot while Kody's
+                                      *   pack was read, his box transparent:
+                                      *   he fades in when he is first put in
+                                      *   his scene (gui_first_hold_tick(),
+                                      *   gui_face_kody_fade_in()).          */
 
     /* THE LOCK AT REST. The face has two substates: Gui_awake is the face as
      * the person uses it, and Gui_rest is the same face dimmed, with Kody
@@ -28445,6 +28454,38 @@ static void gui_face_scene_choose(Gui * const me, GuiSceneId id,
 /** @brief Tries to wake Kody: the chosen scene, then the built-in one. */
 #define GUI_FACE_ROUSE_PASSES 2U
 
+/** @brief An lv_anim's setter: the opacity of Kody's box on the face. */
+static void gui_face_kody_opa(void *o, int32_t v)
+{
+    lv_obj_set_style_opa(gui_anim_obj(o), (lv_opa_t)v, LV_PART_MAIN);
+}
+
+/**
+ * @brief Fade Kody's box in: his scene comes after a face that lit at boot
+ *        without him (face_fade_in).
+ *
+ * The box was made transparent when the face lit (gui_first_hold_tick()); the
+ * scene's first frame is drawn under it, and it comes up to full over
+ * GUI_KODY_FADE_IN_MS, so he joins the time and the date softly rather than
+ * at once.
+ *
+ * @param me The AO; Kody has just been put in his scene.
+ */
+static void gui_face_kody_fade_in(Gui * const me)
+{
+    lv_anim_t a;
+
+    me->face_fade_in = false;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, me->face_kody);
+    lv_anim_set_exec_cb(&a, &gui_face_kody_opa);
+    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_duration(&a, GUI_KODY_FADE_IN_MS);
+    lv_anim_set_path_cb(&a, &lv_anim_path_ease_in_out);
+    (void)lv_anim_start(&a);
+    KLOG_D(TAG, "face: Kody fades in over %u ms", (unsigned)GUI_KODY_FADE_IN_MS);
+}
+
 /**
  * @brief Put Kody in the scene the face is on: its wake-up once and then its
  *        loop, out of Rest and at a cold boot; its loop alone any other time
@@ -28533,6 +28574,10 @@ static void gui_face_kody_rouse(Gui * const me)
             /* The player holds this scene's descriptors and no other's now. */
             kgui_assets_scene_keep(id);
             KLOG_D(TAG, "face: Kody %s in the %s scene", how, kgui_assets_scene_name(id));
+            if ( me->face_fade_in )
+            {
+                gui_face_kody_fade_in(me);
+            }
         }
         gui_face_window_open(me);
     }
@@ -34000,6 +34045,7 @@ void Gui_ctor(void)
     me->face_stood      = KUI_PACK_NONE;
     me->face_woke       = false;
     me->face_wake_up    = true;
+    me->face_fade_in    = false;
     me->back_cover      = NULL;
     me->back_cover_on   = false;
     me->back_cover_ms   = 0U;
@@ -34415,7 +34461,8 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                  * frame is Apps instead, and waits for the installed list
                  * (Gui_returning). */
                 /* Nothing is lit until it is whole: the face with
-                 * its scene and Kody standing in it, Apps with its rows. */
+                 * its scene and Kody standing in it - or the time and the
+                 * date alone while his pack is read - Apps with its rows. */
                 me->first_hold    = true;
                 me->first_hold_ms = khal_time_ms();
                 /* A cold boot greets with his wake-up; back from an app he
@@ -36727,9 +36774,12 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
  * @brief The first frame's wait: it goes when what it shows is whole.
  *
  * The face when Kody stands in his scene (the play draws its first frame when
- * it starts, gui_face_kody_wake()); Apps when its list has appeared; anything
- * else that takes the glass at once. A ceiling, so a pack or a card that never
- * answers cannot leave the glass black.
+ * it starts, gui_face_kody_wake()), or at once while his pack is still being
+ * read: the time and the date light the glass as early as ever, and he wakes
+ * in the pack's scene when it is read (gui_face_kody_tick()), never in the
+ * built-in one first. Apps when its list has appeared; anything else that
+ * takes the glass at once. A ceiling, so a pack or a card that never answers
+ * cannot leave the glass black.
  *
  * @param me The AO.
  */
@@ -36745,7 +36795,23 @@ static void gui_first_hold_tick(Gui * const me)
         {
             /* Awake with his files still being read is not standing: nothing
              * of him is in the box until KGUI_ASSETS_EV_SCENE plays him. */
-            go = go || ((GUI_KODY_AWAKE == me->kody_sight) && (!me->face_rouse_owed));
+            bool const standing = (GUI_KODY_AWAKE == me->kody_sight)
+                                  && (!me->face_rouse_owed);
+
+            if ( (!standing) && (!kgui_assets_ready()) )
+            {
+                /* The pack itself still being read does not hold the glass:
+                 * the face lights with the time and the date, his box
+                 * transparent, and he fades in when he wakes in the pack's
+                 * scene (gui_face_kody_fade_in()). */
+                if ( NULL != me->face_kody )
+                {
+                    lv_obj_set_style_opa(me->face_kody, LV_OPA_TRANSP, LV_PART_MAIN);
+                    me->face_fade_in = true;
+                }
+                go = true;
+            }
+            go = go || standing;
         }
         else if ( on == kgui_screen_launcher )
         {
