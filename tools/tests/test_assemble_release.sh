@@ -116,10 +116,10 @@ else
     cat "$sums_file" >&2
 fi
 
-expected_entries="$(printf 'kodeos-factory-v00.00.99/bootloader.bin\nkodeos-factory-v00.00.99/partition-table.bin\nkodeos-factory-v00.00.99/ota_data_initial.bin\nkodeos-factory-v00.00.99/kodeos.bin\nkodeos-factory-v00.00.99/apps.bin\nkodeos-factory-v00.00.99/storage.bin\nkodeos-factory-v00.00.99/flash.sh\nkodeos-factory-v00.00.99/README.txt\nkodeos-factory-v00.00.99/THIRD_PARTY_NOTICES.txt' | sort)"
+expected_entries="$(printf 'kodeos-factory-v00.00.99/bootloader.bin\nkodeos-factory-v00.00.99/partition-table.bin\nkodeos-factory-v00.00.99/ota_data_initial.bin\nkodeos-factory-v00.00.99/kodeos.bin\nkodeos-factory-v00.00.99/apps.bin\nkodeos-factory-v00.00.99/storage.bin\nkodeos-factory-v00.00.99/flash.sh\nkodeos-factory-v00.00.99/write_unchecked.py\nkodeos-factory-v00.00.99/README.txt\nkodeos-factory-v00.00.99/THIRD_PARTY_NOTICES.txt' | sort)"
 actual_entries="$(unzip -Z1 "$zip_file" 2>/dev/null | sort)"
 if [ "$actual_entries" = "$expected_entries" ]; then
-    ok "zip contains exactly the 9 expected files"
+    ok "zip contains exactly the 10 expected files"
 else
     bad "zip contents mismatch"
     diff <(echo "$expected_entries") <(echo "$actual_entries")

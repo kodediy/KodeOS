@@ -18,6 +18,9 @@
 # over the five places a previous pass can leave something that acts at
 # boot (LINE_BLANKS below). The apps region and the FAT are not written:
 # the assembled Kode fills them later from the station's SD (E5).
+# kodeos.bin is written by write_unchecked.py, beside this script, and is not
+# read back: the bootloader checks its SHA-256 at every boot and E1 boots it
+# right after, so the read-back (7.6 s) would repeat that check.
 #
 # Needs python3 with esptool 5 or newer on it (`python3 -m pip install
 # 'esptool>=5'`): esptool 5 renamed its commands to the dashed form this
@@ -44,10 +47,12 @@ USAGE="usage: ./flash.sh /dev/tty.usbmodemXXXX [--no-reset] [--line]"
 PORT="${1:?$USAGE}"
 shift
 RESET=()
+BEFORE=()
+UNCHECKED_OPT=()
 LINE=0
 for opt in "$@"; do
     case "$opt" in
-        --no-reset) RESET=(--before no-reset --after no-reset) ;;
+        --no-reset) RESET=(--before no-reset --after no-reset); BEFORE=(--before no-reset); UNCHECKED_OPT=(--no-reset) ;;
         --line) LINE=1 ;;
         *)
             echo "$USAGE" >&2
@@ -110,12 +115,16 @@ if [ "$LINE" -eq 1 ]; then
         head -c "$((size))" /dev/zero | LC_ALL=C tr '\000' '\377' > "$blank_dir/$name.bin"
         BLANKS+=("$off" "$blank_dir/$name.bin")
     done <<< "$LINE_BLANKS"
-    "$PY" -m esptool --chip esp32p4 -p "$PORT" ${RESET[@]+"${RESET[@]}"} write-flash \
+    # Two calls: esptool writes the small images and the blanks, reads them
+    # back and leaves its stub running (--after no-reset); then kodeos.bin goes
+    # through write_unchecked.py, which does not read it back and ends with the
+    # reset (or, with --no-reset, none).
+    "$PY" -m esptool --chip esp32p4 -p "$PORT" ${BEFORE[@]+"${BEFORE[@]}"} --after no-reset write-flash \
       0x2000   bootloader.bin \
       0x8000   partition-table.bin \
       0x1B000  ota_data_initial.bin \
-      0x20000  kodeos.bin \
       "${BLANKS[@]}"
+    "$PY" write_unchecked.py "$PORT" 0x20000 kodeos.bin ${UNCHECKED_OPT[@]+"${UNCHECKED_OPT[@]}"}
 else
     "$PY" -m esptool --chip esp32p4 -p "$PORT" ${RESET[@]+"${RESET[@]}"} write-flash --erase-all \
       0x2000   bootloader.bin \

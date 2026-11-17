@@ -64,7 +64,9 @@ acts at boot: nvs (0xB000, 64 KB), the core dump (0xC20000, 128 KB), the
 apps region's two directories and boot request (0xC40000, 12 KB), and the
 mailbox's first sector and its intent (0x1A00000 and 0x1FFF000, 4 KB
 each). apps.bin and storage.bin are not written: the assembled Kode gets
-the apps region and the FAT from the station's SD later on the line. A
+the apps region and the FAT from the station's SD later on the line.
+kodeos.bin is not read back after it is written: the bootloader checks its
+SHA-256 at the first boot, which the station makes right after. A
 board flashed by hand, away from the line, takes the plain command above.
 
 Verify afterward over the console (USB-C, native USB-Serial/JTAG):
