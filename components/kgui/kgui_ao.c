@@ -3697,6 +3697,7 @@ static void gui_last_follow_offset(Gui * const me);
 static GuiEntry const *gui_entry_named(Gui const * const me, const char *name);
 static void gui_show_write(Gui * const me, const AppProgressEvt *p);
 static void gui_show_fail(Gui * const me);
+static void gui_data_lost(Gui * const me);
 static void gui_opening_show(Gui * const me);
 static void gui_open_hold_arm(Gui * const me);
 static void gui_write_ask(Gui * const me, GuiAsk what, const char *name);
@@ -15481,6 +15482,32 @@ static void gui_show_fail(Gui * const me)
          * the medium, and on the console's road no card was ever raised. */
         me->sheet_row = -1;
         gui_sheet_open_kind(me, GUI_SHEET_FAILURE);
+    }
+}
+
+/**
+ * @brief The card of a fetch that brought no data folder goes without a
+ *        failure.
+ *
+ * The store fetches an app's folder and installs its image right after it.
+ * The folder is how the app looks, never what lets it install, so the failure
+ * card would tell of an install that failed when none has begun. A card on
+ * the glass closes the way a done's does, without the green edge; one still
+ * waiting off the glass for its folder (gui_write_card_show()) never rises.
+ * The install that follows raises its own.
+ *
+ * @param me The AO.
+ */
+static void gui_data_lost(Gui * const me)
+{
+    KLOG_N(TAG, "write card: no data folder came for '%s'; the card goes "
+                "without a failure", me->wface.project);
+    me->writing    = false;
+    me->write_held = false;
+    me->write_pct  = 0U;
+    if ( GUI_SHEET_OPENING == me->sheet )
+    {
+        gui_sheet_close(me);
     }
 }
 
@@ -35182,13 +35209,19 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
              * takes the Opening card over when one is up and raises the
              * failure by itself when none is. The event carries a reason:
              * it says which sentence the card wears, the write's own or the
-             * app still being copied to the card. */
+             * app still being copied to the card. A fetch of an app's data
+             * folder that made none wrote no app, and its card goes without
+             * a failure (gui_data_lost()). */
             me->fail_why = Q_EVT_CAST(AppFlashFailEvt)->why;
             if ( me->write_cancel )
             {
                 me->write_cancel = false;
                 gui_request_list(me);
                 gui_request_installed(me);
+            }
+            else if ( (uint8_t)KFAIL_DATA == me->fail_why )
+            {
+                gui_data_lost(me);
             }
             else
             {
