@@ -8,7 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 
-kgui_wface_act_t kgui_wface_report(kgui_wface_t *w, bool app, const char *project)
+kgui_wface_act_t kgui_wface_report(kgui_wface_t *w, bool app, const char *project,
+                                   uint32_t now_ms)
 {
     kgui_wface_act_t act = KGUI_WFACE_KEEP;
 
@@ -36,6 +37,8 @@ kgui_wface_act_t kgui_wface_report(kgui_wface_t *w, bool app, const char *projec
         (void)snprintf(w->project, sizeof(w->project), "%s", project);
         w->owed    = true;
         w->unnamed = false;
+        w->known   = false;   /* another app's words are not this one's */
+        w->t0_ms   = now_ms;
         act        = KGUI_WFACE_TAKE;
     }
     else
@@ -51,6 +54,19 @@ void kgui_wface_end(kgui_wface_t *w)
     w->project[0] = '\0';
     w->owed       = false;
     w->unnamed    = false;
+    w->known      = false;
+}
+
+void kgui_wface_known(kgui_wface_t *w)
+{
+    w->known = true;
+}
+
+bool kgui_wface_waits(const kgui_wface_t *w, uint32_t now_ms)
+{
+    /* Unsigned: the difference is right across the clock's wrap. */
+    return (!kgui_wface_has(w))
+           || ((!w->known) && ((now_ms - w->t0_ms) < KGUI_WFACE_WAIT_MS));
 }
 
 bool kgui_wface_has(const kgui_wface_t *w)

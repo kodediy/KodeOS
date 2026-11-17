@@ -28,7 +28,8 @@
 extern "C" {
 #endif
 
-#define KGUI_WFACE_PROJECT_MAX  32U  /**< A project name, terminator included: KODE_APP_PROJECT_MAX. */
+#define KGUI_WFACE_PROJECT_MAX  32U    /**< A project name, terminator included: KODE_APP_PROJECT_MAX. */
+#define KGUI_WFACE_WAIT_MS      5000U  /**< The longest the card waits off the glass for its folder's words, from the report that names the app: a folder already on the board answers in well under a second, and an app with no folder still gets its card. Tunable. */
 
 /** @brief What a report does to the card's face. */
 typedef enum {
@@ -44,7 +45,35 @@ typedef struct {
     bool owed;                             /**< Its folder is still to be asked.       */
     bool unnamed;                          /**< The last report named nobody, and the
                                             *   folder was asked again for it.         */
+    bool known;                            /**< The face carries its folder's words:
+                                            *   the card may rise.                     */
+    uint32_t t0_ms;                        /**< When a report named the app.           */
 } kgui_wface_t;
+
+/**
+ * @brief The face carries its folder's words: the app's name, from its data
+ *        folder or from a row that heard from it.
+ *
+ * @param w The card's face.
+ */
+void kgui_wface_known(kgui_wface_t *w);
+
+/**
+ * @brief Whether the card of an app's write about no row waits off the glass.
+ *
+ * Until a report names the app the card has only the file's name, which for
+ * a download is the last part of its URL: it waits for the name however long
+ * that takes. Named, it has only the project's name and letters in place of
+ * the icon until its folder's words are there: it waits for them, and for no
+ * longer than KGUI_WFACE_WAIT_MS from the report that named the app, since an
+ * app that has no folder is written all the same.
+ *
+ * @param w      The card's face.
+ * @param now_ms The clock.
+ * @return true while no report has named the app, or while the face has no
+ *         words and the wait has not run out.
+ */
+bool kgui_wface_waits(const kgui_wface_t *w, uint32_t now_ms);
 
 /**
  * @brief A report of a write arrived: say what it does to the card's face.
@@ -52,13 +81,16 @@ typedef struct {
  * @param w       The card's face.
  * @param app     The write is an app's; false for kodeOS and the radio.
  * @param project The project the report names; "" when it names none.
+ * @param now_ms  The clock: the wait for the folder counts from the report
+ *                that names an app the card did not wear.
  * @return KGUI_WFACE_TAKE for an app other than the one the card wears, with
  *         @c owed set; KGUI_WFACE_DROP when the card wore a face and the
  *         report is no app's; KGUI_WFACE_AGAIN, with @c owed set, for the first
  *         of an app's reports that name nobody on a card that wears a face;
  *         KGUI_WFACE_KEEP otherwise.
  */
-kgui_wface_act_t kgui_wface_report(kgui_wface_t *w, bool app, const char *project);
+kgui_wface_act_t kgui_wface_report(kgui_wface_t *w, bool app, const char *project,
+                                   uint32_t now_ms);
 
 /**
  * @brief The write ended: the card's face is nobody's.

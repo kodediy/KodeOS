@@ -2206,6 +2206,8 @@ typedef struct {
     kgui_wface_t   wface;       /**< Whose face the card of a write about no
                                  *   row wears (kgui_wface.h): the project its
                                  *   writer's reports name. */
+    bool           write_held;  /**< That card is waiting off the glass for its
+                                 *   folder's words (gui_write_card_show()). */
     GuiFace        write_face;  /**< That face: a row's when the project has
                                  *   one that is settled, else what its data
                                  *   folder answered, the project name until
@@ -3732,6 +3734,7 @@ static uint8_t gui_slot_by_project(Gui const * const me, const char *project);
 static void gui_face_requery(GuiFace *face);
 static void gui_icon_dsc_set(lv_image_dsc_t *dsc, const uint8_t *block);
 static void gui_write_face_show(Gui * const me);
+static void gui_write_card_show(Gui * const me);
 static void gui_face_look(const GuiFace *face, const lv_image_dsc_t *image,
                           kgui_icon_spec_t *out);
 static void gui_face_fields(GuiFace *face, AppDataFieldsEvt const * const f);
@@ -15142,6 +15145,8 @@ static void gui_write_face_take(Gui * const me)
             (void)memcpy(me->write_icon, me->icon_slot[slot], KAPP_ICON_BYTES);
             me->write_face.icon_ok = true;
         }
+        /* The face Apps shows for the app: the card may rise with it. */
+        kgui_wface_known(&me->wface);
     }
     gui_ask_next_appdata(me);
 }
@@ -15160,7 +15165,8 @@ static void gui_write_face_report(Gui * const me, const AppProgressEvt *p)
 {
     bool const app = ((uint8_t)KWRITE_APP == p->what)
                      || ((uint8_t)KWRITE_APP_RUN == p->what);
-    kgui_wface_act_t const act = kgui_wface_report(&me->wface, app, p->project);
+    kgui_wface_act_t const act = kgui_wface_report(&me->wface, app, p->project,
+                                                   khal_time_ms());
 
     if ( KGUI_WFACE_TAKE == act )
     {
@@ -15210,7 +15216,15 @@ static void gui_write_face_settle(Gui * const me)
                face->name,
                kapp_json_status_name((kapp_json_status_t)face->json_status),
                gui_icon_status_name(face->icon_status));
+        if ( (uint8_t)KAPP_JSON_OK == face->json_status )
+        {
+            kgui_wface_known(&me->wface);
+        }
         gui_write_face_show(me);
+        if ( me->writing && me->write_held )
+        {
+            gui_write_card_show(me);
+        }
     }
 }
 
@@ -15226,6 +15240,68 @@ static bool gui_write_face_worn(Gui const * const me, int8_t row)
     return (0 > row) && kgui_wface_has(&me->wface)
            && ((uint8_t)KWRITE_OS != me->write_what)
            && ((uint8_t)KWRITE_C5 != me->write_what);
+}
+
+/**
+ * @brief Whether the card of the write in flight waits off the glass.
+ *
+ * Only an app's write about no row, whose card has not risen: the launcher's
+ * own write rose with its row's face, and kodeOS and the radio wear their own.
+ *
+ * @param me The AO.
+ * @return true while kgui_wface_waits() says its face has no words yet.
+ */
+static bool gui_write_card_waits(Gui const * const me)
+{
+    bool const app = ((uint8_t)KWRITE_APP == me->write_what)
+                     || ((uint8_t)KWRITE_APP_RUN == me->write_what);
+
+    return app && (!me->run_after) && (GUI_SHEET_OPENING != me->sheet)
+           && kgui_wface_waits(&me->wface, khal_time_ms());
+}
+
+/**
+ * @brief Put the card of a write on the glass, or keep it off until its face
+ *        has its folder's words.
+ *
+ * A console `install` or one from the Kode channel names the file, then the
+ * project, and its folder answers last: a card raised at the first report
+ * shows a file's name (for a download, the last part of its URL), then the
+ * project's, and the project's letters where the icon goes, before the app's
+ * own. It waits instead: for a report that names the app, however long the
+ * download takes to open, then for the folder or a row that heard from it,
+ * at most KGUI_WFACE_WAIT_MS. A failure does not wait: gui_show_fail() raises
+ * its card by itself. A write that ends before its card rose is told by the
+ * notice of its done.
+ *
+ * @param me The AO.
+ */
+static void gui_write_card_show(Gui * const me)
+{
+    if ( gui_write_card_waits(me) )
+    {
+        if ( !me->write_held )
+        {
+            me->write_held = true;
+            KLOG_D(TAG, "write card: waits for the folder of '%s'",
+                   me->wface.project);
+        }
+        return;
+    }
+    if ( me->write_held )
+    {
+        const char *why = "the wait for its folder ran out";
+
+        me->write_held = false;
+        if ( me->wface.known )
+        {
+            why = "with its folder's words";
+        }
+        KLOG_I(TAG, "write card: up %u ms after a report named '%s', %s",
+               (unsigned)(khal_time_ms() - me->wface.t0_ms), me->wface.project,
+               why);
+    }
+    gui_opening_show(me);
 }
 
 /**
@@ -15261,11 +15337,23 @@ static bool gui_write_face_worn(Gui const * const me, int8_t row)
  */
 static void gui_show_write(Gui * const me, const AppProgressEvt *p)
 {
-    /* A write that begins is not the one before it: whatever face its card
-     * wore is nobody's, and the same app written again asks its folder again. */
     if ( !me->writing )
     {
-        kgui_wface_end(&me->wface);
+        /* The store fetches an app's folder and installs its image right
+         * after it: a write that begins while the card of the write before it
+         * is still on the glass wears that card's face until its image names
+         * an app, and a report that names another takes the face over
+         * (kgui_wface_report()). Off that card, a write that begins is not the
+         * one before it: whatever face its card wore is nobody's, and the same
+         * app written again asks its folder again. */
+        bool const kept = (GUI_SHEET_OPENING == me->sheet)
+                          && gui_write_face_worn(me, gui_sheet_card_row(me));
+
+        if ( !kept )
+        {
+            kgui_wface_end(&me->wface);
+        }
+        me->write_held = false;
     }
     /* Something IS in flight, which `gui` has to say even though no
      * transition happens: a report arriving over the card that is already up
@@ -15281,8 +15369,11 @@ static void gui_show_write(Gui * const me, const AppProgressEvt *p)
     if ( me->closing )
     {
         me->closing = false;
-        KLOG_W(TAG, "another write started; %s stays installed and is not "
-                    "opened", me->last_launch.name);
+        if ( me->closing_run )
+        {
+            KLOG_W(TAG, "another write started; %s stays installed and is "
+                        "not opened", me->last_launch.name);
+        }
     }
     if ( me->run_after )
     {
@@ -15315,7 +15406,7 @@ static void gui_show_write(Gui * const me, const AppProgressEvt *p)
                                p->file);
     }
     gui_write_face_report(me, p);
-    gui_opening_show(me);
+    gui_write_card_show(me);
 }
 
 /**
