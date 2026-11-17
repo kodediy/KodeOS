@@ -66,6 +66,8 @@ done
 #                       there is adopted and launched at boot;
 #   app_pending_intent  the mailbox's intent sector, which kodeOS erases
 #                       with the first whenever it empties the mailbox.
+# tools/check_line_blanks.sh checks every line against the partition table
+# and the apps region's format before a release is assembled.
 LINE_BLANKS='
 nvs                0xB000    0x10000
 coredump           0xC20000  0x20000

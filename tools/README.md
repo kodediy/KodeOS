@@ -59,6 +59,7 @@ See [`factory/README.md`](factory/README.md).
 |---|---|
 | `validate_release_tag.sh` | Accepts or rejects a tag, and gives the version text for the build. The format of a tag is checked in this one place. |
 | `assemble_release.sh` | Makes the release files from a finished build: the factory pack and the single image. |
+| `check_line_blanks.sh` | Fails when the zones `flash.sh --line` blanks are not the partition table's: nvs, the core dump, the apps region's directories and boot request, and the mailbox's first sector and its intent. `assemble_release.sh` runs it. |
 | `check_on_main.sh` | Fails when a commit is not on a branch. The release refuses a tag that is not on `main`, and a C5 commit that is not on the C5's `main`. |
 | `release/` | The three files `assemble_release.sh` copies into the factory pack: `flash.sh`, `FACTORY_README.txt` and `THIRD_PARTY_NOTICES.txt`. |
 
@@ -66,7 +67,7 @@ See [Release pipeline](https://docs.kode.diy/internals/release-pipeline).
 
 ## Tests for the tools
 
-The tests live in `tools/tests/`. `test_kble.py`, `test_kmirror.py`, `test_kappdata.py`, `test_kpayload.py`, `test_mkapps.py`, `test_assemble_release.sh`, `test_flash_sh.sh` and `test_validate_release_tag.sh` test the scripts above, and `test_factory.py` tests the station program against its simulator. The station keeps two more tests next to its program, `factory/test_dot_pads.py` and `factory/test_dot_parallel.py`. They need no board. `tools/tool_tests.sh` runs all of them, and CI runs that script.
+The tests live in `tools/tests/`. `test_kble.py`, `test_kmirror.py`, `test_kappdata.py`, `test_kpayload.py`, `test_mkapps.py`, `test_assemble_release.sh`, `test_check_line_blanks.sh`, `test_flash_sh.sh` and `test_validate_release_tag.sh` test the scripts above, and `test_factory.py` tests the station program against its simulator. The station keeps two more tests next to its program, `factory/test_dot_pads.py` and `factory/test_dot_parallel.py`. They need no board. `tools/tool_tests.sh` runs all of them, and CI runs that script.
 
 This part is for a person who changes the mirror. `kmirror.py` reads the mirror over two connections, the cable and Bluetooth. It has a separate reader and a separate decoder for each connection. `test_kmirror.py` checks that the two decoders give the same result, and it checks the golden header below.
 

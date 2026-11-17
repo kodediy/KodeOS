@@ -41,6 +41,7 @@ TESTS=(
     "tools/tests/test_kpayload.py"
     "tools/tests/test_assemble_release.sh"
     "tools/tests/test_flash_sh.sh"
+    "tools/tests/test_check_line_blanks.sh"
     "tools/tests/test_validate_release_tag.sh"
     "tools/tests/test_check_on_main.sh"
     "tools/tests/test_ci_report.sh"

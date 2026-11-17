@@ -154,6 +154,8 @@ if [ -z "$apps_off" ] || [ -z "$flash_off" ] || [ $((apps_off)) -ne $((flash_off
     echo "error: flash.sh writes apps.bin at ${flash_off:-nowhere}, the apps region starts at ${apps_off:-nowhere}" >&2
     exit 1
 fi
+# The zones flash.sh --line blanks are table facts too; it names each wrong one.
+tools/check_line_blanks.sh "${templates_dir}/flash.sh"
 
 rm -rf "$stage"
 mkdir -p "$stage" "$out_dir"
