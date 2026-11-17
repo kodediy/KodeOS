@@ -3,13 +3,12 @@ THIRD-PARTY NOTICES FOR KODEOS
 
 This file lists the third-party software compiled into the kodeOS firmware
 image (kodeos.bin) that ships in the factory pack for the Kode Dot
-(ESP32-P4). The factory pack is five files - bootloader.bin,
-partition-table.bin, ota_data_initial.bin, kodeos.bin and storage.bin -
-flashed at fixed offsets by flash.sh / esptool. storage.bin, the internal FAT,
-also carries the ESP32-C5 radio-coprocessor firmware (c5_slave.bin, built
-from kodediy/kode_slave_c5: Espressif's esp-hosted-mcu slave, Apache-2.0, on
-ESP-IDF v6.1). Its own third-party components are not listed in this
-notice.
+(ESP32-P4). The factory pack is six files - bootloader.bin,
+partition-table.bin, ota_data_initial.bin, kodeos.bin, apps.bin and
+storage.bin - flashed at fixed offsets by flash.sh / esptool. The ESP32-C5
+radio coprocessor's firmware is not in the pack: it comes from the releases
+of kodediy/kode_slave_c5 (Espressif's esp-hosted-mcu slave, Apache-2.0), with
+their own notices.
 
 kodeOS is built with ESP-IDF v6.1.0 (Apache-2.0, Espressif Systems) for the
 ESP32-P4 target. What follows covers every third-party component whose

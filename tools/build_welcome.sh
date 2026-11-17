@@ -39,8 +39,9 @@ if [ -z "${IDF_PATH:-}" ]; then
     exit 1
 fi
 
-# The same fallback as build_c5.sh: an EIM install defines idf.py as a shell
-# function, which a child script cannot see.
+# Some ESP-IDF installations put idf.py on PATH; an EIM one defines it as a
+# shell function, which a child script cannot see. The file itself is always
+# there.
 if command -v idf.py >/dev/null 2>&1; then
     idf() { idf.py "$@"; }
 else

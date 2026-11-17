@@ -4,7 +4,7 @@ kodeOS factory pack
 Six files to flash, one esptool call - an erase-and-write over the four
 offsets `idf.py flash` itself uses, the apps region with the welcome app
 installed (apps.bin), and the internal FAT, which carries Kody's pack
-(kode/) and the C5 image of this release (c5_slave.bin):
+(kode/) and the welcome app's data (.kode/):
 
   0x2000   bootloader.bin
   0x8000   partition-table.bin

@@ -18,18 +18,15 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 project(kodeos)
 
-# The FAT image: Kody's pack in kode/ and storage_image/, which holds the C5
-# image of this release (tools/build_c5.sh); its stamp goes to the build dir.
+# The FAT image: Kody's pack in kode/ and storage_image/, which holds the
+# welcome app's data folder (tools/build_welcome.sh).
 # Not flashed by `idf.py flash`; `idf.py storage-flash` writes it.
 set(storage_stage "${CMAKE_BINARY_DIR}/storage_stage")
 file(REMOVE_RECURSE "${storage_stage}")
 file(COPY "${CMAKE_CURRENT_LIST_DIR}/sdk/components/kui/kody/pack/" DESTINATION "${storage_stage}/kode")
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/storage_image")
     file(COPY "${CMAKE_CURRENT_LIST_DIR}/storage_image/" DESTINATION "${storage_stage}"
-         PATTERN "README.md" EXCLUDE PATTERN "*.commit" EXCLUDE)
-endif()
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/storage_image/c5_slave.commit")
-    file(COPY "${CMAKE_CURRENT_LIST_DIR}/storage_image/c5_slave.commit" DESTINATION "${CMAKE_BINARY_DIR}")
+         PATTERN "README.md" EXCLUDE)
 endif()
 # Staged at configure time, so a changed pack or image file configures again.
 file(GLOB_RECURSE storage_inputs CONFIGURE_DEPENDS

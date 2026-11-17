@@ -1273,7 +1273,8 @@ typedef struct {
 } GuiOsUpdate;
 
 /**
- * @brief The ESP32-C5's own firmware, which the factory's internal FAT carries.
+ * @brief The ESP32-C5's own firmware, by the name the internal FAT of a
+ *        board made with kodeOS v0.1.1 or earlier carries it.
  *
  * The radio coprocessor's image (`install dst=c5` writes it), never an app:
  * the launcher leaves a file of this name out of its list on either medium

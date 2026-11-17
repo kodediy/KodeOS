@@ -24,7 +24,6 @@ See [Bench tools](https://docs.kode.diy/internals/bench-tools) and [The console 
 | Script | What it does |
 |---|---|
 | `jtag_flash.sh` | Writes the flash over JTAG. It starts one OpenOCD server, writes the images, and stops the server. |
-| `build_c5.sh` | Builds the firmware of the ESP32-C5 from the submodule into `storage_image/c5_slave.bin`, the image every factory pack carries, and stamps its commit in `c5_slave.commit`. |
 
 See [Building and flashing](https://docs.kode.diy/internals/building-and-flashing).
 
