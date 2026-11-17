@@ -32443,9 +32443,12 @@ static kode_status_t gui_deep_run(const kode_value_t *arg)
     return KODE_OK;
 }
 
-/* Every row answers in records (kode_functions.h): the console keeps the
+/* The pack's rows answer in records (kode_functions.h): the console keeps the
  * line open for as long as its row says the job may take. A commit checks
- * every file of the pack and moves it, and an update downloads it first. */
+ * every file of the pack and moves it, and an update downloads it first.
+ * The last three rows are done when their run returns, so they answer at
+ * once and send no function_end(). */
+#define GUI_ANSWER_AT_ONCE    0U      /**< Done when the run returns: `>ok` at once. */
 #define GUI_ANSWER_MS         5000U   /**< A row that only reads.               */
 #define GUI_ANSWER_CHECK_MS   60000U  /**< A row that reads every file.         */
 #define GUI_ANSWER_COMMIT_MS  120000U /**< A commit: check and move every file. */
@@ -32475,11 +32478,11 @@ static const kode_function_t s_functions[] = {
     { .name = "assets_try", .arg = KODE_TYPE_STRING, .run = gui_a_try_run,
       .desc = GUI_A_TRY_DESC, .answer_ms = GUI_ANSWER_CHECK_MS },
     { .name = "welcome_key", .arg = KODE_TYPE_STRING, .run = gui_welcome_run,
-      .desc = GUI_WELCOME_DESC, .answer_ms = GUI_ANSWER_MS },
+      .desc = GUI_WELCOME_DESC, .answer_ms = GUI_ANSWER_AT_ONCE },
     { .name = "keep_drop", .arg = KODE_TYPE_NONE, .run = gui_keep_drop_run,
-      .desc = "Forget the lists kept in PSRAM", .answer_ms = GUI_ANSWER_MS },
+      .desc = "Forget the lists kept in PSRAM", .answer_ms = GUI_ANSWER_AT_ONCE },
     { .name = "deep_warn", .arg = KODE_TYPE_NONE, .run = gui_deep_run,
-      .desc = "Show the count before the deep rest", .answer_ms = GUI_ANSWER_MS },
+      .desc = "Show the count before the deep rest", .answer_ms = GUI_ANSWER_AT_ONCE },
 };
 #endif
 
