@@ -13,10 +13,10 @@
 extern "C" {
 #endif
 
-#define KGUI_WELCOME_KEY      "welcome"          /**< The key, in the apps' namespace (KODE_NVS_NAMESPACE), where the app writes it. */
-#define KGUI_WELCOME_PENDING  "pending"          /**< The app reached its last screen. */
-#define KGUI_WELCOME_DONE     "done"             /**< The person was greeted. */
-#define KGUI_WELCOME_TEXT     "You're all set."  /**< What Kody reads. */
+#define KGUI_WELCOME_KEY      "welcome"                      /**< The key, in the apps' namespace (KODE_NVS_NAMESPACE), where the app writes it. */
+#define KGUI_WELCOME_PENDING  "pending"                      /**< The app reached its last screen. */
+#define KGUI_WELCOME_DONE     "done"                         /**< The person was greeted. */
+#define KGUI_WELCOME_TEXT     "Hi! Join Wi-Fi in Settings."  /**< What Kody reads: the next step, on one line of the face's notice. */
 
 #define KGUI_WELCOME_GREET_MS 1800U  /**< From Kody being put in his scene to the greeting: kshell's GREET_DELAY_MS. */
 
