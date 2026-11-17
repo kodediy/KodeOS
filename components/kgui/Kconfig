@@ -31,10 +31,13 @@ menu "kodeOS interface"
     config KGUI_ASSETS_WAIT_MS
         int "How long the face waits for the pack at boot, ms"
         range 0 5000
-        default 1000
+        default 3000
         help
             Kody's wake-up at boot waits this long for the pack to be read; past
             it he wakes in the built-in scene and moves to the pack's when it is
-            ready. The time and the date paint at once either way.
+            ready. The time and the date paint at once either way. The pack is
+            read once the card is mounted, since a pack on the card wins: about
+            1.7 s after AO_Gui starts with a card in, so the wait leaves room
+            for a slow card.
 
 endmenu

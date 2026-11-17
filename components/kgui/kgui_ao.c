@@ -34299,10 +34299,11 @@ static QState Gui_initial(Gui * const me, void const * const par)
      * Ask for the announcement again rather than waiting for one that already
      * happened - the whole reason this component can start whenever it likes. */
     display_state_request();
-    /* Kody's pack is read while the panel comes up: its 230 ms
-     * no longer come after the panel's. His wake-up waits for it,
+    /* Kody's pack is read while the panel comes up, once the card is
+     * mounted: a pack on the card wins. His wake-up waits for it,
      * CONFIG_KGUI_ASSETS_WAIT_MS at most, counted from here
-     * (gui_face_kody_tick()). */
+     * (gui_face_kody_tick()), so he wakes in the pack's scene and not
+     * for a moment in the built-in one. */
     me->assets_t0_ms = khal_time_ms();
     /* The lists: the block if the last firmware left it whole, else the card's
      * copy, which goes before the pack: both want AO_Storage's one reader, and the
