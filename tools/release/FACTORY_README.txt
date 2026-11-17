@@ -42,11 +42,9 @@ back to a brand-new board's - blank otadata, kodeOS (factory) installed,
 the welcome app installed and not asked to run, and Kody's pack on the
 internal FAT. kodeOS boots; the factory reset that the final station runs
 on a PASS asks for the welcome app at the first power-on after ship mode.
-This release crosses a table change (nvs moves over the old otadata and
-phy_init sectors, the apps region's base lands on old image bytes), so a
-targeted write cannot clean up after every board's previous table the way a
-full erase can. Once every board has been through this release, the erase
-comes back out of a future one.
+The whole erase is on purpose: a board may come with an older partition
+table, or with a person's data anywhere on the chip, and only a whole erase
+promises that none of it survives.
 
 What survives: nothing - the erase touches the whole chip, not just the six
 things this flash writes. Settings, remembered networks, BLE bonds, the
@@ -55,6 +53,19 @@ installed after), the mailbox, and internal storage (the FAT filesystem)
 all go. Copy anything you want to keep off the board before
 flashing (`file_get name=...` on the console); this flash does not ask
 again.
+
+The production line's write, for a bare Main board on the jig:
+
+    ./flash.sh /dev/tty.usbmodemXXXX --line
+
+writes the first four files only and erases nothing whole. Instead it
+writes 0xFF over the five places a previous pass can leave something that
+acts at boot: nvs (0xB000, 64 KB), the core dump (0xC20000, 128 KB), the
+apps region's two directories and boot request (0xC40000, 12 KB), and the
+mailbox's first sector and its intent (0x1A00000 and 0x1FFF000, 4 KB
+each). apps.bin and storage.bin are not written: the assembled Kode gets
+the apps region and the FAT from the station's SD later on the line. A
+board flashed by hand, away from the line, takes the plain command above.
 
 Verify afterward over the console (USB-C, native USB-Serial/JTAG):
 
