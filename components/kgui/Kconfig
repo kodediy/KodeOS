@@ -35,9 +35,9 @@ menu "kodeOS interface"
         help
             Kody's wake-up at boot waits this long for the pack to be read; past
             it he wakes in the built-in scene and moves to the pack's when it is
-            ready. The time and the date paint at once either way. The pack is
-            read once the card is mounted, since a pack on the card wins: about
-            1.7 s after AO_Gui starts with a card in, so the wait leaves room
-            for a slow card.
+            ready. The time and the date paint at once either way. The boot
+            reads the internal FAT's pack without waiting for the card, in
+            about 60 ms; a pack on the card is read once the card mounts, and
+            wins then.
 
 endmenu

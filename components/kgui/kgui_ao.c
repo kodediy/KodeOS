@@ -1124,9 +1124,10 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
  */
 #define GUI_FACE_WINDOW_MS  15000U
 
-/** @brief How long Kody's scene takes to fade in after a face that lit at
- *         boot without him, while his pack was read (gui_face_kody_fade_in()). */
-#define GUI_KODY_FADE_IN_MS 600U
+/** @brief How long the glass takes to come up from black at boot, 12 ticks
+ *         of 33 ms (gui_cover_tick()); Kody, when he comes after the first
+ *         frame, fades in over the same time (gui_face_kody_fade_in()). */
+#define GUI_COVER_FADE_MS   396U
 
 /** @brief How far, in pixels, a slide must have gone along the direction it
  *         was claimed in, when the finger lifts, to go back out of the
@@ -2606,8 +2607,8 @@ typedef struct {
                                       *   - back from an app, another scene -
                                       *   he is found in his loop, awake
                                       *   (gui_face_kody_rouse()).           */
-    bool         face_fade_in;      /**< The face lit at boot while Kody's
-                                      *   pack was read, his box transparent:
+    bool         face_fade_in;      /**< The face lit at boot before Kody
+                                      *   stood in it, his box transparent:
                                       *   he fades in when he is first put in
                                       *   his scene (gui_first_hold_tick(),
                                       *   gui_face_kody_fade_in()).          */
@@ -2962,10 +2963,10 @@ typedef struct {
     uint8_t  page_scroll_n;  /**< How many are kept. */
     kgui_haptic_level_t haptic_pref; /**< What the Vibration row chose; the volume's stops may ask otherwise. */
     char     ble_name[GUI_BLE_NAME_MAX + 1U]; /**< The name chosen for Bluetooth; empty for the serial. */
-    bool     first_hold;     /**< The glass stays black: the first thing lit is whole. */
-    lv_obj_t *back_cover;    /**< Back from an app: the black the first frame comes up from, over everything (gui_back_cover_tick()). */
-    bool     back_cover_on;  /**< A pass has drawn it: it is fading. */
-    uint32_t back_cover_ms;  /**< Since when. */
+    bool     first_hold;     /**< The glass stays black until the first screen may show (gui_first_hold_tick()). */
+    lv_obj_t *cover;         /**< At boot: the black the first frame comes up from, over everything (gui_cover_tick()). */
+    bool     cover_on;       /**< A pass has drawn it: it is fading. */
+    uint32_t cover_ms;       /**< Since when. */
     bool     disp_row;       /**< The `display` row has the glass: no pass draws. */
     uint32_t first_hold_ms;  /**< Since when. */
     bool     rest_hint;      /**< Rest says how to wake: any input but the top button. */
@@ -3021,7 +3022,6 @@ typedef struct {
     bool     keep_writing;   /**< The card's copy is being written. */
     bool     keep_gate_open; /**< The link may speak: radio_boot_release() went. */
     bool     keep_listed;    /**< The card's first listing has ended. */
-    bool     keep_pack_owed; /**< Kody's pack waits for the read of the card's copy. */
     bool     sd_known;       /**< AO_Storage has answered at least once.    */
     uint32_t sd_card_mb;     /**< How big the CARD is, as it identified
                                *   itself; 0 when it did not say. Not the
@@ -3297,8 +3297,8 @@ static void gui_ble_name_config(Gui * const me, KodeConfigReqEvt const * const r
 static bool gui_row_cut(Gui const * const me, int32_t cy, kgui_rail_t const *edge);
 static void gui_vol_motor(Gui const * const me);
 static void gui_first_hold_tick(Gui * const me);
-static void gui_back_cover_put(Gui * const me);
-static void gui_back_cover_tick(Gui * const me, bool drew);
+static void gui_cover_put(Gui * const me);
+static void gui_cover_tick(Gui * const me, bool drew);
 static bool gui_level_back(Gui * const me, const char *source);
 static bool gui_level_grow_start(Gui * const me);
 static void gui_level_grow_cut(Gui * const me);
@@ -11952,7 +11952,6 @@ static void gui_meta_retry(Gui * const me)
 #define GUI_KEEP_READ_CHUNK 32768U           /* KODE_FS_CAT_MAX_CEIL */
 #define GUI_KEEP_WRITE_CHUNK 60000U          /* Under the 16 bits a write carries. */
 #define GUI_KEEP_RETRY_MS  20U               /* A refused read goes out again. */
-#define GUI_KEEP_PACK_WAIT_MS 600U           /* The most Kody's pack waits for the copy. */
 #define GUI_KEEP_SAVE_MS   1500U             /* A quiet time after the last folder. */
 #define GUI_KEEP_VERIFY_MS 5000U             /* The copy is checked this long into the boot. */
 
@@ -12212,19 +12211,6 @@ static void gui_keep_gate(Gui * const me)
     }
 }
 
-/**
- * @brief The pack's read, which waited for the card's copy.
- *
- * @param me The AO.
- */
-static void gui_keep_pack_go(Gui * const me)
-{
-    if ( me->keep_pack_owed )
-    {
-        me->keep_pack_owed = false;
-        kgui_assets_start();
-    }
-}
 
 /**
  * @brief The card's copy was refused: asked again in a moment, in any state.
@@ -12306,7 +12292,6 @@ static void gui_keep_read_answer(Gui * const me, FileRspEvt const * const r)
                (unsigned long)me->keep_off);
     }
     me->keep_off = 0U;
-    gui_keep_pack_go(me);
     gui_keep_gate(me);
 }
 
@@ -12535,11 +12520,6 @@ static bool gui_keep_all_settled(Gui const * const me)
  */
 static void gui_keep_tick(Gui * const me, uint32_t now)
 {
-    if ( me->keep_pack_owed && ((now - me->assets_t0_ms) >= GUI_KEEP_PACK_WAIT_MS) )
-    {
-        /* A card that takes this long does not hold Kody up any longer. */
-        gui_keep_pack_go(me);
-    }
     if ( (0U != me->keep_verify_ms) && ((int32_t)(now - me->keep_verify_ms) >= 0)
         && gui_lists_settled(me) && ('\0' == me->appdata_project[0]) )
     {
@@ -28466,8 +28446,8 @@ static void gui_face_kody_opa(void *o, int32_t v)
  *
  * The box was made transparent when the face lit (gui_first_hold_tick()); the
  * scene's first frame is drawn under it, and it comes up to full over
- * GUI_KODY_FADE_IN_MS, so he joins the time and the date softly rather than
- * at once.
+ * GUI_COVER_FADE_MS, as the glass came up from black, so he joins the time
+ * and the date in the same motion rather than at once.
  *
  * @param me The AO; Kody has just been put in his scene.
  */
@@ -28480,10 +28460,10 @@ static void gui_face_kody_fade_in(Gui * const me)
     lv_anim_set_var(&a, me->face_kody);
     lv_anim_set_exec_cb(&a, &gui_face_kody_opa);
     lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_duration(&a, GUI_KODY_FADE_IN_MS);
+    lv_anim_set_duration(&a, GUI_COVER_FADE_MS);
     lv_anim_set_path_cb(&a, &lv_anim_path_ease_in_out);
     (void)lv_anim_start(&a);
-    KLOG_D(TAG, "face: Kody fades in over %u ms", (unsigned)GUI_KODY_FADE_IN_MS);
+    KLOG_D(TAG, "face: Kody fades in over %u ms", (unsigned)GUI_COVER_FADE_MS);
 }
 
 /**
@@ -30469,7 +30449,7 @@ static bool gui_home_holds(Gui * const me)
  *
  * Not while the first frame is held: that frame is Apps, and his read and his
  * first frame come after it, not in front of it. Nor while the glass comes
- * up from black after an app: drawing him takes two frames' time out of it.
+ * up from black: drawing him takes two frames' time out of it.
  *
  * @param me The AO.
  */
@@ -30477,7 +30457,7 @@ static void gui_face_ready_tick(Gui * const me)
 {
     if ( (lv_screen_active() != kgui_screen_face) && (!me->first_hold)
         && (!kgui_return_holds(&me->back)) && (!me->curtain_up)
-        && (NULL == me->back_cover) && (GUI_SHEET_NONE == me->sheet) )
+        && (NULL == me->cover) && (GUI_SHEET_NONE == me->sheet) )
     {
         bool const whole = gui_face_kody_ready(me);
 
@@ -34046,9 +34026,9 @@ void Gui_ctor(void)
     me->face_woke       = false;
     me->face_wake_up    = true;
     me->face_fade_in    = false;
-    me->back_cover      = NULL;
-    me->back_cover_on   = false;
-    me->back_cover_ms   = 0U;
+    me->cover           = NULL;
+    me->cover_on        = false;
+    me->cover_ms        = 0U;
     /* The Lock is awake, nobody woke it, and no cable is asked to keep it so;
      * the glass is at the level the store holds, until Rest dims it. */
     me->at_rest         = false;
@@ -34345,30 +34325,30 @@ static QState Gui_initial(Gui * const me, void const * const par)
      * Ask for the announcement again rather than waiting for one that already
      * happened - the whole reason this component can start whenever it likes. */
     display_state_request();
-    /* Kody's pack is read while the panel comes up, once the card is
-     * mounted: a pack on the card wins. His wake-up waits for it,
+    /* Kody's pack is read while the panel comes up, from the internal FAT
+     * without waiting for the card; a pack on the card is read once the
+     * card mounts, and wins (kgui_assets_start()). His wake-up waits for it,
      * CONFIG_KGUI_ASSETS_WAIT_MS at most, counted from here
      * (gui_face_kody_tick()), so he wakes in the pack's scene and not
      * for a moment in the built-in one. */
     me->assets_t0_ms = khal_time_ms();
+    /* Asked before anything on the card: the internal FAT mounts at its first
+     * use, and a card's mount started first holds it back, a second or more. */
+    kgui_assets_start();
     /* The lists: the block if the last firmware left it whole, else the card's
-     * copy, which goes before the pack: both want AO_Storage's one reader, and the
-     * pack's files keep it busy for a second. The pack starts when the copy has
-     * been read, or when the panel is up if that is sooner (a card that will not
-     * answer). Before AO_Radio starts, so the link leaves the card and the first
-     * read alone. */
+     * copy. The card is mounted on AO_Storage's worker first, and the read
+     * waits there for it: a read that found the card unmounted would mount it
+     * inside AO_Storage, and the pack's reads of the internal FAT would wait
+     * behind that second. Before AO_Radio starts, so the link leaves the card
+     * and the first read alone. */
     if ( khal_keep() != NULL )
     {
         me->keep_ok = gui_keep_whole(gui_keep_hdr());
     }
     if ( (khal_keep() != NULL) && !me->keep_ok )
     {
-        me->keep_pack_owed = true;
+        storage_request(KDRV_MEDIUM_SD, STORAGE_OP_MOUNT);
         gui_keep_read_next(me);
-    }
-    else
-    {
-        kgui_assets_start();
     }
 #if CONFIG_KODEOS_RADIO
     radio_boot_hold();
@@ -34439,10 +34419,6 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                 /* The kept copy first, so that the first frame has it and the
                  * listings find its rows standing. */
                 gui_keep_seed(me);
-                if ( (uint8_t)GUI_KEEP_READ_NONE == me->keep_read )
-                {
-                    gui_keep_pack_go(me);
-                }
                 gui_request_list(me);
                 gui_request_installed(me);
                 /* How long Rest lasts before the count is AO_LowPower's
@@ -34460,18 +34436,14 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                  * the lists arrive while it is up. Back from an app the first
                  * frame is Apps instead, and waits for the installed list
                  * (Gui_returning). */
-                /* Nothing is lit until it is whole: the face with
-                 * its scene and Kody standing in it - or the time and the
-                 * date alone while his pack is read - Apps with its rows. */
+                /* The face goes at once and Kody comes into it; Apps waits
+                 * for its rows (gui_first_hold_tick()). */
                 me->first_hold    = true;
                 me->first_hold_ms = khal_time_ms();
                 /* A cold boot greets with his wake-up; back from an app he
-                 * is found awake, and the glass comes up from the app's black. */
+                 * is found awake. Either way the glass comes up from black. */
                 me->face_wake_up  = (boot_reason() != KBOOT_FROM_APP);
-                if ( !me->face_wake_up )
-                {
-                    gui_back_cover_put(me);
-                }
+                gui_cover_put(me);
                 if ( gui_return_begin(me) )
                 {
                     status = Q_TRAN(&Gui_returning);
@@ -34786,13 +34758,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
 
                 next = lv_timer_handler();
                 gui_pass_measure(me, t0, (me->flushes != flushes));
-                gui_back_cover_tick(me, true);
+                gui_cover_tick(me, true);
             }
             else
             {
-                /* The first frame after an app waits for the installed list
-                 * (Gui_returning): the glass stays black until it may go. */
-                gui_back_cover_tick(me, false);
+                /* The first frame waits (gui_first_hold_tick(), Gui_returning):
+                 * the glass stays black until it may go. */
+                gui_cover_tick(me, false);
             }
             /* Reduced motion's frame of fade, once a pass has drawn it. */
             gui_fade_tick(me);
@@ -36771,15 +36743,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
 }
 
 /**
- * @brief The first frame's wait: it goes when what it shows is whole.
+ * @brief The first frame's wait: it goes when what it shows may be seen.
  *
- * The face when Kody stands in his scene (the play draws its first frame when
- * it starts, gui_face_kody_wake()), or at once while his pack is still being
- * read: the time and the date light the glass as early as ever, and he wakes
- * in the pack's scene when it is read (gui_face_kody_tick()), never in the
- * built-in one first. Apps when its list has appeared; anything else that
- * takes the glass at once. A ceiling, so a pack or a card that never answers
- * cannot leave the glass black.
+ * The face at once: the glass comes up from black (gui_cover_tick()) with the
+ * time and the date, and Kody, if he does not stand in his scene yet, fades in
+ * when he wakes in it (gui_face_kody_fade_in()), never in the built-in one
+ * first. Apps when its list has appeared; anything else that takes the glass
+ * at once. A ceiling, so a list that never comes cannot leave the glass black.
  *
  * @param me The AO.
  */
@@ -36798,20 +36768,12 @@ static void gui_first_hold_tick(Gui * const me)
             bool const standing = (GUI_KODY_AWAKE == me->kody_sight)
                                   && (!me->face_rouse_owed);
 
-            if ( (!standing) && (!kgui_assets_ready()) )
+            if ( (!standing) && (NULL != me->face_kody) )
             {
-                /* The pack itself still being read does not hold the glass:
-                 * the face lights with the time and the date, his box
-                 * transparent, and he fades in when he wakes in the pack's
-                 * scene (gui_face_kody_fade_in()). */
-                if ( NULL != me->face_kody )
-                {
-                    lv_obj_set_style_opa(me->face_kody, LV_OPA_TRANSP, LV_PART_MAIN);
-                    me->face_fade_in = true;
-                }
-                go = true;
+                lv_obj_set_style_opa(me->face_kody, LV_OPA_TRANSP, LV_PART_MAIN);
+                me->face_fade_in = true;
             }
-            go = go || standing;
+            go = true;
         }
         else if ( on == kgui_screen_launcher )
         {
@@ -36833,21 +36795,20 @@ static void gui_first_hold_tick(Gui * const me)
     }
 }
 
-/** @brief How long the glass takes to come up from black after an app: 12 ticks of 33 ms. */
-#define GUI_BACK_FADE_MS  396U
-
 /**
- * @brief Back from an app: cover the glass in black, for the first frame to
- *        come up from.
+ * @brief At boot: cover the glass in black, for the first frame to come up
+ *        from.
  *
- * The app left the glass black and the boot kept it so. Lit at a stroke, the
- * first frame is a flash; it comes up from that black instead, as the launch
- * went down to it. The cover stands on LVGL's system layer, over every screen
- * and every card, and is in none of their pictures.
+ * The glass is black while the board boots, and after an app the launch went
+ * down to that black. Lit at a stroke, the first frame is a flash; it comes up
+ * from the black instead, and the fade starts with the first frame that may be
+ * shown, while Kody is still being put in his scene. The cover stands on
+ * LVGL's system layer, over every screen and every card, and is in none of
+ * their pictures.
  *
  * @param me The AO; the display is up.
  */
-static void gui_back_cover_put(Gui * const me)
+static void gui_cover_put(Gui * const me)
 {
     lv_obj_t * const cover = lv_obj_create(lv_layer_sys());
 
@@ -36860,8 +36821,8 @@ static void gui_back_cover_put(Gui * const me)
         lv_obj_set_style_bg_color(cover, KUI_COLOR_BG, LV_PART_MAIN);
         lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, LV_PART_MAIN);
     }
-    me->back_cover    = cover;
-    me->back_cover_on = false;
+    me->cover    = cover;
+    me->cover_on = false;
 }
 
 /**
@@ -36874,33 +36835,33 @@ static void gui_back_cover_put(Gui * const me)
  * @param me   The AO.
  * @param drew Whether this tick's pass ran.
  */
-static void gui_back_cover_tick(Gui * const me, bool drew)
+static void gui_cover_tick(Gui * const me, bool drew)
 {
-    if ( NULL != me->back_cover )
+    if ( NULL != me->cover )
     {
         uint32_t const now = khal_time_ms();
 
-        if ( !me->back_cover_on )
+        if ( !me->cover_on )
         {
             if ( drew )
             {
-                me->back_cover_on = true;
-                me->back_cover_ms = now;
+                me->cover_on = true;
+                me->cover_ms = now;
             }
         }
-        else if ( (now - me->back_cover_ms) >= GUI_BACK_FADE_MS )
+        else if ( (now - me->cover_ms) >= GUI_COVER_FADE_MS )
         {
-            lv_obj_delete(me->back_cover);
-            me->back_cover = NULL;
-            KLOG_D(TAG, "back from an app: the glass is up from black, %u ms after its first pass",
-                   (unsigned)(now - me->back_cover_ms));
+            lv_obj_delete(me->cover);
+            me->cover = NULL;
+            KLOG_D(TAG, "the glass is up from black, %u ms after its first pass",
+                   (unsigned)(now - me->cover_ms));
         }
         else
         {
-            uint32_t const left = GUI_BACK_FADE_MS - (now - me->back_cover_ms);
+            uint32_t const left = GUI_COVER_FADE_MS - (now - me->cover_ms);
 
-            lv_obj_set_style_bg_opa(me->back_cover,
-                                    (lv_opa_t)((left * (uint32_t)LV_OPA_COVER) / GUI_BACK_FADE_MS),
+            lv_obj_set_style_bg_opa(me->cover,
+                                    (lv_opa_t)((left * (uint32_t)LV_OPA_COVER) / GUI_COVER_FADE_MS),
                                     LV_PART_MAIN);
         }
     }
