@@ -39,6 +39,8 @@ verdict screen up and erases nothing.
 3. Fill the two channels: with a Kode on the cable, run
    `python3 tools/factory/test_dot_final.py --discover`. It lists the networks
    the Kode hears and writes the channels of the two named ones.
+4. Set `expect.kodeos` to the version the Kodes of this lot must run, as `info`
+   prints it. A Kode with another one fails its first step. `null` accepts any.
 
 ## Running the test
 
@@ -66,9 +68,10 @@ the CSV, and the Kode is never reset nor locked. A production run uses none of
 them.
 - `--discover` fills the station's Wi-Fi channels and exits.
 
-NFC is run and reported like every other step but does not decide the
-verdict: a Kode whose only failure is NFC passes (`OPTIONAL` in
-`test_dot_final.py`).
+Every step decides the verdict, NFC included (`OPTIONAL` in
+`test_dot_final.py` is empty). The NFC and RFID steps write the station's tag
+twice, something else and then what counts, so what is read back was written
+in this run and not left there by an earlier one.
 
 Exit status: 0 for a PASS, 1 for any other verdict, 2 when no report was
 written (the port held by another program, a Kode that does not answer, a

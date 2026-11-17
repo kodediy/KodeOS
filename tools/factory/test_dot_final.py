@@ -90,6 +90,8 @@ OPERATOR_SIM_SEED = None       # None: a new operator every run
 
 PING_TRIES = 20
 PING_TIMEOUT_S = 2.0
+C5_LINK_TRIES = 30            # --discover: looks for the C5's link after the reset of the port's opening
+C5_LINK_PAUSE_S = 0.5
 RUN_BUDGET_S = 300             # the whole run, camera and operator included
 POLL_PERIOD_S = 0.15
 POLL_TIMEOUT_S = 5.0
@@ -127,7 +129,7 @@ SIM_JITTER_PX = 8              # and its scatter on the target
 # gives up: the Kode's bound < its console's line < the PC's wait.
 MS_PER_S = 1000.0              # milliseconds in a second, for the Kode's times
 WAIT_MARGIN_S = 5.0            # what the PC adds to a Kode bound: the line's way over USB and back
-KODE_RESET_S = 290.045         # the SHIP factory reset at every step's budget (KODE_RESET_CONSOLE_MS)
+KODE_RESET_S = 380.045         # the SHIP factory reset at every step's budget (KODE_RESET_CONSOLE_MS)
 KODE_LINE_MARGIN_S = 5.0       # what the Kode's line adds to the reset's bound (KODE_TEST_DOT_LINE_MARGIN_MS)
 KODE_LINE_S = KODE_RESET_S + KODE_LINE_MARGIN_S   # the Kode's console gives a station verb's line this long (KODE_TEST_DOT_LINE_MS)
 RESULT_PASS_TIMEOUT_S = KODE_LINE_S + WAIT_MARGIN_S   # `test_dot_result verdict=pass` answers when the reset is done
@@ -206,8 +208,13 @@ PADS_IDS = ["pads_charge", "pads_delivery", "pads_gnd", "pads_loop"]
 ROW_SEQ = ["sd", "imu", "audio", "haptic", "mag", "pmic", "gauge", "ioexp", "clocks", "ir", "nfc", "rfid", "mem"]
 RUN_IDS = ROW_SEQ + CAM_IDS + ["led", "buttons", "tp"]
 BACKGROUND = ["pads", "nfc", "rfid", "radio"]     # the PC's work beside the operator, longest first
-# Steps that are run and reported in full but do not decide the verdict.
-OPTIONAL = {"nfc"}
+# Steps that are run and reported in full but do not decide the verdict: none.
+OPTIONAL = set()
+# What the NFC step writes before the serial, so the serial is a real write.
+NFC_OTHER_TEXT = "KODE E5"
+# Times the RFID step writes an ID before giving it up: one clone in about thirty
+# is not read back by the Kode on the bench, and the next one is.
+RFID_WRITE_TRIES = 2
 
 PASS, FAIL, TIMEOUT, NOVERDICT, NOTRUN = "PASS", "FAIL", "TIMEOUT", "NO VERDICT", "NOT RUN"
 EVENT_STATE = {NOVERDICT: "NOVERDICT", NOTRUN: "NOT_RUN"}
@@ -245,6 +252,9 @@ RELAY_FORBIDDEN = 0x01     # R2 closed with R1 at rest: the PC's 5 V into the lo
 RELAY_SETTLE_S = 0.02
 GND_SETTLE_S = 0.1
 CHARGE_SETTLE_S = 1.5
+CHARGE_CURRENT_WAIT_S = 5.0    # how long the charging current is waited for after the settle
+CHARGE_CURRENT_STEP_S = 0.5
+CHARGE_DONE = "3"              # `bat_info charging=`: the BQ25896's charge-termination state
 DELIVERY_SETTLE_S = 0.5
 BOOST_SETTLE_S = 0.6
 LOOP_COUNT = 20
@@ -380,6 +390,12 @@ def reason_from(status, measured, detail):
         return measured[:300]
     errs = re.findall(r"!E [^ ]+ [^ ]+ (.*)", detail or "")
     return (errs[-1] if errs else measured)[:300]
+
+
+def rfid_other(ident):
+    """An ID that is never the given one: every byte inverted. Written before
+    the ID that counts, so that one is a real write whatever the tag held."""
+    return ":".join(f"{(~int(b, 16)) & 0xFF:02X}" for b in ident.split(":"))
 
 
 def rfid_id_of(mac):
@@ -556,6 +572,7 @@ class Station:
         self.rng = random.Random(OPERATOR_SIM_SEED)
         self.sim_queue = []                  # [(due, line, key)] the bench operator's presses
         self.sim_missed = set()
+        self.sim_wrong = False
         self.pending = {}                    # rows finished later by the PC: nfc and rfid
         self.done_bg = set()
         self.extra = {}
@@ -691,8 +708,15 @@ class Station:
         self.find_repeat()
         self.emit_start()
         self.begin("info")
-        self.add("info", PASS if self.info["serial"] != "-" else FAIL,
-                 f"serial {self.info['serial']}; MAC {self.info['mac']}; kodeOS {self.info['kodeos']}; C5 {self.info['c5']}",
+        # The kodeOS a Kode leaves with is the one the station was told to expect,
+        # when it was told: a Kode flashed with another one talks to the station
+        # just as well.
+        want = (self.cfg.get("expect") or {}).get("kodeos")
+        wrong = bool(want) and self.info["kodeos"] != want
+        self.add("info", PASS if (self.info["serial"] != "-" and not wrong) else FAIL,
+                 f"serial {self.info['serial']}; MAC {self.info['mac']}; kodeOS {self.info['kodeos']}; C5 {self.info['c5']}"
+                 + (f"; the station expects kodeOS {want}" if wrong else ""),
+                 f"kodeOS {want}" if want else "",
                  detail="\n".join(recs),
                  values=[value("serial", self.info["serial"]), value("kodeos", self.info["kodeos"]),
                          value("c5", self.info["c5"])])
@@ -1074,7 +1098,11 @@ class Station:
             self.pump()
             if s.poll_done and not s.lane_idle:
                 s.lane_idle = True               # the run is over: the line is free
-            ready = [w for w in todo if w not in ("nfc", "rfid") or w in self.pending]
+            # The PC's NFC and RFID steps wait for BOTH of the Kode's rows: its RFID
+            # row follows its NFC row at once, and an NFC write sent while the
+            # 125 kHz carrier of that row was still on failed three runs in eleven.
+            rows_in = all(r in self.pending or r in self.done_bg or self.has(r) for r in ("nfc", "rfid"))
+            ready = [w for w in todo if w not in ("nfc", "rfid") or (w in self.pending and rows_in)]
             if s.poll_done and not ready:
                 break
             if ready and s.cam_done and s.lane_idle:
@@ -1180,7 +1208,10 @@ class Station:
         q = []
         if f.get("press") in INJECT_ID:
             want = INJECT_ID[f["press"]]
-            if rng.random() < 0.12:
+            # One wrong button a run at most: the Kode forgives two, and a bench
+            # operator that draws a third has failed a good Kode by itself.
+            if rng.random() < 0.12 and not self.sim_wrong:
+                self.sim_wrong = True
                 wrong = rng.choice([v for v in INJECT_ID.values() if v != want])
                 q += [(now + d, f"btn id={wrong} state=press"), (now + d + 0.3, f"btn id={wrong} state=release")]
                 d += 0.3 + rng.uniform(0.6, 1.5)
@@ -1224,14 +1255,28 @@ class Station:
         tag, tw, tr, wrote = None, None, None, False
         if write and want:
             t1 = CLOCK.monotonic()
-            try:
-                wr, _ = self.link.exchange(f"rfid_write id={quote(want)}", 60.0)
-                det.append(" ".join(wr))
-                wrote = any(fields(r).get("match") == "yes" for r in wr)
-            except CommandError as e:
-                det.append(str(e))
+            # The tag may already hold this Kode's ID (the same Kode, back at the
+            # station) and would then read back right with the write path dead.
+            # It is given another ID first, so the one that counts is really
+            # written; both writes must be the ones the Kode read back itself.
+            both = []
+            for ident in (rfid_other(want), want):
+                done = False
+                for _ in range(RFID_WRITE_TRIES):          # a clone the Kode could not read back is written again
+                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
+                    try:
+                        wr, _ = self.link.exchange(f"rfid_write id={quote(ident)}", 60.0)
+                        det.append(" ".join(wr))
+                        done = any(fields(r).get("match") == "yes" for r in wr)
+                    except CommandError as e:
+                        det.append(str(e))
+                    if done:
+                        break
+                both.append(done)
+            wrote = all(both)
             tw = CLOCK.monotonic() - t1
         for _ in range(3):
+            self.operator_sim_pump()
             t2 = CLOCK.monotonic()
             try:
                 recs = self.link.cmd("rfid_read ms=3000", 15.0)
@@ -1248,7 +1293,12 @@ class Station:
             info = f"written {want}; read {read or 'nothing'}"
             if tw is not None and tr is not None:
                 info += f"; write {tw:.1f} s (checked by the Kode: {'yes' if wrote else 'no'}), read {tr:.1f} s"
-            valid = bool(tag) and read == want
+            # The Kode's own check of its writes counts too: without it the tag
+            # may only be showing what it already held.
+            valid = bool(tag) and read == want and wrote
+        elif write:
+            info = "no ID to write: the Kode's MAC could not be read"
+            valid = False
         else:
             info = f"EM4100 at RF/{tag.get('rf', '?')}; ID {tag['id']}" if tag else ""
             valid = bool(tag) and re.fullmatch(r"([0-9A-Fa-f]{2}:){4}[0-9A-Fa-f]{2}", tag["id"]) is not None
@@ -1272,21 +1322,31 @@ class Station:
         tw = tr = None
         read, uid, rd = "", "", []
         skip_read = False
+        wrote = True
         try:
             if write:
                 t1 = CLOCK.monotonic()
-                try:
-                    wr, _ = self.link.exchange(f"nfc_write text={quote(serial)}", 30.0)
-                    det.append(" ".join(wr))
-                except CommandError as e:
-                    wr = e.records
-                    det.append(" ".join(wr) + f" {e.term}")
-                    skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                # The Kode's own row has just left the serial on the tag, so reading
+                # it back would prove no write of this step's: the tag is given
+                # another text first, and both writes must be taken.
+                wr = []
+                for text in (NFC_OTHER_TEXT, serial):
+                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
+                    try:
+                        wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
+                        det.append(" ".join(wr))
+                    except CommandError as e:
+                        wr = e.records
+                        det.append(" ".join(wr) + f" {e.term}")
+                        wrote = False
+                        skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                        break
                 tw = CLOCK.monotonic() - t1
                 uid = next((fields(r).get("uid", "") for r in wr if r.startswith("nfc=tag")), "")
             if skip_read:
                 det.append("nfc_read skipped: the write found no tag")
             else:
+                self.operator_sim_pump()
                 t2 = CLOCK.monotonic()
                 try:
                     rd = self.link.cmd("nfc_read ms=3000", 30.0)
@@ -1303,7 +1363,7 @@ class Station:
                     uid = f.get("uid", "")
         except Exception as e:
             det.append(f"{type(e).__name__}: {e}")
-        ok = (read == serial) if write else bool(uid)
+        ok = (read == serial and wrote) if write else bool(uid)
         info = (f"written {serial}; " if write else "") + f"read {read or 'nothing'}" + (f"; tag {uid}" if uid else "")
         if tw is not None and tr is not None:
             info += f"; write {tw:.1f} s, read {tr:.1f} s"
@@ -1386,15 +1446,24 @@ class Station:
                 bad.append(f"vbus={f.get('vbus')}")
             if vbus is None or not CHARGE_VBUS_MIN_MV <= vbus <= CHARGE_VBUS_MAX_MV:
                 bad.append(f"vbus_mv={vbus} ({CHARGE_VBUS_MIN_MV} to {CHARGE_VBUS_MAX_MV})")
-            if cur is None or not cur > 0:
-                bad.append(f"current_ma={cur} (must be > 0)")
+            full = False
+            t_cur = CLOCK.monotonic()                      # the charger takes a moment after the jump, longer near full
+            while (cur is None or not cur > 0) and CLOCK.monotonic() - t_cur < CHARGE_CURRENT_WAIT_S:
+                if str(f.get("charging")) == CHARGE_DONE:  # a full cell takes no current: VBUS on the pads is the proof
+                    full = True
+                    break
+                sleep(CHARGE_CURRENT_STEP_S)
+                f, vbus, cur = pads.bat()
+            if not full and (cur is None or not cur > 0):
+                bad.append(f"current_ma={cur} (must be > 0, or the charger done)")
             vals = [value("a0_v", a0, "V"), value("a2_v", a2, "V"), value("a3_v", a[3], "V"),
                     value("vbus_mv", vbus if vbus is not None else "", "mV"),
                     value("current_ma", cur if cur is not None else "", "mA")] + rest[:2]
             fin("pads_charge", FAIL if bad else PASS,
-                f"A0={a0} V A2={a2} V vbus={f.get('vbus')} {vbus} mV {cur} mA" + ("; " + ", ".join(bad) if bad else ""),
+                f"A0={a0} V A2={a2} V vbus={f.get('vbus')} {vbus} mV {cur} mA" + ("; cell full, charge done" if full else "")
+                + ("; " + ", ".join(bad) if bad else ""),
                 f"A2 < {CHARGE_A2_MAX_V:.1f} V; A0 >= {CHARGE_A0_MIN_V:.1f} V; "
-                f"vbus {CHARGE_VBUS_MIN_MV}-{CHARGE_VBUS_MAX_MV} mV; current > 0", t0, vals, detail=str(f))
+                f"vbus {CHARGE_VBUS_MIN_MV}-{CHARGE_VBUS_MAX_MV} mV; current > 0 or charge done", t0, vals, detail=str(f))
             if a0 < POGO_5V_MIN_V:
                 pads.relays(RELAY_REST)
                 self.begin("pads_delivery")
@@ -1474,8 +1543,12 @@ class Station:
                        f"{DELIVERY_CURRENT_MIN_MA}, negative)")
         if not DELIVERY_A0_MIN_V <= e0 <= DELIVERY_A0_MAX_V:
             bad.append(f"A0={e0} V ({DELIVERY_A0_MIN_V:.1f} to {DELIVERY_A0_MAX_V:.2f})")
-        if not truthy(b.get("on")):
-            bad.append(f"boost on={b.get('on')}")
+        # The verb's record is the charger as AO_Power last polled it, and may
+        # come before the boost shows there: what `bat_info` says after the
+        # settle counts as well.
+        boost_seen = truthy(b.get("on")) or f2.get("boost") == "on"
+        if not boost_seen:
+            bad.append(f"boost on={b.get('on')} and bat_info boost={f2.get('boost')}")
         if not fault_ok(b.get("fault", "?")):
             bad.append(f"fault={b.get('fault')}")
         restored = pads.boost_off()
@@ -1486,7 +1559,7 @@ class Station:
                 value("current_ma", cur if cur is not None else "", "mA"), value("fault", b.get("fault", "")),
                 value("boost_off", "yes" if restored else "NO")]
         fin("pads_delivery", FAIL if bad else PASS,
-            f"A0={e0} V boost={b.get('on')} fault={b.get('fault')} limit 1.2 A, off={'yes' if restored else 'NO'}"
+            f"A0={e0} V boost={1 if boost_seen else 0} fault={b.get('fault')} limit 1.2 A, off={'yes' if restored else 'NO'}"
             + ("; " + ", ".join(bad) if bad else ""),
             f"A0 {DELIVERY_A0_MIN_V:.1f} to {DELIVERY_A0_MAX_V:.2f} V with the boost on (limit 1.2 A), no fault and "
             f"a gauge current from {DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA} mA",
@@ -1582,6 +1655,13 @@ class Station:
                     break
                 except CommandError:
                     continue
+            # Opening the port reset the board, and its C5 takes a few seconds to
+            # link: a sweep asked before that ends at once with why=link.
+            for _ in range(C5_LINK_TRIES):
+                c5 = next((fields(r) for r in self.link.cmd("info", PING_TIMEOUT_S) if r.startswith("c5=")), {})
+                if c5.get("recog") == "kode":
+                    break
+                CLOCK.sleep(C5_LINK_PAUSE_S)
             line = f"test_dot_radio ssid24={quote(w['ssid_24'])} ssid5={quote(w['ssid_5'])} ble={quote(b['beacon_name'])}"
             recs = self.link.cmd(line + " discover=on", DISCOVER_TIMEOUT_S)
         except CommandError as e:

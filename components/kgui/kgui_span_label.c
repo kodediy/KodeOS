@@ -19,12 +19,12 @@ const char *kgui_span_label(const char *word)
 {
     /* The words `off_after` offers, shortest first. */
     static const span_label_t SPANS[] = {
-        { "1h",    "1 hour"  },
-        { "6h",    "6 hours" },
-        { "24h",   "1 day"   },
-        { "3d",    "3 days"  },
-        { "7d",    "7 days"  },
-        { "never", "Never"   },
+        { "20m",   "20 minutes" },
+        { "1h",    "1 hour"     },
+        { "6h",    "6 hours"    },
+        { "24h",   "1 day"      },
+        { "7d",    "7 days"     },
+        { "never", "Never"      },
     };
     const char *label = "";
 

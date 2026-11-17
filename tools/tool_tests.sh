@@ -77,6 +77,13 @@ for found in tools/tests/test_*; do
     fi
 done
 
+# ESP-IDF's Python has no Pillow, and the two tests that need it fail
+# without naming it, so the runner names it first.
+if ! python3 -c 'import PIL' >/dev/null 2>&1; then
+    printf '\033[31mFAIL\033[0m  Pillow is missing, and test_kappdata.py and test_factory.py need it: python3 -m pip install pillow\n'
+    fail=1
+fi
+
 for t in "${TESTS[@]}"; do
     if [ ! -f "$t" ]; then
         printf '\033[31mFAIL\033[0m  %s is listed here and not in the tree\n' "$t"

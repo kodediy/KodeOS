@@ -18,7 +18,7 @@ extern "C" {
 
 /* ---- The row --------------------------------------------------------------- */
 
-#define KGUI_ROW_ICON_SRC   64  /**< The icon's own size, in pixels: what a scale up to a disc is a share of. */
+#define KGUI_ROW_ICON_SRC   128  /**< The icon's own size, in pixels (KAPP_ICON_W): what a scale to a disc is a share of. */
 
 /** @brief The objects of the list: what the page holds of it. */
 typedef struct {

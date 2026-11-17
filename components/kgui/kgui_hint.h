@@ -16,6 +16,7 @@ extern "C" {
 #endif
 
 #define KGUI_HINT_MS       2000U        /**< How long a hint stays over the top band's rows, in milliseconds. */
+#define KGUI_HINT_ALERT_MS 4000U        /**< How long a hint that says something failed stays, in milliseconds. */
 #define KGUI_HINT_NONE     UINT32_MAX   /**< What kgui_hint_left_ms() answers while no timed hint is up. */
 
 #define KGUI_HINT_LINES_MAX  2   /**< The most lines a hint takes in the top band's rows: a third is not shown. */
@@ -68,6 +69,17 @@ void kgui_hint(const char *words);
  * @param ms    How long they stay, in milliseconds.
  */
 void kgui_hint_for(const char *words, uint32_t ms);
+
+/**
+ * @brief Say in a few words that something failed.
+ *
+ * As kgui_hint(), with the words in the kit's red and staying
+ * KGUI_HINT_ALERT_MS: a failure is read by somebody who was looking at the
+ * keys, not at the top of the glass.
+ *
+ * @param words The line, a literal or a string that stays for the call.
+ */
+void kgui_hint_alert(const char *words);
 
 /**
  * @brief How long the hint that ends by itself has left.

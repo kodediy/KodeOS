@@ -94,12 +94,14 @@ void kgui_crit_taken(kgui_crit_t *c);
  *
  * @param locked  A locked card is up: a write is running.
  * @param system  Another system card is up: it would take a question away.
+ * @param offer   That card is the offer of a newer kodeOS, which gives way:
+ *                the charge is the more urgent word.
  * @param guided  A guided test has the glass.
  * @param parked  The board rests with the glass handed over: nothing would
  *                answer the card, and nobody would see it.
  * @return true when the card has to wait.
  */
-bool kgui_crit_waits(bool locked, bool system, bool guided, bool parked);
+bool kgui_crit_waits(bool locked, bool system, bool offer, bool guided, bool parked);
 
 /* ---- The factory reset ----------------------------------------------------- */
 
@@ -107,7 +109,7 @@ bool kgui_crit_waits(bool locked, bool system, bool guided, bool parked);
 #define KGUI_RESET_ROW_SUB     "Erase apps and settings"  /**< ...and the line under it. */
 #define KGUI_RESET_ASK         "Factory reset?"           /**< The question's title. */
 #define KGUI_RESET_ASK_SUB     "Apps and settings go"     /**< ...its second line. */
-#define KGUI_RESET_ASK_DETAIL  "So do networks and paired\ndevices. The welcome app,\nthe name and files stay." /**< ...and what else goes and what stays. */
+#define KGUI_RESET_ASK_DETAIL  "So do networks, paired\ndevices and app files.\nThe welcome app stays." /**< ...and what else goes and what stays. */
 #define KGUI_RESET_BUTTON      "Reset"                    /**< The question's one button. */
 #define KGUI_RESET_TITLE       "Factory reset"            /**< The wait's title, and the refusal's. */
 #define KGUI_RESET_WAIT_SUB    "Erasing"                  /**< The wait's second line. */
@@ -121,6 +123,7 @@ bool kgui_crit_waits(bool locked, bool system, bool guided, bool parked);
 #define KGUI_RESET_NO_INSTALL  "The welcome app did not\ngo in. Your data is here.\nTry again."        /**< Why, stopped writing the welcome app. */
 #define KGUI_RESET_RADIO_QUIT  "The radio stopped.\nApps and settings stay.\nRestart, then try again." /**< Why, stopped at the C5's wipe. */
 #define KGUI_RESET_APPS_STAY   "Networks are gone.\nApps and settings stay.\nRestart, then try again."  /**< Why, stopped removing the apps. */
+#define KGUI_RESET_FILES_STAY  "Networks and apps gone.\nSettings stay.\nRestart, then try again."     /**< Why, stopped taking the apps' files off the media. */
 #define KGUI_RESET_SOME_STAY   "Networks and apps gone.\nSome settings stay.\nRestart, then try again." /**< Why, stopped erasing the settings. */
 #define KGUI_RESET_ALL_GONE    "Everything is erased.\nRestart the Kode."      /**< Why, when only the closing request failed. */
 #define KGUI_RESET_STOPPED_AT  "Stopped at "              /**< Why, before the word of a step nobody named. */

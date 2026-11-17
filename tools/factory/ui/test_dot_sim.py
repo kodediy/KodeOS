@@ -69,7 +69,7 @@ MAC_P4 = "38:44:be:07:e6:54"
 WINDOW = "704,628"
 
 INFO = [
-    f'serial={SERIAL} product="KODE-DOT" board="DVT"',
+    f'serial={SERIAL} product="KODE-DOT" board="1.0"',
     f"mac_p4={MAC_P4}",
     'slot=factory addr=0x020000 size_kb=4096 state=inactive project="kodeos" version="00.00.25" idf="v6.1"',
     'slot=ota_0 addr=0x420000 size_kb=4096 state=running project="kodeos" version="00.00.26" idf="v6.1"',
@@ -209,10 +209,21 @@ class Scenario:
                            many times.
     @param lock_refused    True: `test_dot_lock` answers `>err` (a lock the
                            Kode could not keep).
+    @param rfid_tag        The ID the station's tag holds before the run.
+    @param rfid_dead_write True: `rfid_write` changes nothing and says so.
+    @param pads_charger    What the charger says with the 5 V on the pads:
+                           "charging" (current at once), "slow" (current from
+                           the fourth `bat_info`), "full" (no current, charge
+                           done) or "idle" (no current, not charging).
+    @param boost_late      True: `test_dot_boost state=on` answers on=0 with
+                           the boost on, as a record taken before the
+                           charger's next poll does.
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
-                 photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False):
+                 photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
+                 rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
+                 boost_late=False):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -220,6 +231,10 @@ class Scenario:
         self.photo_bad_crc = dict(photo_bad_crc or {})
         self.serial = serial
         self.lock_refused = lock_refused
+        self.rfid_tag = rfid_tag
+        self.rfid_dead_write = rfid_dead_write
+        self.pads_charger = pads_charger
+        self.boost_late = boost_late
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -473,7 +488,7 @@ class FakeKode:
         self.relays = 0xFF
         self.boost = False
         self.tag_text = None
-        self.tag_id = None
+        self.tag_id = self.sc.rfid_tag
         self.ring = []                # [(due, seq, record)], sorted: what the poll hands over
         self.run_state = "none"       # test_dot_info's run=: none, running, done
         self.lane_idle_at = None
@@ -693,7 +708,8 @@ class FakeKode:
     def v_test_dot_boost(self, a):
         self.boost = a.get("state") == "on"
         cur = -1150 if self.boost else -20
-        self.answer([f"boost on={1 if self.boost else 0} fault=0x00 current_ma={cur}"], delay=0.3)
+        said = self.boost and not self.sc.boost_late       # late: the record still shows the charger before
+        self.answer([f"boost on={1 if said else 0} fault=0x00 current_ma={cur}"], delay=0.3)
 
     def v_test_dot_loop(self, a):
         n = int(a.get("count", "20"))
@@ -701,7 +717,16 @@ class FakeKode:
 
     def v_bat_info(self, a):
         if self.relays == 0xFE:
-            rec = "vbat_mv=4000 vbus_mv=4550 vbus=on boost=off current_ma=514 soc=80 charging=1 fault=0"
+            self.bat_asks = getattr(self, "bat_asks", 0) + 1
+            how = self.sc.pads_charger
+            if how == "full":
+                rec = "vbat_mv=4187 vbus_mv=4700 vbus=on boost=off current_ma=-4 soc=100 charging=3 fault=0"
+            elif how == "idle" or (how == "slow" and self.bat_asks < 4):
+                rec = "vbat_mv=4150 vbus_mv=4700 vbus=on boost=off current_ma=-4 soc=98 charging=0 fault=0"
+            elif how == "slow":
+                rec = "vbat_mv=4160 vbus_mv=4650 vbus=on boost=off current_ma=93 soc=98 charging=2 fault=0"
+            else:
+                rec = "vbat_mv=4000 vbus_mv=4550 vbus=on boost=off current_ma=514 soc=80 charging=1 fault=0"
         elif self.relays == 0xFC:
             rec = (f"vbat_mv=3900 vbus_mv=0 vbus=off boost={'on' if self.boost else 'off'} "
                    f"current_ma={-1150 if self.boost else -20} soc=80 charging=0 fault=0")
@@ -735,6 +760,9 @@ class FakeKode:
                      f"nfc=ndef len={len(self.tag_text) + 7} text={quote(self.tag_text)}"], delay=0.6)
 
     def v_rfid_write(self, a):
+        if self.sc.rfid_dead_write:
+            self.answer([f"rfid=clone id={quote(a.get('id'))} match=no"], delay=1.5)
+            return
         self.tag_id = a.get("id")
         self.answer([f"rfid=clone id={quote(self.tag_id)} match=yes"], delay=1.5)
 

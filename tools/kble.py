@@ -120,6 +120,13 @@ SVC_UUID = "4b4f4445-0001-4f53-a2d1-7c0e9b5f3a61"
 RX_UUID = "4b4f4445-0002-4f53-a2d1-7c0e9b5f3a61"
 TX_UUID = "4b4f4445-0003-4f53-a2d1-7c0e9b5f3a61"
 
+# How long the write that provokes the pairing is tried again, a second
+# apart. With a passkey a person reads six digits off the glass and types them
+# on the Mac, and the board gives the exchange BOARD_PAIR_S before it hangs
+# up: wait a little past that.
+BOARD_PAIR_S = 30.0
+PAIR_WAIT_S = BOARD_PAIR_S + 5.0
+
 CHUNK = 4096          # what the board asks for in `>|ready chunk=`
 
 # The hello between the two halves: `kble <version> attach|detach` one way,
@@ -167,6 +174,18 @@ def wanted_board(serial, name, env_serial):
     if name is not None:
         return None, name.strip() or None
     return norm_board(serial or env_serial), None
+
+
+def _clock():
+    """Seconds that only go forward; a function of its own so a test can
+    stand in for it without moving the event loop's clock."""
+    return time.monotonic()
+
+
+def attach_wait(timeout):
+    """How long the client waits for the bridge to say how the attach ended:
+    the scan, then a pairing a person may be answering, then some slack."""
+    return timeout + PAIR_WAIT_S + 10.0
 
 
 def settled(line):
@@ -386,19 +405,24 @@ class BleakRadio:
         payload is a bare newline, which the board's line assembler turns
         into an empty command and discards. The first attempt is expected to
         fail - it is the trigger, not the message - so this retries while the
-        OS runs the exchange underneath.
+        OS runs the exchange underneath, for PAIR_WAIT_S. The wait is time
+        and not a number of tries: a write can sit for seconds while the Mac
+        shows its dialog.
 
         Only reached when subscribing has already been refused, so nothing is
         written on a board whose console is open or a peer already bonded.
         """
         last = None
-        for _ in range(6):
+        end = _clock() + PAIR_WAIT_S
+        while True:
             try:
                 await self.client.write_gatt_char(RX_UUID, b"\n", response=True)
                 return True
             except Exception as exc:          # noqa: BLE001 - any refusal
                 last = exc
-                await asyncio.sleep(1.0)
+            if _clock() >= end:
+                break
+            await asyncio.sleep(1.0)
         say(f"failed to pair: {last}")
         return False
 
@@ -740,11 +764,11 @@ def do_term(link, args):
 def do_cmd(link, args):
     line = " ".join(args.line)
     link.send(line)
-    got, term = link.wait_for(is_terminator, args.timeout)
+    got, term = link.wait_for(is_terminator, args.cmd_timeout)
     for l in got:
         show(l)
     if term is None:
-        die(f"no terminator for '{line}' in {args.timeout}s")
+        die(f"no terminator for '{line}' in {args.cmd_timeout}s")
     return 0 if term == ">ok" else 1
 
 
@@ -968,7 +992,10 @@ def do_file_get(link, args):
     return 0
 
 
-def main():
+def parser():
+    """The command line. The board's Bluetooth name is `board_name` and the
+    scan's time is `timeout`: `name` belongs to the subcommands that take a
+    file name (screenshot, file-get), and `cmd` waits `cmd_timeout`."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--hold", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--serial", metavar="KODE...",
@@ -976,7 +1003,7 @@ def main():
                          f"(default: ${SERIAL_ENV}, else the first Kode "
                          "scanned). A board with a Bluetooth name of its own "
                          "does not advertise its serial: use --name")
-    ap.add_argument("--name", metavar="NAME",
+    ap.add_argument("--name", dest="board_name", metavar="NAME",
                     help="attach only to the board advertising this "
                          'Bluetooth name, as in --name "KODE qa one": the '
                          "whole name, any case")
@@ -990,7 +1017,9 @@ def main():
 
     p = sub.add_parser("cmd", help="one command, then its terminator")
     p.add_argument("line", nargs="+")
-    p.add_argument("--cmd-timeout", dest="timeout", type=float, default=15.0)
+    p.add_argument("--cmd-timeout", dest="cmd_timeout", type=float,
+                   default=15.0, metavar="S",
+                   help="how long to wait for the command's terminator")
     p.set_defaults(fn=do_cmd)
 
     p = sub.add_parser("install", help="stream a .bin and install it")
@@ -1032,11 +1061,15 @@ def main():
 
     sub.add_parser("detach", help="let go of the board; it goes back on "
                                   "the air by itself")
+    return ap
 
+
+def main():
+    ap = parser()
     args = ap.parse_args()
 
     if args.hold:                        # we are the half inside the bundle
-        why = asyncio.run(hold(SOCK, BleakRadio(args.serial, args.name),
+        why = asyncio.run(hold(SOCK, BleakRadio(args.serial, args.board_name),
                                args.timeout))
         print(f"bridge: {why}")           # into bridge.log
         return 0
@@ -1052,12 +1085,12 @@ def main():
         ap.print_help()
         return 2
 
-    serial, name = wanted_board(args.serial, args.name,
+    serial, name = wanted_board(args.serial, args.board_name,
                                 os.environ.get(SERIAL_ENV))
     link = Link(args.timeout, serial=serial, name=name)
     link.start()
     # Let the bridge say whether it has the board before a command goes out.
-    got, _ = link.wait_for(settled, args.timeout + 10.0)
+    got, _ = link.wait_for(settled, attach_wait(args.timeout))
     for l in got:
         show(l)
     why = None

@@ -110,7 +110,21 @@ class Bridge:
 
     def start(self):
         self.thread.start()
-        until(lambda: os.path.exists(self.path), "the bridge never bound")
+        until(self._listening, "the bridge never listened")
+
+    def _listening(self):
+        """Whether the bridge takes a connection. Not whether its path is
+        there: the path appears at bind, a moment before listen, and a client
+        that dials in that moment is refused. A connection that says nothing
+        is closed by the bridge and changes nothing in it."""
+        probe = socket.socket(socket.AF_UNIX)
+        try:
+            probe.connect(self.path)
+        except OSError:
+            return False
+        finally:
+            probe.close()
+        return True
 
     def join(self):
         """The bridge's exit, and that nothing blew up quietly on the way.
@@ -304,6 +318,90 @@ class SerialTests(unittest.TestCase):
         self.assertEqual(kble.board_args(None, None), [])
 
 
+class ParserTests(unittest.TestCase):
+    """The board's name and a subcommand's file name are two things."""
+
+    def test_the_board_name_survives_a_subcommand_with_a_name_of_its_own(self):
+        args = kble.parser().parse_args(["--name", "KODE qa one", "screenshot"])
+        self.assertEqual("KODE qa one", args.board_name)
+        self.assertEqual("shot.bmp", args.name)
+
+    def test_a_screenshot_with_no_board_named_asks_for_no_board(self):
+        args = kble.parser().parse_args(["screenshot"])
+        self.assertIsNone(args.board_name)
+        self.assertEqual((None, None),
+                         kble.wanted_board(args.serial, args.board_name, None))
+
+    def test_the_file_to_fetch_is_not_taken_for_the_board(self):
+        args = kble.parser().parse_args(["--name", "KODE qa one",
+                                         "file-get", "notes.txt"])
+        self.assertEqual("KODE qa one", args.board_name)
+        self.assertEqual("notes.txt", args.name)
+        args = kble.parser().parse_args(["file-get", "notes.txt"])
+        self.assertIsNone(args.board_name)
+
+    def test_a_command_s_own_timeout_leaves_the_scan_s_alone(self):
+        args = kble.parser().parse_args(["--timeout", "40", "cmd", "info"])
+        self.assertEqual(40.0, args.timeout)
+        self.assertEqual(15.0, args.cmd_timeout)
+        args = kble.parser().parse_args(["cmd", "--cmd-timeout", "3", "info"])
+        self.assertEqual(25.0, args.timeout)
+        self.assertEqual(3.0, args.cmd_timeout)
+
+
+class PairTests(unittest.TestCase):
+    """The wait for a pairing that a person answers on the Mac."""
+
+    def pair(self, refusals, write_s=0.0):
+        """Run _pair() against a link that refuses the first `refusals`
+        writes, each write taking `write_s`; the clock is this case's own,
+        so a second of waiting takes no time here."""
+        radio = kble.BleakRadio(None, None)
+        clock, tries, said = [0.0], [], []
+
+        class Client:
+            async def write_gatt_char(self, _uuid, _data, response):
+                tries.append(response)
+                clock[0] += write_s
+                if len(tries) <= refusals:
+                    raise RuntimeError("Encryption is insufficient")
+
+        async def no_sleep(seconds):
+            clock[0] += seconds
+
+        radio.client = Client()
+        with mock.patch.object(kble.asyncio, "sleep", no_sleep), \
+                mock.patch.object(kble, "_clock", lambda: clock[0]):
+            ok = asyncio.run(radio._pair(said.append))
+        return ok, len(tries), said, clock[0]
+
+    def test_a_code_typed_twenty_seconds_in_is_waited_for(self):
+        ok, tries, said, _ = self.pair(20)
+        self.assertTrue(ok)
+        self.assertEqual(21, tries)
+        self.assertEqual([], said)
+
+    def test_a_pairing_nobody_answers_ends_and_says_why(self):
+        ok, _, said, took = self.pair(10 ** 6)
+        self.assertFalse(ok)
+        self.assertGreaterEqual(took, kble.PAIR_WAIT_S)
+        self.assertLess(took, kble.PAIR_WAIT_S + 2.0)
+        self.assertTrue(said[-1].startswith("failed to pair:"))
+
+    def test_the_wait_is_time_not_tries_when_a_write_is_slow(self):
+        # A write can sit for seconds while the Mac shows its dialog.
+        ok, tries, _, took = self.pair(10 ** 6, write_s=10.0)
+        self.assertFalse(ok)
+        self.assertLess(took, kble.PAIR_WAIT_S + 11.0)
+        self.assertLess(tries, 6)
+
+    def test_the_wait_outlasts_the_time_the_board_gives_a_pairing(self):
+        self.assertGreater(kble.PAIR_WAIT_S, kble.BOARD_PAIR_S)
+
+    def test_the_client_waits_out_a_scan_and_then_a_pairing(self):
+        self.assertGreaterEqual(kble.attach_wait(25.0), 25.0 + kble.PAIR_WAIT_S)
+
+
 class BridgeCase(unittest.TestCase):
     """A socket path of its own, and the clients to close at the end."""
 
@@ -332,6 +430,27 @@ class BridgeCase(unittest.TestCase):
 
 
 class HoldTests(BridgeCase):
+
+    def test_a_bridge_bound_but_not_listening_yet_is_waited_for(self):
+        # The socket's path appears at bind, a moment before listen; a client
+        # that dials in between is refused, and with no_launch that fails the
+        # case. Stretch that moment and the bridge must still be found.
+        real_listen = socket.socket.listen
+        slowed = []
+
+        def slow_listen(sock, *args):
+            slowed.append(sock)
+            time.sleep(0.3)
+            return real_listen(sock, *args)
+
+        with mock.patch.object(socket.socket, "listen", slow_listen):
+            bridge = Bridge(FakeRadio(), self.path)
+            bridge.start()
+        self.assertTrue(slowed, "the bridge never went through listen")
+        a, _ = self.attach()
+        a.close()
+        self.detach()
+        bridge.join()
 
     def test_second_client_attaches_without_a_new_scan(self):
         radio = FakeRadio()

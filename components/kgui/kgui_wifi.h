@@ -46,12 +46,27 @@ const char *kgui_radio_words(kgui_radio_view_t const *v);
  */
 const char *kgui_ble_pair_words(bool open, bool wait, bool linked);
 
+/** @brief Under this many dBm a network is heard too weakly to say a handshake
+ *         that timed out was the password's doing. */
+#define KGUI_WIFI_WEAK_DBM   (-75)
+
+/** @brief A network nobody heard before its join: a hidden one, whose name is typed. */
+#define KGUI_WIFI_RSSI_NONE  0
+
 /**
  * @brief Why a join failed, in the hint's words.
+ *
+ * A handshake that timed out is a wrong password or a signal that went during
+ * it, and the stack gives one reason for both. How the network was heard when
+ * it was chosen decides: weaker than KGUI_WIFI_WEAK_DBM it is the signal,
+ * otherwise the password. Each answer fits one line of the hint.
+ *
  * @param fail kdrv_wifi_fail_t, as WifiStateEvt carries it.
- * @return "Wrong password", "Network not found", or "Could not join".
+ * @param rssi How the network was heard when it was chosen, dBm, or
+ *             KGUI_WIFI_RSSI_NONE.
+ * @return "Wrong password", "Signal lost", "Network not found", or "Could not join".
  */
-const char *kgui_wifi_fail_words(uint8_t fail);
+const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi);
 
 /**
  * @brief Whether the Kode channel's wait means the network reaches nothing.
@@ -67,6 +82,30 @@ const char *kgui_wifi_fail_words(uint8_t fail);
  * @return true for a wait that says the network goes nowhere.
  */
 bool kgui_wifi_goes_nowhere(const char *why);
+
+/** @brief When the Wi-Fi page asks for its next sweep (kgui_wifi_scan_next()). */
+typedef enum {
+    KGUI_SCAN_NEXT_CYCLE = 0,  /**< At the page's own period.                */
+    KGUI_SCAN_NEXT_SOON        /**< Soon: the last question taught nothing.  */
+} kgui_scan_next_t;
+
+/**
+ * @brief When the Wi-Fi page asks for its next sweep, from how the last one ended.
+ *
+ * A sweep that reached its end is followed at the page's period. So is one
+ * somebody else's newer Wi-Fi request ended early - a scan, a join, Wi-Fi
+ * switched: whoever ended it has the radio, and a sweep asked for at once
+ * would end theirs in turn. A refusal or a failure taught nothing and took
+ * nobody's place, so the page asks again soon. So it does after a sweep the
+ * page's own join ended: the list is wanted back once the join is made, and
+ * a sweep waits for a join instead of ending it.
+ *
+ * @param ok       The sweep reached its end (WifiScanEndEvt.ok).
+ * @param cut      It was ended early for a newer request (WifiScanEndEvt.cut).
+ * @param own_join The page asked for a join while the sweep was out.
+ * @return KGUI_SCAN_NEXT_CYCLE or KGUI_SCAN_NEXT_SOON.
+ */
+kgui_scan_next_t kgui_wifi_scan_next(bool ok, bool cut, bool own_join);
 
 #ifdef __cplusplus
 }

@@ -55,14 +55,36 @@ void test_a_dead_radio_chip_is_never_on(void)
 
 void test_a_failed_join_says_why(void)
 {
+    /* A refusal that is no timeout is the password, said outright, however
+     * the network was heard. */
     TEST_ASSERT_EQUAL_STRING("Wrong password",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_PASSWORD));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_PASSWORD, -40));
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_PASSWORD, -90));
     TEST_ASSERT_EQUAL_STRING("Network not found",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NOT_FOUND));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NOT_FOUND, -40));
     TEST_ASSERT_EQUAL_STRING("Could not join",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_OTHER));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_OTHER, -40));
     TEST_ASSERT_EQUAL_STRING("Could not join",
-                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NONE));
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_NONE, -40));
+}
+
+void test_a_handshake_that_timed_out_is_told_by_the_signal(void)
+{
+    /* The stack gives one reason for a wrong password and for a signal that
+     * went during the handshake: how the network was heard decides. */
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE, -40));
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                  (int8_t)KGUI_WIFI_WEAK_DBM));
+    TEST_ASSERT_EQUAL_STRING("Signal lost",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                  (int8_t)(KGUI_WIFI_WEAK_DBM - 1)));
+    /* A hidden network was never heard: the password is the likelier of the two. */
+    TEST_ASSERT_EQUAL_STRING("Wrong password",
+                             kgui_wifi_fail_words((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                  (int8_t)KGUI_WIFI_RSSI_NONE));
 }
 
 void test_only_a_wait_with_no_answer_goes_nowhere(void)
@@ -92,6 +114,29 @@ void test_pair_new_device_says_visible_only_with_the_link_free(void)
                              kgui_ble_pair_words(true, false, true));
 }
 
+void test_a_sweep_ended_for_a_newer_request_is_not_asked_again_at_once(void)
+{
+    /* A whole sweep, and one somebody else's newer Wi-Fi request ended: the
+     * page waits its period. Asked again at once, it would end theirs in turn. */
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(true, false, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(false, true, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(true, true, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_CYCLE, kgui_wifi_scan_next(true, false, true));
+}
+
+void test_a_refused_or_failed_sweep_is_asked_again_soon(void)
+{
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_SOON, kgui_wifi_scan_next(false, false, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_SOON, kgui_wifi_scan_next(false, false, true));
+}
+
+void test_a_sweep_the_pages_own_join_ended_is_asked_again_soon(void)
+{
+    /* The list is wanted back once the join is made, and a sweep waits for a
+     * join: asking soon ends nobody's request. */
+    TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_SOON, kgui_wifi_scan_next(false, true, true));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -100,7 +145,11 @@ int main(void)
     RUN_TEST(test_wifi_off_its_network_says_it_is_getting_back);
     RUN_TEST(test_a_dead_radio_chip_is_never_on);
     RUN_TEST(test_a_failed_join_says_why);
+    RUN_TEST(test_a_handshake_that_timed_out_is_told_by_the_signal);
     RUN_TEST(test_only_a_wait_with_no_answer_goes_nowhere);
     RUN_TEST(test_pair_new_device_says_visible_only_with_the_link_free);
+    RUN_TEST(test_a_sweep_ended_for_a_newer_request_is_not_asked_again_at_once);
+    RUN_TEST(test_a_refused_or_failed_sweep_is_asked_again_soon);
+    RUN_TEST(test_a_sweep_the_pages_own_join_ended_is_asked_again_soon);
     return UNITY_END();
 }

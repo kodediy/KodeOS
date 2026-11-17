@@ -3,6 +3,8 @@
  * @file test_kgui_rest.c
  * @brief Host tests of Rest's numbers (kgui_rest.h).
  */
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "unity.h"
@@ -34,6 +36,83 @@ void test_the_cycle_stays_near_home(void)
 
         TEST_ASSERT_TRUE((o.x >= -KGUI_REST_SHIFT_PX) && (KGUI_REST_SHIFT_PX >= o.x));
         TEST_ASSERT_TRUE((o.y >= -KGUI_REST_SHIFT_PX) && (KGUI_REST_SHIFT_PX >= o.y));
+    }
+}
+
+/** @brief How far apart two places are on one axis. */
+static int32_t apart(int32_t a, int32_t b)
+{
+    int32_t d = b - a;
+
+    if ( 0 > d )
+    {
+        d = -d;
+    }
+    return d;
+}
+
+void test_a_step_of_the_cycle_is_one_pixel_on_each_axis(void)
+{
+    for ( uint32_t i = 0U; i < KGUI_REST_CYCLE_LEN; ++i )
+    {
+        kgui_rest_offset_t const a = kgui_rest_offset(i);
+        kgui_rest_offset_t const b = kgui_rest_offset(i + 1U);
+
+        TEST_ASSERT_EQUAL_INT(1, apart(a.x, b.x));
+        TEST_ASSERT_EQUAL_INT(1, apart(a.y, b.y));
+    }
+}
+
+void test_the_cycle_starts_at_home_and_comes_back_to_it(void)
+{
+    kgui_rest_offset_t const first = kgui_rest_offset(0U);
+    kgui_rest_offset_t const again = kgui_rest_offset(KGUI_REST_CYCLE_LEN);
+    bool far_x = false;
+    bool far_y = false;
+
+    TEST_ASSERT_EQUAL_INT(0, first.x);
+    TEST_ASSERT_EQUAL_INT(0, first.y);
+    TEST_ASSERT_EQUAL_INT(0, again.x);
+    TEST_ASSERT_EQUAL_INT(0, again.y);
+    for ( uint32_t i = 0U; i < KGUI_REST_CYCLE_LEN; ++i )
+    {
+        kgui_rest_offset_t const o = kgui_rest_offset(i);
+
+        far_x = far_x || (KGUI_REST_SHIFT_PX == o.x);
+        far_y = far_y || ((KGUI_REST_SHIFT_PX - 1) == o.y);
+    }
+    TEST_ASSERT_TRUE(far_x);
+    TEST_ASSERT_TRUE(far_y);
+}
+
+void test_a_rest_starts_on_an_even_place_past_the_one_before(void)
+{
+    uint32_t at = 0U;
+
+    for ( uint32_t i = 0U; i < (2U * KGUI_REST_CYCLE_LEN); ++i )
+    {
+        uint32_t const next = kgui_rest_start(at);
+        kgui_rest_offset_t const o = kgui_rest_offset(next);
+
+        TEST_ASSERT_TRUE(KGUI_REST_CYCLE_LEN > next);
+        TEST_ASSERT_NOT_EQUAL(at % KGUI_REST_CYCLE_LEN, next);
+        TEST_ASSERT_EQUAL_INT(0, o.x % 2);
+        TEST_ASSERT_EQUAL_INT(0, o.y % 2);
+        at = next + (i % 3U);   /* minutes of that Rest, some of them odd */
+    }
+}
+
+void test_the_glass_sleeps_on_the_even_place_at_or_next_to_the_content(void)
+{
+    for ( uint32_t i = 0U; i < KGUI_REST_CYCLE_LEN; ++i )
+    {
+        uint32_t const even = kgui_rest_even(i);
+        kgui_rest_offset_t const o = kgui_rest_offset(even);
+
+        TEST_ASSERT_TRUE(KGUI_REST_CYCLE_LEN > even);
+        TEST_ASSERT_EQUAL_UINT32((i + (i % 2U)) % KGUI_REST_CYCLE_LEN, even);
+        TEST_ASSERT_EQUAL_INT(0, o.x % 2);
+        TEST_ASSERT_EQUAL_INT(0, o.y % 2);
     }
 }
 
@@ -86,11 +165,37 @@ void test_the_time_left_never_goes_below_zero(void)
     TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_left_ms(UINT32_MAX, 1800000U));
 }
 
+void test_the_time_to_off_is_read_from_the_settings_word(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(1200000U, kgui_rest_off_ms("20m", 5U));
+    TEST_ASSERT_EQUAL_UINT32(3600000U, kgui_rest_off_ms("1h", 5U));
+    TEST_ASSERT_EQUAL_UINT32(86400000U, kgui_rest_off_ms("24h", 5U));
+    TEST_ASSERT_EQUAL_UINT32(604800000U, kgui_rest_off_ms("7d", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("never", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("20x", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("20mm", 5U));
+    TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, kgui_rest_off_ms("90d", 5U));
+}
+
+void test_no_word_heard_yet_is_the_default(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(5U, kgui_rest_off_ms("", 5U));
+    TEST_ASSERT_EQUAL_UINT32(5U, kgui_rest_off_ms(NULL, 5U));
+}
+
+void test_a_number_with_no_unit_is_never(void)
+{
+    /* Read to its end and no further: a build with a sanitizer stops here on
+     * a byte read past the terminator. */
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("20", 5U));
+    TEST_ASSERT_EQUAL_UINT32(0U, kgui_rest_off_ms("7", 5U));
+}
+
 void test_the_hour_moves_with_the_cycle_on_even_pixels(void)
 {
     for ( uint32_t i = 0U; i < KGUI_REST_CYCLE_LEN; ++i )
     {
-        kgui_rest_offset_t const at = kgui_rest_offset(i);
+        kgui_rest_offset_t const at = kgui_rest_offset(kgui_rest_even(i));
         uint16_t x = 0U;
         uint16_t y = 0U;
 
@@ -132,10 +237,17 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_the_times_are_ticks_of_33);
     RUN_TEST(test_the_cycle_stays_near_home);
+    RUN_TEST(test_a_step_of_the_cycle_is_one_pixel_on_each_axis);
+    RUN_TEST(test_the_cycle_starts_at_home_and_comes_back_to_it);
+    RUN_TEST(test_a_rest_starts_on_an_even_place_past_the_one_before);
+    RUN_TEST(test_the_glass_sleeps_on_the_even_place_at_or_next_to_the_content);
     RUN_TEST(test_a_settled_rest_on_the_battery_asks_to_sleep);
     RUN_TEST(test_rest_does_not_ask_while_anything_moves_or_on_a_cable);
     RUN_TEST(test_an_ask_is_not_repeated_until_its_time);
     RUN_TEST(test_the_time_left_never_goes_below_zero);
+    RUN_TEST(test_the_time_to_off_is_read_from_the_settings_word);
+    RUN_TEST(test_no_word_heard_yet_is_the_default);
+    RUN_TEST(test_a_number_with_no_unit_is_never);
     RUN_TEST(test_the_hour_moves_with_the_cycle_on_even_pixels);
     RUN_TEST(test_an_odd_home_goes_down_to_even);
     RUN_TEST(test_an_hour_off_the_glass_is_not_written);

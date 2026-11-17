@@ -910,6 +910,11 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 BLE_SVC_UUID = "4b4f4445-0001-4f53-a2d1-7c0e9b5f3a61"
 BLE_RX_UUID = "4b4f4445-0002-4f53-a2d1-7c0e9b5f3a61"
 BLE_TX_UUID = "4b4f4445-0003-4f53-a2d1-7c0e9b5f3a61"
+
+# How long the write that provokes the pairing is tried again: past the 30 s
+# the board gives a pairing, which a person may be answering with a passkey.
+# The same wait kble.py gives it.
+BLE_PAIR_WAIT_S = 35.0
 BLE_MIRROR_UUID = "4b4f4445-0004-4f53-a2d1-7c0e9b5f3a61"
 
 BLE_CACHE = os.path.expanduser("~/Library/Caches/kode-kmirror")
@@ -942,16 +947,19 @@ async def _ble_pair(client, say):
     why a WRITE and not a subscribe is what actually triggers it on a Mac,
     and why the first attempt is expected to fail. Duplicated rather than
     imported: this bridge has no dependency on kble.py at all, and the
-    six-line retry loop is cheaper to repeat than to couple two otherwise
-    unrelated tools over."""
+    short retry loop is cheaper to repeat than to couple two otherwise
+    unrelated tools over. It waits BLE_PAIR_WAIT_S, as kble.py does."""
     last = None
-    for _ in range(6):
+    end = time.monotonic() + BLE_PAIR_WAIT_S
+    while True:
         try:
             await client.write_gatt_char(BLE_RX_UUID, b"\n", response=True)
             return True
         except Exception as exc:              # noqa: BLE001 - any refusal
             last = exc
-            await asyncio.sleep(1.0)
+        if time.monotonic() >= end:
+            break
+        await asyncio.sleep(1.0)
     say(f"failed to pair: {last}")
     return False
 

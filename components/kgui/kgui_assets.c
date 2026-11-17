@@ -63,14 +63,15 @@ typedef enum {
 /** @brief The job running. */
 typedef enum {
     JOB_IDLE = 0,  /**< None. */
-    JOB_RESOLVE,   /**< Choosing the source and loading its roles. */
+    JOB_RESOLVE,   /**< Choosing the source. */
+    JOB_ROLES,     /**< The roles' files, once the face has its scene. */
     JOB_LOAD,      /**< One face file the face asked for. */
     JOB_CHECK,     /**< assets_check. */
     JOB_BEGIN,     /**< assets_begin. */
     JOB_COMMIT,    /**< assets_commit, and the boot's recovery. */
     JOB_UPDATE,    /**< assets_update. */
     JOB_TRY,       /**< assets_try. */
-    JOB_PROBE      /**< Is the card's manifest still there? (a card file was missing) */
+    JOB_PROBE      /**< Does the card's manifest agree with the active source? */
 } job_t;
 
 /** @brief Everything the module knows. */
@@ -106,7 +107,8 @@ static struct {
     bool           resolve_owed;
     bool           resolve_due;     /* a busy reader: resolve at resolve_at_ms */
     uint32_t       resolve_at_ms;
-    bool           sd_probe;        /* a card file was missing: is the card's pack? */
+    bool           sd_probe;        /* look at the card's manifest: a card file was missing, or the boot read the inside first */
+    bool           roles_owed;      /* the active pack's roles are read once the face's loads are done */
     bool           cand_busy;       /* the last manifest read found storage busy */
     /* The loads the face asked for. */
     uint16_t  want[ASSETS_WANT_MAX];
@@ -471,6 +473,8 @@ static void say_source(bool state)
 
 /* ---- The gatherer: one file, read whole, into one PSRAM block --------------- */
 
+static void gather_fail(kode_status_t rc);
+
 /**
  * @brief Start reading a whole file from a path or a URL.
  * @param net   true for a URL (AO_Net's stream), false for a path.
@@ -492,7 +496,11 @@ static void gather(bool net, const char *where, uint32_t limit)
     s_a.g_probing = false;
     if ( net )
     {
+#if CONFIG_KODEOS_NET
         net_stream_open_request(s_a.g_where, s_a.ao);
+#else
+        gather_fail(KODE_DENIED);          /* no AO_Net: no URL opens */
+#endif
     }
     else
     {
@@ -503,11 +511,13 @@ static void gather(bool net, const char *where, uint32_t limit)
 /** @brief Close the gather's file or stream; buffers on loan go back with it. */
 static void gather_close(void)
 {
+#if CONFIG_KODEOS_NET
     if ( s_a.g_net )
     {
         net_stream_close_request();
     }
     else
+#endif
     {
         storage_close_request();
     }
@@ -569,11 +579,13 @@ static void gather_opened(StorageOpenRspEvt const * const r)
         gather_fail(KODE_NO_RESOURCES);
         return;
     }
+#if CONFIG_KODEOS_NET
     if ( s_a.g_net )
     {
         net_stream_read_request();
     }
     else
+#endif
     {
         storage_read_request();
     }
@@ -624,11 +636,13 @@ static void gather_data(StorageDataEvt const * const d)
 {
     const uint8_t *src = NULL;
 
+#if CONFIG_KODEOS_NET
     if ( s_a.g_net )
     {
         src = net_stream_buf(d->idx);
     }
     else
+#endif
     {
         src = storage_buf(d->idx);
     }
@@ -655,10 +669,12 @@ static void gather_data(StorageDataEvt const * const d)
         s_a.op = OP_NONE;
         post_result(KODE_OK, true);
     }
+#if CONFIG_KODEOS_NET
     else if ( s_a.g_net )
     {
         net_stream_return(d->idx);         /* a return IS the next read */
     }
+#endif
     else
     {
         storage_next_request(d->idx);
@@ -730,7 +746,7 @@ static void assets_write_op(const char *path, uint8_t *blk, uint32_t len)
     s_a.op       = OP_WRITE;
     s_a.op_t0_ms = khal_time_ms();
     s_a.wblk     = blk;
-    storage_write_all_request(path, blk, len, s_a.ao);
+    storage_write_all_request(path, blk, len, s_a.ao, KODE_STORAGE_TAG_NONE);
 }
 
 /** @brief Ask AO_Storage how much room the internal FAT has. */
@@ -1172,6 +1188,12 @@ static void resolve_done(void)
 
 /**
  * @brief The resolution's steps (spec section 6.1).
+ *
+ * A pack on the card wins. The boot's first resolution reads the internal
+ * FAT's all the same: the card mounts a second or more after the face is
+ * ready, and Kody waits for his pack. The card is looked at once his scene
+ * is read (JOB_PROBE), and a pack there is resolved again then.
+ *
  * @param rc     How the last operation ended.
  * @param exists Unused here.
  */
@@ -1181,8 +1203,17 @@ static void resolve_step(kode_status_t rc, bool exists)
     switch ( s_a.step )
     {
         case 0U: {
-            s_a.step = 1U;
-            gather(false, ASSETS_SD_DIR "/" ASSETS_MANIFEST, KUI_PACK_MANIFEST_MAX);
+            if ( s_a.ready )
+            {
+                s_a.step = 1U;
+                gather(false, ASSETS_SD_DIR "/" ASSETS_MANIFEST, KUI_PACK_MANIFEST_MAX);
+            }
+            else
+            {
+                s_a.step     = 2U;
+                s_a.sd_probe = true;
+                gather(false, ASSETS_FS_DIR "/" ASSETS_MANIFEST, KUI_PACK_MANIFEST_MAX);
+            }
             break;
         }
         case 1U: {
@@ -1231,32 +1262,41 @@ static void resolve_step(kode_status_t rc, bool exists)
             }
             break;
         }
-        case 4U: {
-            /* A role's file answered. */
-            uint32_t len = 0U;
-            uint8_t *const blk = gather_take(&len);
-
-            file_settle(s_a.pack.role[s_a.i], rc, blk, len);
-            s_a.i++;
-            if ( !role_next() )
-            {
-                resolve_done();
-            }
-            break;
-        }
         default: {
             break;
         }
     }
     if ( 3U == s_a.step )
     {
-        s_a.step = 4U;
         activate();
-        s_a.i = 0U;
-        if ( (KUI_PACK_SRC_BUILTIN == s_a.src) || (!role_next()) )
-        {
-            resolve_done();
-        }
+        s_a.roles_owed = (KUI_PACK_SRC_BUILTIN != s_a.src);
+        resolve_done();
+    }
+}
+
+/**
+ * @brief The roles' steps: their files, read after the face's (kgui_assets_poll()).
+ *
+ * The face's scene comes first: the roles are played by screens that open
+ * later (the empty launcher, the guided tests' wheel), and both play nothing
+ * while their file is not read yet.
+ *
+ * @param rc How the last read ended.
+ */
+static void roles_step(kode_status_t rc)
+{
+    if ( 0U != s_a.step )
+    {
+        uint32_t len = 0U;
+        uint8_t *const blk = gather_take(&len);
+
+        file_settle(s_a.pack.role[s_a.i], rc, blk, len);
+        s_a.i++;
+    }
+    s_a.step = 1U;
+    if ( !role_next() )
+    {
+        job_end();
     }
 }
 
@@ -2328,12 +2368,17 @@ static void try_step(kode_status_t rc)
 }
 
 /**
- * @brief The card's probe: a card file was missing - is its manifest still
- *        there?
+ * @brief The card's probe: does its manifest agree with the active source?
  *
- * Gone (the card came out, or its pack did): resolve again. There: the pack
- * names a file the card does not carry, which stays dead until the pack is
- * read again - no loop of resolutions over one missing file.
+ * Asked when a card file was missing, and once the boot's resolution, which
+ * reads the internal FAT first, has the face's scene read. The stat waits
+ * for the card to mount.
+ *
+ * The card's pack is active and its manifest is gone (the card came out, or
+ * its pack did), or another source is active and the card has a manifest:
+ * resolve again. The card's pack is active and its manifest is there: the
+ * pack names a file the card does not carry, which stays dead until the pack
+ * is read again - no loop of resolutions over one missing file.
  *
  * @param rc     How the stat ended.
  * @param exists Whether the manifest is there.
@@ -2347,11 +2392,23 @@ static void probe_step(kode_status_t rc, bool exists)
     }
     else
     {
+        bool const on_card = (KODE_OK == rc) && exists;
+        bool const active  = (KUI_PACK_SRC_SD == s_a.src);
+
         job_end();
-        if ( (KODE_OK != rc) || (!exists) )
+        if ( active && (!on_card) )
         {
             KLOG_N(TAG, "assets: the card's pack is gone; resolving again");
             resolve_soon();
+        }
+        else if ( (!active) && on_card )
+        {
+            KLOG_N(TAG, "assets: a pack on the card; resolving again");
+            resolve_soon();
+        }
+        else
+        {
+            /* The card agrees with the active source. */
         }
     }
 }
@@ -2367,6 +2424,10 @@ static void job_step(kode_status_t rc, bool exists)
     {
         case JOB_RESOLVE: {
             resolve_step(rc, exists);
+            break;
+        }
+        case JOB_ROLES: {
+            roles_step(rc);
             break;
         }
         case JOB_LOAD: {
@@ -2594,14 +2655,21 @@ void kgui_assets_poll(uint32_t now_ms)
         s_a.resolve_owed = false;
         job_start(JOB_RESOLVE);
     }
-    else if ( (JOB_IDLE == s_a.job) && s_a.sd_probe )
-    {
-        s_a.sd_probe = false;
-        job_start(JOB_PROBE);
-    }
     else if ( (JOB_IDLE == s_a.job) && (0U < s_a.n_want) && (NULL != s_a.rt) )
     {
+        /* The face's files first: Kody waits for them. */
         load_next();
+    }
+    else if ( (JOB_IDLE == s_a.job) && s_a.roles_owed && (NULL != s_a.rt) )
+    {
+        s_a.roles_owed = false;
+        job_start(JOB_ROLES);
+    }
+    else if ( (JOB_IDLE == s_a.job) && s_a.sd_probe )
+    {
+        /* Last: the stat waits for the card to mount. */
+        s_a.sd_probe = false;
+        job_start(JOB_PROBE);
     }
     else
     {

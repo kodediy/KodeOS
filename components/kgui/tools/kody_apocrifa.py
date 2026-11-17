@@ -9,8 +9,9 @@ Writes, from the animations the apocrifa compiles:
                                     then run the kit's tools/kodygen.py for the pack
   components/kgui/kgui_kody_rest*   what the pack format has no slot for, compiled into
                                     kgui: each scene's <scene>_duerme (falling asleep in
-                                    colour) and <scene>_bn (the rest, white outline on
-                                    black, decision 0016 of the apocrifa), and <scene>_pk.
+                                    colour) and <scene>_bn (the rest, outline on black,
+                                    decision 0016 of the apocrifa, in the clock's ink
+                                    instead of its white), and <scene>_pk.
 
 <scene>_pk is the one file the apocrifa does not have, because it wakes on one press:
 the first press at Rest shows Kody's blue and face in colour with the rest of the scene
@@ -48,6 +49,11 @@ SCENES = [
 OUTLINED = [s for s, _, _ in SCENES if s != "reloj"]  # the apocrifa has no reloj_bn
 JOKES = ("tren", "parque", "camping", "azotea", "madrugada")  # SETS' .chiste
 BLACK = {"#131313": "#000000"}
+# The outline at Rest is drawn in the ink of the clock above it (KUI_COLOR_TEXT_ON_BG), not
+# in the apocrifa's white: on the glass the two read as one drawing.
+INK = re.search(r"#define\s+KUI_PALETTE_LIGHT_GREY\s+0x([0-9A-Fa-f]{6})U",
+                (KIT / "core/include/kui_tokens.h").read_text()).group(1).upper()
+OUTLINE = {"#FFFFFF": f"#{INK}"}
 SLEEP_FROM_PCT = 40   # where <scene>_duerme starts: f32 of 80, the lids falling
 SLEEP_FPS = 45        # and half as fast again as it was drawn
 
@@ -88,8 +94,17 @@ def dormido(apo, kody, scene):
     return json.loads(p.read_text())
 
 
-def colour_postura(trazo, doc):
-    """trazo.pintar_trazo, with Kody's own group kept out of it."""
+def ink(kodygen, doc):
+    """The outline's white, in the clock's ink; exits if the document has no white to take."""
+    counts = {old: 0 for old in OUTLINE}
+    for L in doc["layers"]:
+        kodygen.recolour_items(L.get("shapes", []), OUTLINE, counts)
+    if not all(counts.values()):
+        sys.exit("kody_apocrifa: no white outline to draw in the clock's ink")
+
+
+def colour_postura(trazo, kodygen, doc):
+    """trazo.pintar_trazo, with Kody's own group kept out of it and of the outline's ink."""
     kept = []
 
     def lift(n):
@@ -106,6 +121,7 @@ def colour_postura(trazo, doc):
 
     lift(doc)
     trazo.pintar_trazo(doc)
+    ink(kodygen, doc)
     for n, it in kept:
         n["it"] = it
     if not kept:
@@ -199,10 +215,12 @@ def main():
         docs = [("sleep", f"{s}_duerme", duerme)]
         if s in OUTLINED:
             row["rest"], row["peek"] = f"{s}_bn", f"{s}_pk"
-            docs.append(("rest", f"{s}_bn", json.loads(compiled(apo, f"escena_{s}_bn"))))
+            bn = json.loads(compiled(apo, f"escena_{s}_bn"))
+            ink(kodygen, bn)
+            docs.append(("rest", f"{s}_bn", bn))
             pk = dormido(apo, kody, s)
             trazo.congelar_kody(pk["layers"][0]["shapes"])
-            colour_postura(trazo, pk)
+            colour_postura(trazo, kodygen, pk)
             docs.append(("peek", f"{s}_pk", pk))
         for _, name, doc in docs:
             found = kodygen.lint(name, doc)
@@ -223,6 +241,8 @@ def main():
                 f"    .zlib = z_{name}, .zlib_len = {len(z)}U, .json_len = {json_len}U,",
                 f"    .w = 410U, .h = 334U, .frames = {frames}U, .fps = {fps}U, .anchor = 0U, .deflated = true,",
                 "};", ""]
+    out.append("/* cppcheck-suppress misra-c2012-8.9 ; the scene table, generated, is read by "
+               "kgui_kody_rest_of() alone but sits with the data it points at */")
     out.append("static const struct { const char *scene; kgui_kody_rest_t rest; } s_scenes[] = {")
     for s, r in table:
         ref = lambda k: f"&a_{r[k]}" if r[k] else "NULL"

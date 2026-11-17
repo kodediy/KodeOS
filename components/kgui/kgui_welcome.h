@@ -13,18 +13,19 @@
 extern "C" {
 #endif
 
-#define KGUI_WELCOME_KEY      "welcome"          /**< The key, in the apps' namespace (KODE_NVS_NAMESPACE), where the app writes it. */
-#define KGUI_WELCOME_PENDING  "pending"          /**< The app reached its last screen. */
-#define KGUI_WELCOME_DONE     "done"             /**< The person was greeted. */
-#define KGUI_WELCOME_TEXT     "You're all set."  /**< What Kody reads. */
+#define KGUI_WELCOME_KEY      "welcome"                      /**< The key, in the apps' namespace (KODE_NVS_NAMESPACE), where the app writes it. */
+#define KGUI_WELCOME_PENDING  "pending"                      /**< The app reached its last screen. */
+#define KGUI_WELCOME_DONE     "done"                         /**< The person was greeted. */
+#define KGUI_WELCOME_TEXT     "Hi! Join Wi-Fi in Settings."  /**< What Kody reads: the next step, on one line of the face's notice. */
 
-#define KGUI_WELCOME_GREET_MS 1800U  /**< From Kody starting to wake to the greeting: kshell's GREET_DELAY_MS. */
+#define KGUI_WELCOME_GREET_MS 1800U  /**< From Kody being put in his scene to the greeting: kshell's GREET_DELAY_MS. */
 
 /** @brief The landing's mark, read once at boot. */
 typedef struct {
     bool     pending;  /**< The key said `pending`, and the greeting has not come. */
-    bool     armed;    /**< Kody has started to wake: the clock runs. */
-    uint32_t woke_ms;  /**< When he did. */
+    bool     armed;    /**< Kody has been put in his scene: the clock runs. */
+    uint32_t woke_ms;  /**< When he was. */
+    bool     said;     /**< The greeting went to the face this boot, and its line is not through. */
 } kgui_welcome_t;
 
 /**
@@ -54,13 +55,33 @@ void kgui_welcome_drop(kgui_welcome_t *w);
  * @brief Whether the greeting goes now. It answers true once.
  *
  * @param w      The mark.
- * @param woke   Kody has started to wake.
+ * @param woke   Kody has been put in his scene, waking up or in his loop.
  * @param bare   Nothing covers the face.
  * @param now_ms The clock.
- * @return true when KGUI_WELCOME_GREET_MS have passed since he started to wake
- *         and the face is bare; the mark is spent then.
+ * @return true when KGUI_WELCOME_GREET_MS have passed since he was and the
+ *         face is bare; the mark is spent then.
  */
 bool kgui_welcome_due(kgui_welcome_t *w, bool woke, bool bare, uint32_t now_ms);
+
+/**
+ * @brief The face's notices, read on every tick: the greeting's line is
+ *        through once no notice waits for the face or shows on it.
+ *
+ * @param w      The mark.
+ * @param notice A notice waits for the face or is on it.
+ */
+void kgui_welcome_notice(kgui_welcome_t *w, bool notice);
+
+/**
+ * @brief Whether the greeting still has the face: owed, or said and its line
+ *        not through.
+ *
+ * @param w      The mark.
+ * @param notice A notice waits for the face or is on it.
+ * @return true while the greeting is owed, and from the tick it is said
+ *         until no notice is left on the face.
+ */
+bool kgui_welcome_greeting(const kgui_welcome_t *w, bool notice);
 
 /**
  * @brief Whether the console may write a word in the key.

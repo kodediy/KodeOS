@@ -54,7 +54,9 @@ void kgui_assets_init(QActive *ao, kgui_assets_notify_fn notify);
  * @brief Finish an interrupted install, then resolve the source.
  *
  * Once, when the panel is up and the face is about to be shown. Ends in
- * KGUI_ASSETS_EV_RESOLVED.
+ * KGUI_ASSETS_EV_RESOLVED. This first resolution reads the internal FAT's
+ * pack without waiting for the card to mount; the card is looked at once
+ * the face's scene is read, and a pack there is resolved again then.
  */
 void kgui_assets_start(void);
 
@@ -73,6 +75,10 @@ bool kgui_assets_on_event(QEvt const *e);
 
 /**
  * @brief Drive retries, the operation timeout and the queued loads.
+ *
+ * The face's files go first; then the roles' files, then a look at the
+ * card's manifest (which waits for the card to mount).
+ *
  * @param now_ms khal_time_ms(), from every render tick.
  */
 void kgui_assets_poll(uint32_t now_ms);

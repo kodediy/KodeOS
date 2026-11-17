@@ -63,7 +63,7 @@ jobs:
       - name: The kit's tokens match their header
         run: python3 sdk/components/kui/tools/gen_tokens.py --check
 
-      # tools/tests/test_kappdata.py builds its test PNG with Pillow, and the
+      # tools/tests/test_kappdata.py and test_factory.py need Pillow, and the
       # runner's python3 does not carry it. Ubuntu's own package rather than
       # pip, because the system python refuses pip installs (PEP 668).
       - name: Install Pillow for the tools' tests

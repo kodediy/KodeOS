@@ -2,11 +2,13 @@
 /**
  * @file kgui_osrel.h
  * @brief The kodeOS release the update service names: reading its answer,
- *        telling a newer version, and what About's row says about it.
+ *        telling a newer version, what About's row says about it, and the
+ *        card that offers it at boot.
  *
- * Pure: no LVGL and no network. AO_Gui asks the service when About opens
- * and feeds what it hears; everything decided about the answer is decided
- * here.
+ * Pure: no LVGL and no network. AO_Gui asks the service once Wi-Fi has its
+ * first address after the boot (again, a few times, when that question never
+ * reached the service) and when About opens, and feeds what it hears;
+ * everything decided about the answer is decided here.
  */
 #ifndef KGUI_OSREL_H
 #define KGUI_OSREL_H
@@ -26,7 +28,7 @@ extern "C" {
 #define KGUI_OSREL_GROUP_DIGITS 4U         /**< The most digits one group has. */
 #define KGUI_OSREL_URL_MAX      128U       /**< The link of a release's file, terminator included. */
 #define KGUI_OSREL_ANSWER_MAX   512U       /**< The most of the service's answer that is read, in bytes. */
-#define KGUI_OSREL_TEXT_MAX     48U        /**< The row's words, terminator included. */
+#define KGUI_OSREL_TEXT_MAX     48U        /**< The row's words, or a line of the card's, terminator included. */
 #define KGUI_OSREL_MIN_PCT      20U        /**< Under this charge, with no cable, an update is not started. */
 
 /** @brief The release the service names. */
@@ -41,7 +43,8 @@ typedef enum {
     KGUI_OSREL_ASKING,      /**< A question is on its way. */
     KGUI_OSREL_CURRENT,     /**< The service names nothing newer than what runs. */
     KGUI_OSREL_AVAILABLE,   /**< The service names a newer version. */
-    KGUI_OSREL_FAILED       /**< The last question got no usable answer. */
+    KGUI_OSREL_FAILED,      /**< The last question got no usable answer. */
+    KGUI_OSREL_UNREACHED    /**< The last question never reached the service: AO_Net refused it (its one worker busy) or did not take it. */
 } kgui_osrel_check_t;
 
 /** @brief What About's "Software update" row says. */
@@ -132,6 +135,126 @@ bool kgui_osrel_row_asks(kgui_osrel_row_t row);
  * @param size    Bytes @p out holds; KGUI_OSREL_TEXT_MAX fits every state.
  */
 void kgui_osrel_row_text(kgui_osrel_row_t row, const char *version, char *out, size_t size);
+
+/* ---- The card at boot -------------------------------------------------------- */
+
+#define KGUI_OSREL_CARD_WORD    "kodeOS"                 /**< The card's protagonist, as the write that follows wears it. */
+#define KGUI_OSREL_CARD_TITLE   "New release available"  /**< The card's first line. */
+#define KGUI_OSREL_CARD_BUTTON  "Update"                 /**< Its one button. */
+
+#define KGUI_OSREL_BOOT_ASKS     4U     /**< The most times the boot's question goes out: the first, and again while it never reaches the service. */
+#define KGUI_OSREL_BOOT_AGAIN_MS 5000U  /**< The wait before the boot's question goes out again, in milliseconds. */
+
+/** @brief Where the boot's offer stands: one per boot. */
+typedef enum {
+    KGUI_OSREL_OFFER_UNASKED = 0,  /**< Wi-Fi has had no address since the boot: nothing asked yet. */
+    KGUI_OSREL_OFFER_ASKED,        /**< The boot's question is out: its answer decides. */
+    KGUI_OSREL_OFFER_DUE,          /**< A newer version: the card waits for the glass. */
+    KGUI_OSREL_OFFER_SHOWN,        /**< The card rose: not again until the next boot. */
+    KGUI_OSREL_OFFER_NONE,         /**< Nothing to offer this boot. */
+    KGUI_OSREL_OFFER_AGAIN         /**< The boot's question never reached the service: it goes out again after KGUI_OSREL_BOOT_AGAIN_MS. */
+} kgui_osrel_offer_t;
+
+/** @brief The screen state AO_Gui is in, as the card's rule reads it. */
+typedef enum {
+    KGUI_OSREL_SCREEN_OTHER = 0,  /**< None of the three: the boot's wait, the way back from an app, a test, asleep. */
+    KGUI_OSREL_SCREEN_FACE,       /**< The face, awake or at Rest. */
+    KGUI_OSREL_SCREEN_APPS,       /**< Apps. */
+    KGUI_OSREL_SCREEN_SETTINGS    /**< The settings screen. */
+} kgui_osrel_screen_t;
+
+/** @brief What holds the glass, for the card's rule. */
+typedef struct {
+    kgui_osrel_screen_t screen;     /**< The screen state AO_Gui is in. */
+    bool                rest;       /**< The face is at Rest. */
+    bool                card;       /**< A card is up, or one is still leaving the glass. */
+    bool                prompt;     /**< The face's yellow pill asked for its page, which has not risen yet. */
+    bool                locked;     /**< A locked card is up. */
+    bool                writing;    /**< A flash write runs. */
+    bool                deciding;   /**< An install from the card waits for AO_AppMgr's word on what it would evict. */
+    bool                resetting;  /**< The factory reset was asked and has not ended. */
+    bool                parked;     /**< The glass is handed over: the board rests. */
+    bool                moving;     /**< A curtain, a door or the list moves. */
+    bool                hand;       /**< A finger is on the glass or a button is down. */
+    bool                greeting;   /**< The welcome's greeting waits for the face, or its line is not through. */
+} kgui_osrel_glass_t;
+
+/** @brief What the card's button can do now. */
+typedef enum {
+    KGUI_OSREL_CARD_READY = 0,  /**< It installs. */
+    KGUI_OSREL_CARD_OFFLINE,    /**< Grey: no network to fetch the release with. */
+    KGUI_OSREL_CARD_CHARGE      /**< Grey: under KGUI_OSREL_MIN_PCT with no cable. */
+} kgui_osrel_card_t;
+
+/**
+ * @brief Where the offer stands once the check has moved.
+ *
+ * Called after the boot's question goes out and on every answer. The first
+ * answer that reached the service decides: a newer version is due, anything
+ * else is no offer. A question that never reached it is asked again while
+ * fewer than KGUI_OSREL_BOOT_ASKS have gone out. A due offer goes only when
+ * a later answer says nothing is newer.
+ *
+ * @param offer Where it stood.
+ * @param check Where the check stands now.
+ * @param asks  How many times the boot's question has gone out.
+ * @return Where it stands.
+ */
+kgui_osrel_offer_t kgui_osrel_offer_follow(kgui_osrel_offer_t offer, kgui_osrel_check_t check,
+                                           uint8_t asks);
+
+/**
+ * @brief The card is on the glass: a due offer is spent for this boot.
+ * @param offer Where it stood.
+ * @return KGUI_OSREL_OFFER_SHOWN from DUE or SHOWN; @p offer otherwise.
+ */
+kgui_osrel_offer_t kgui_osrel_offer_shown(kgui_osrel_offer_t offer);
+
+/**
+ * @brief The offer in one word, for the log.
+ * @param offer Where it stands.
+ * @return "unasked", "asked", "due", "shown", "none" or "again"; "?" outside the enum.
+ */
+const char *kgui_osrel_offer_word(kgui_osrel_offer_t offer);
+
+/**
+ * @brief Whether the card may rise now.
+ *
+ * Only for a due offer, and only on the face awake, Apps or the settings
+ * screen with nothing else on the glass: no card and none asked for by the
+ * face's pill, no locked card, no write and no install being decided, no
+ * factory reset, no parked glass, nothing moving, no hand on the board and
+ * no greeting waiting.
+ *
+ * @param offer Where the offer stands.
+ * @param glass What holds the glass; NULL never lets it rise.
+ * @return true when the card may rise.
+ */
+bool kgui_osrel_offer_may_rise(kgui_osrel_offer_t offer, const kgui_osrel_glass_t *glass);
+
+/**
+ * @brief What the card's button can do.
+ * @param linked Wi-Fi has an address.
+ * @param power  kgui_osrel_power_ok() said yes.
+ * @return READY, or why it is grey: the network first, as About's row decides.
+ */
+kgui_osrel_card_t kgui_osrel_card(bool linked, bool power);
+
+/**
+ * @brief Write the card's second line: the version it offers.
+ * @param version The newer version; NULL reads as "".
+ * @param out     Receives the words and a terminator.
+ * @param size    Bytes @p out holds; KGUI_OSREL_TEXT_MAX fits the longest version.
+ */
+void kgui_osrel_card_version(const char *version, char *out, size_t size);
+
+/**
+ * @brief Write why the card's button is grey.
+ * @param card What the button can do.
+ * @param out  Receives the words and a terminator; "" when it installs.
+ * @param size Bytes @p out holds; KGUI_OSREL_TEXT_MAX fits every state.
+ */
+void kgui_osrel_card_why(kgui_osrel_card_t card, char *out, size_t size);
 
 #ifdef __cplusplus
 }

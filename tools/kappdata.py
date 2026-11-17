@@ -3,8 +3,12 @@
 """App data folders: validate app.json, convert an icon, write what the board stores.
 
 The board reads a JSON subset (the app.json keys, in
-https://docs.kode.diy/internals/apps-region) and one raw
-icon format, 64x64 RGB565 followed by an 8-bit alpha plane. Everything that
+https://docs.kode.diy/internals/apps-region) and one raw icon format, a square
+of RGB565 pixels followed by an 8-bit alpha plane: 128x128 (49 152 bytes), or
+64x64 (12 288 bytes), which the board doubles to 128x128 when it reads the
+file. A picture is converted to 128x128 unless `--icon-size 64` asks for the
+smaller form. Every kodeOS reads the 64x64 file; one that holds only 64x64
+icons does not read the 128x128 one. Everything that
 needs an image library happens here, on the host: the board never decodes
 a picture. Pillow is imported lazily, so `kcli` without Pillow still runs
 every verb but `appdata put` with a PNG or JPEG.
@@ -16,7 +20,8 @@ load() turns the first into the second, and every carrier stores those same
 bytes: `kcli.py appdata put` over the cable, the factory's FAT image, a
 release's files.
 
-    tools/kappdata.py build SRC OUT    write OUT, the board's folder, from an
+    tools/kappdata.py build SRC OUT [--icon-size 64|128]
+                                       write OUT, the board's folder, from an
                                        app's appdata/ folder SRC; prints its digest
     tools/kappdata.py digest DIR       print the digest of a board folder DIR
 
@@ -30,7 +35,18 @@ import struct
 import sys
 
 LIMITS = {"name": 31, "category": 63, "version": 15, "description": 52, "icon": 40}
-K64_BYTES = 64 * 64 * 2 + 64 * 64
+ICON_SIDE = 128             # KAPP_ICON_W: the icon the board holds, in pixels
+ICON_SIDE_HALF = 64         # KAPP_ICON_HALF_W: the smaller form a file may have
+ICON_SIDES = (ICON_SIDE_HALF, ICON_SIDE)
+
+
+def k64_bytes(side):
+    """The size of a .k64 of `side` pixels square: RGB565 plane, then A8 plane."""
+    return side * side * 2 + side * side
+
+
+K64_BYTES = k64_bytes(ICON_SIDE)              # KAPP_ICON_BYTES
+K64_BYTES_HALF = k64_bytes(ICON_SIDE_HALF)    # KAPP_ICON_HALF_BYTES
 JSON_MAX = 1024             # KAPP_DATA_JSON_MAX: the longest app.json the board reads
 JSON_NAME = "app.json"      # the board folder's two files
 ICON_NAME = "icon.k64"
@@ -67,15 +83,29 @@ def find_icon(d, obj):
     return None
 
 
-def to_k64(path):
+def to_k64(path, side=None):
+    """An icon as the board stores it: a .k64 as it is, a picture fitted to `side`.
+
+    A ready-made .k64 may be 128x128 or 64x64 and is returned byte for byte;
+    asking for 64 refuses a 128x128 one, which a board that reads only 64x64
+    would not take. A picture is fitted to `side`, ICON_SIDE when it is None.
+    """
+    if side is not None and side not in ICON_SIDES:
+        raise ValueError(f"icon: {side} px is not a size the board reads "
+                         f"({' or '.join(str(n) for n in ICON_SIDES)})")
     if path.lower().endswith(".k64"):
-        data = open(path, "rb").read()
-        if len(data) != K64_BYTES:
+        with open(path, "rb") as f:
+            data = f.read()
+        if len(data) not in (K64_BYTES, K64_BYTES_HALF):
             raise ValueError(f"icon: {os.path.basename(path)} is {len(data)} bytes, "
-                             f"a .k64 is {K64_BYTES}")
+                             f"a .k64 is {K64_BYTES_HALF} or {K64_BYTES}")
+        if side == ICON_SIDE_HALF and len(data) == K64_BYTES:
+            raise ValueError(f"icon: {os.path.basename(path)} is {len(data)} bytes "
+                             f"({ICON_SIDE} px), and {ICON_SIDE_HALF} px was asked for")
         return data
+    side = side or ICON_SIDE
     from PIL import Image, ImageOps          # the one dependency, only here
-    im = ImageOps.fit(Image.open(path).convert("RGBA"), (64, 64), Image.LANCZOS)
+    im = ImageOps.fit(Image.open(path).convert("RGBA"), (side, side), Image.LANCZOS)
     rgb = bytearray()
     alpha = bytearray()
     for r, g, b, a in im.getdata():
@@ -88,12 +118,13 @@ def folder(project):
     return f"/storage/.kode/appsdata/{project}"
 
 
-def load(src):
+def load(src, side=None):
     """An app's appdata/ folder as the board stores it: (app.json bytes, icon).
 
-    app.json is checked and written compact, an icon found is converted and
-    named icon.k64 in it. Raises ValueError naming the field that the board
-    would refuse. The icon comes back empty when the folder has none.
+    app.json is checked and written compact, an icon found is converted (to
+    `side` pixels square, as to_k64() reads it) and named icon.k64 in it.
+    Raises ValueError naming the field that the board would refuse. The icon
+    comes back empty when the folder has none.
     """
     path = os.path.join(src, JSON_NAME)
     try:
@@ -108,7 +139,7 @@ def load(src):
     icon_path = find_icon(src, obj)
     if icon_path:
         try:
-            icon = to_k64(icon_path)
+            icon = to_k64(icon_path, side)
         except ImportError as exc:
             raise ValueError(f"icon: {icon_path} needs Pillow "
                              "(python3 -m pip install pillow)") from exc
@@ -146,7 +177,8 @@ def read(folder_path):
 
     Raises ValueError for a folder the board would not read as it is: a file
     that is neither of the two, no app.json or one the board refuses, an icon
-    of another size, an icon and an app.json that do not name each other.
+    of a size that is neither 128x128 nor 64x64, an icon and an app.json that
+    do not name each other.
     """
     try:
         names = sorted(os.listdir(folder_path))
@@ -188,13 +220,18 @@ def main():
     p = sub.add_parser("build", help="write the board's folder from an app's appdata/")
     p.add_argument("src", help="the app's appdata/ folder: app.json and an icon")
     p.add_argument("out", help="the folder to write: app.json and icon.k64")
+    p.add_argument("--icon-size", type=int, choices=ICON_SIDES, default=ICON_SIDE,
+                   metavar="|".join(str(n) for n in ICON_SIDES),
+                   help="the side, in pixels, of an icon made from a picture "
+                        f"(default {ICON_SIDE}); {ICON_SIDE_HALF} is the form "
+                        "every kodeOS reads")
     p = sub.add_parser("digest", help="print the digest of a board folder")
     p.add_argument("dir", help="a folder holding app.json and maybe icon.k64")
     a = ap.parse_args()
 
     try:
         if a.verb == "build":
-            appdata = load(a.src)
+            appdata = load(a.src, a.icon_size)
             write(a.out, appdata)
         else:
             appdata = read(a.dir)

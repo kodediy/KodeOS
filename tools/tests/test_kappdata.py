@@ -134,40 +134,82 @@ def _rmtree(d):
 
 
 class ToK64Tests(unittest.TestCase):
-    def test_converts_an_opaque_png(self):
+    def png(self, size, colour):
         from PIL import Image
         import tempfile
 
-        im = Image.new("RGBA", (100, 40), (255, 0, 0, 255))
+        im = Image.new("RGBA", size, colour)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            path = f.name
+        self.addCleanup(os.remove, path)
+        im.save(path)
+        return path
+
+    def k64(self, data):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".k64", delete=False) as f:
+            f.write(data)
+            path = f.name
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_converts_an_opaque_png_to_the_128_px_block(self):
+        data = kappdata.to_k64(self.png((100, 40), (255, 0, 0, 255)))
+        self.assertEqual(len(data), 128 * 128 * 2 + 128 * 128)
+        alpha = data[128 * 128 * 2:]
+        self.assertTrue(all(b == 255 for b in alpha))
+
+    def test_converts_to_the_64_px_block_when_asked(self):
+        data = kappdata.to_k64(self.png((100, 40), (255, 0, 0, 255)), side=64)
+        self.assertEqual(len(data), 64 * 64 * 2 + 64 * 64)
+        alpha = data[64 * 64 * 2:]
+        self.assertTrue(all(b == 255 for b in alpha))
+
+    def test_a_pixel_is_rgb565_little_endian_and_alpha_follows_the_colour_plane(self):
+        from PIL import Image
+        import tempfile
+
+        im = Image.new("RGBA", (256, 256), (255, 0, 0, 255))
+        im.paste((0, 0, 255, 255), (128, 0, 256, 128))   # the top right: blue
+        im.paste((0, 0, 0, 0), (0, 128, 256, 256))       # the bottom half: clear
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             path = f.name
         self.addCleanup(os.remove, path)
         im.save(path)
 
         data = kappdata.to_k64(path)
-        self.assertEqual(len(data), 64 * 64 * 2 + 64 * 64)
-        alpha = data[64 * 64 * 2:]
-        self.assertTrue(all(b == 255 for b in alpha))
+        plane = 128 * 128 * 2
+        at = lambda y, x: (y * 128 + x) * 2          # a pixel's place in the colour plane
+        self.assertEqual(data[at(10, 10):at(10, 10) + 2], bytes([0x00, 0xF8]))    # 0xF800
+        self.assertEqual(data[at(10, 120):at(10, 120) + 2], bytes([0x1F, 0x00]))  # 0x001F
+        self.assertEqual(data[plane + 10 * 128 + 10], 255)
+        self.assertEqual(data[plane + 10 * 128 + 120], 255)
+        self.assertEqual(data[plane + 100 * 128 + 10], 0)
 
-    def test_k64_of_the_right_size_passes_through(self):
-        import tempfile
+    def test_a_k64_of_either_legal_size_passes_through(self):
+        for size in (128 * 128 * 3, 64 * 64 * 3):
+            data = bytes(range(256)) * (size // 256)
+            self.assertEqual(kappdata.to_k64(self.k64(data)), data)
 
-        data = bytes(64 * 64 * 2 + 64 * 64)
-        with tempfile.NamedTemporaryFile(suffix=".k64", delete=False) as f:
-            f.write(data)
-            path = f.name
-        self.addCleanup(os.remove, path)
-        self.assertEqual(kappdata.to_k64(path), data)
-
-    def test_k64_of_the_wrong_size_is_refused(self):
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".k64", delete=False) as f:
-            f.write(bytes(64 * 64 * 2 + 64 * 64 - 1))
-            path = f.name
-        self.addCleanup(os.remove, path)
-        with self.assertRaisesRegex(ValueError, "icon: .* is 12287 bytes, a .k64 is 12288"):
+    def test_a_k64_of_the_wrong_size_is_refused(self):
+        path = self.k64(bytes(64 * 64 * 3 - 1))
+        with self.assertRaisesRegex(
+                ValueError, "icon: .* is 12287 bytes, a .k64 is 12288 or 49152"):
             kappdata.to_k64(path)
+
+    def test_a_128_px_k64_is_refused_when_64_px_is_asked_for(self):
+        path = self.k64(bytes(128 * 128 * 3))
+        with self.assertRaisesRegex(ValueError, "49152 bytes.*64 px"):
+            kappdata.to_k64(path, side=64)
+
+    def test_a_64_px_k64_passes_through_when_128_px_is_the_default(self):
+        data = bytes(64 * 64 * 3)
+        self.assertEqual(kappdata.to_k64(self.k64(data)), data)
+
+    def test_a_side_the_board_does_not_read_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "32"):
+            kappdata.to_k64(self.png((100, 40), (255, 0, 0, 255)), side=32)
 
 
 class FolderTests(unittest.TestCase):
@@ -230,6 +272,15 @@ class LoadTests(PackageCase):
         body, icon = kappdata.load(src)
         self.assertEqual(json.loads(body)["icon"], "icon.k64")
         self.assertEqual(len(icon), kappdata.K64_BYTES)
+        self.assertEqual(len(icon), 49152)
+
+    def test_icon_png_is_converted_to_the_64_px_form_when_asked(self):
+        from PIL import Image
+        src = self.source({"kode": "1"})
+        Image.new("RGBA", (256, 256), (0, 0, 255, 255)).save(os.path.join(src, "icon.png"))
+        body, icon = kappdata.load(src, side=64)
+        self.assertEqual(json.loads(body)["icon"], "icon.k64")
+        self.assertEqual(len(icon), 12288)
 
     def test_a_named_icon_that_is_not_there_is_refused(self):
         src = self.source({"kode": "1", "icon": "gone.png"})
@@ -295,8 +346,13 @@ class ReadTests(PackageCase):
 
     def test_refuses_an_icon_of_another_size(self):
         out = self.board_folder({"app.json": self.GOOD, "icon.k64": ICON[:-1]})
-        with self.assertRaisesRegex(ValueError, "12287"):
+        with self.assertRaisesRegex(ValueError, "49151"):
             kappdata.read(out)
+
+    def test_reads_an_icon_of_the_older_64_px_size(self):
+        small = bytes(64 * 64 * 3)
+        out = self.board_folder({"app.json": self.GOOD, "icon.k64": small})
+        self.assertEqual(kappdata.read(out), (self.GOOD, small))
 
     def test_refuses_an_app_json_the_board_would_refuse(self):
         out = self.board_folder({"app.json": b'{"kode":"2"}'})
@@ -350,6 +406,30 @@ class CommandLineTests(PackageCase):
         again = self.run_tool("digest", out)
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertEqual(again.stdout, built.stdout)
+
+    def test_build_writes_a_128_px_icon_by_default(self):
+        from PIL import Image
+        src = self.source({"kode": "1"})
+        Image.new("RGBA", (256, 256), (0, 255, 0, 255)).save(os.path.join(src, "icon.png"))
+        out = os.path.join(self.tmp, "welcome")
+        got = self.run_tool("build", src, out)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(os.path.getsize(os.path.join(out, "icon.k64")), 49152)
+
+    def test_build_writes_the_64_px_form_with_icon_size_64(self):
+        from PIL import Image
+        src = self.source({"kode": "1"})
+        Image.new("RGBA", (256, 256), (0, 255, 0, 255)).save(os.path.join(src, "icon.png"))
+        out = os.path.join(self.tmp, "welcome")
+        got = self.run_tool("build", src, out, "--icon-size", "64")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(os.path.getsize(os.path.join(out, "icon.k64")), 12288)
+
+    def test_build_refuses_an_icon_size_the_board_does_not_read(self):
+        src = self.source({"kode": "1"})
+        got = self.run_tool("build", src, os.path.join(self.tmp, "out"), "--icon-size", "32")
+        self.assertEqual(got.returncode, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "out")))
 
     def test_build_refuses_a_source_the_board_would_refuse(self):
         src = self.source({"kode": "2"})

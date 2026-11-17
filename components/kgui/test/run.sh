@@ -87,10 +87,15 @@ run_suite kgui_pack_fit test_kgui_pack_fit.c ../kgui_pack_fit.c
 
 # The radios' rows: their words read kdrv_wifi.h's reasons and nothing else.
 run_suite kgui_wifi -I"$sdk/kdrv/radio/include" test_kgui_wifi.c ../kgui_wifi.c
-# The update service's answer and About's row: no SDK header at all.
+# The update service's answer, About's row and the card at boot: no SDK
+# header at all.
 run_suite kgui_osrel test_kgui_osrel.c ../kgui_osrel.c
+# The Time page's steps, zones and prompt: the C library's mktime and nothing else.
+run_suite kgui_clock -I"$sdk/kdrv/clocks/include" test_kgui_clock.c ../kgui_clock.c
 # The spaces a typed name loses at both ends.
 run_suite kgui_trim test_kgui_trim.c ../kgui_trim.c
+# What the Self-test page says about a run: counts in, words out.
+run_suite kgui_selftest test_kgui_selftest.c ../kgui_selftest.c
 # Kody's line drawing at Rest is pure too.
 run_suite kgui_rest test_kgui_rest.c ../kgui_rest.c
 

@@ -54,6 +54,7 @@
 #include "kgui_scene_label.h" /* a scene's English words, for what the interface shows */
 #include "kgui_osrel.h"    /* kodeOS's own update: the service's answer and About's row */
 #include "kgui_span_label.h"  /* a length of time's English words, and the step round a setting's */
+#include "kgui_clock.h"    /* the Time page: its zones, the step of each row, what the face asks for */
 #include "kgui_keyboard.h" /* the keypad card: a password or a hidden name, by multitap */
 #include "kgui_screens.h" /* this component's own screens and subjects */
 #include "kgui_motion.h"   /* the launcher's rail and motions: Step, Glide, Rubber, Slide */
@@ -75,6 +76,7 @@
 #include "kgui_welcome.h"  /* the landing on the face after Welcome */
 #include "kgui_wifi.h"     /* the radios' rows' words, and why a join failed */
 #include "kgui_trim.h"     /* a name without the spaces at its ends */
+#include "kgui_selftest.h" /* what the Self-test page says about the last run */
 #include "kgui_syscard.h"  /* the words of the stopped, critical and factory reset cards, and their decisions */
 #include "kgui_sysscreen.h" /* the frame of a system screen: protagonist, figure, words, pill */
 #if CONFIG_KODE_TEST_DOT
@@ -115,6 +117,7 @@ LV_IMAGE_DECLARE(kgui_glyph_power_46);
 enum {
     GUI_TICK_SIG = MAX_SIG,     /**< The render-pass QTimeEvt. */
     GUI_KEEP_RETRY_SIG,         /**< The card's copy was refused: ask again (gui_keep_read_next()). */
+    GUI_OS_AGAIN_SIG,           /**< The boot's question never reached the update service: ask again (gui_update_again()). */
     GUI_SETTINGS_TOGGLE_SIG,    /**< The settings door. The face and Apps open
                                  *   the settings screen over themselves on it,
                                  *   as a curtain,
@@ -137,8 +140,8 @@ enum {
     GUI_SHEET_OPEN_SIG,         /**< A sheet was asked for: by a control, a
                                  *   launcher row, a write, a pairing, or a
                                  *   row that opens a list in its own page's
-                                 *   place (About's Time zone, Screen's
-                                 *   Auto-lock). Carries the kind in a
+                                 *   place (Screen's Auto-lock). Carries
+                                 *   the kind in a
                                  *   SheetOpenEvt rather than being written
                                  *   into the AO by the caller: which sheet
                                  *   is up is state, and state changes where
@@ -243,11 +246,11 @@ enum {
  * @brief Which sheet is on the glass.
  *
  * One per settings page that has something to say, and NONE for the ordinary
- * case; then the two lists of choices, each a page a sheet opens from a row
- * of its own - About's zones and Screen's auto-lock times; then the kinds
+ * case; then the list of choices a page opens from a row of its own -
+ * Screen's auto-lock times; then the kinds
  * that belong to no page at all - a row of the launcher, a write in flight,
  * a write that failed, the ending, a peer asking to pair, an app that
- * stopped, a battery that is critical. The first seven
+ * stopped, a battery that is critical, a newer kodeOS. The first seven
  * LIST and the rest SPEAK, which is the whole difference between them: a
  * listing sheet's body is rows, a speaking sheet's is lines of text and up
  * to one button, and `me->sheet_n` tells the pad which grammar it is under.
@@ -263,7 +266,6 @@ typedef enum {
     GUI_SHEET_BAT,
     GUI_SHEET_ABOUT,
     GUI_SHEET_MORE,
-    GUI_SHEET_ZONE,
     GUI_SHEET_TIME,
     GUI_SHEET_AUTOLOCK,
     GUI_SHEET_DETAILS,
@@ -279,7 +281,8 @@ typedef enum {
     GUI_SHEET_REMOVE,
     GUI_SHEET_REMOVING,
     GUI_SHEET_RESET,      /* "Factory reset?" */
-    GUI_SHEET_RESETTING   /* the wait for AO_Boot, then why it did not happen */
+    GUI_SHEET_RESETTING,  /* the wait for AO_Boot, then why it did not happen */
+    GUI_SHEET_UPDATE      /* a newer kodeOS, offered at boot */
 } GuiSheet;
 
 /**
@@ -296,12 +299,12 @@ typedef enum {
 static const char *gui_sheet_kind_name(GuiSheet kind)
 {
     static const char *const NAMES[] = {
-        "none", "wifi", "ble", "screen", "bat", "about", "more", "zone", "time",
+        "none", "wifi", "ble", "screen", "bat", "about", "more", "time",
         "autolock", "details", "opening", "failure", "poweroff", "pairing",
         "selftest", "kody", "keypad", "stopped", "battery", "remove", "removing",
-        "reset", "resetting"
+        "reset", "resetting", "update"
     };
-    _Static_assert((sizeof(NAMES) / sizeof(NAMES[0])) == ((size_t)GUI_SHEET_RESETTING + 1U),
+    _Static_assert((sizeof(NAMES) / sizeof(NAMES[0])) == ((size_t)GUI_SHEET_UPDATE + 1U),
                    "one name per GuiSheet, in the enum's order");
     const char *name = "?";
 
@@ -333,9 +336,9 @@ typedef struct {
  * @brief The row of a sheet kind in the table of system cards.
  *
  * THE TABLE: a write in flight, the failure of one, a pairing, an app that
- * stopped, a battery that is critical, the ending, and the factory reset's
- * question and its wait. Every question about which cards are system cards
- * is asked of it, through this function.
+ * stopped, a battery that is critical, the ending, the factory reset's
+ * question and its wait, and a newer kodeOS. Every question about which
+ * cards are system cards is asked of it, through this function.
  *
  * @param kind Which sheet.
  * @return Its row; NULL for a kind that is no system card.
@@ -351,6 +354,7 @@ static const GuiSysCard *gui_syscard_of(GuiSheet kind)
         { GUI_SHEET_POWEROFF,  true  },
         { GUI_SHEET_RESET,     false },
         { GUI_SHEET_RESETTING, false },
+        { GUI_SHEET_UPDATE,    true  },
     };
     const GuiSysCard *found = NULL;
 
@@ -385,7 +389,7 @@ static bool gui_sheet_is_system(GuiSheet kind)
 /**
  * @brief Whether a sheet is a settings page: a kshell page of the rail.
  *
- * Wi-Fi, Bluetooth, More and the pages More opens, and the two lists of
+ * Wi-Fi, Bluetooth, More and the pages More opens, and the list of
  * choices under them, wear kshell's dress: no header disc, the page's name
  * centred over the glass, and rows that are discs on the page rather than
  * capsules, the focused one always at the same height. They go back one level
@@ -407,7 +411,6 @@ static bool gui_sheet_is_page(GuiSheet kind)
         case GUI_SHEET_BAT:
         case GUI_SHEET_ABOUT:
         case GUI_SHEET_MORE:
-        case GUI_SHEET_ZONE:
         case GUI_SHEET_TIME:
         case GUI_SHEET_AUTOLOCK:
         case GUI_SHEET_TEST:
@@ -624,10 +627,11 @@ typedef uint16_t GuiSceneId;
  * HIDDEN while the face is off the glass, on its way onto it, or under a
  * card - the times his player stands paused. SEEN the moment the face is
  * uncovered: its load ended (LV_EVENT_SCREEN_LOADED), or the card over it
- * went. The face's next tick wakes him, and he is AWAKE from then on. A
- * scene the face goes on while he is awake - a choice, or the hour's change
- * - puts him back to SEEN, so that the same tick wakes him up in it
- * (gui_face_scene_set()). ASLEEP for as long as the Lock rests (Gui_rest):
+ * went. The face's next tick puts him in his scene, and he is AWAKE from
+ * then on. A scene chosen while he is awake puts him back to SEEN, so that
+ * the same tick puts him in it (gui_face_scene_set()); the hour changes his
+ * scene only while he is HIDDEN on a face that is off the glass
+ * (gui_face_scene_hour()). ASLEEP for as long as the Lock rests (Gui_rest):
  * he stands still on a frame of his scene, nothing is drawn, and leaving Rest
  * puts him back to SEEN (gui_rest_leave()).
  */
@@ -700,6 +704,15 @@ _Static_assert(sizeof(SheetOpenEvt) <= sizeof(ButtonEvt),
  * of theirs: every installed app plus every scanned file, none of them
  * matching. */
 #define GUI_ROWS_MAX    (2U * KODE_APP_LIST_MAX)
+
+/* What GuiFace.icon_parts reads when every piece of an icon has landed: one
+ * bit for each of the KODE_APP_ICON_PIECES, and the mask has to fit its byte. */
+#define GUI_ICON_PARTS_ALL  ((1U << KODE_APP_ICON_PIECES) - 1U)
+_Static_assert(KODE_APP_ICON_PIECES <= 8U, "icon_parts is one byte: a bit for each piece");
+/* kgui_list.h cannot see the SDK's icon: the scale of every disc is a share
+ * of the block's side. */
+_Static_assert((uint32_t)KGUI_ROW_ICON_SRC == KAPP_ICON_W, "KGUI_ROW_ICON_SRC is the icon's own side");
+_Static_assert(KAPP_ICON_W == KAPP_ICON_H, "an icon is square: one number scales both ways");
 
 /* What a row's look, row_lit[], says: the focus is on it (its name is Light
  * Grey), it is any other, or gui_row_paint() has not
@@ -879,8 +892,9 @@ enum {
                                      * absent is 24 h                        */
 #define GUI_NVS_KEY_SLEEP  "kody_sleep" /* uint32_t record: seconds without
                                      * input before the Lock rests, 0 for
-                                     * never; absent while it follows the
-                                     * auto-lock                             */
+                                     * never, GUI_SLEEP_LOCK while it follows
+                                     * the auto-lock; absent is
+                                     * GUI_SLEEP_DEFAULT_S                   */
 #define GUI_NVS_KEY_RECENTS "recents" /* str: the apps last run, by project
                                      * name, one a line, the latest first,
                                      * KGUI_SHELF_MAX at most (kgui_shelf.h) */
@@ -903,20 +917,6 @@ enum {
 #define GUI_ZONE_MAX  32U
 _Static_assert(GUI_ZONE_MAX == KODE_CONFIG_VALUE_MAX,
                "kgui's copy of the zone holds any zone AO_Boot answers");
-
-/** @brief The zone a board with nothing stored runs in: the board's own UTC,
- *         and the list's row for it (s_zones). */
-#define GUI_ZONE_UTC  "UTC0"
-
-/**
- * @brief One zone of the list: what its row and About's Time zone row call
- *        it, and the POSIX TZ string the clock runs in.
- */
-typedef struct {
-    const char *label;  /**< The list row's name, About's second line, and
-                          *   the log's word.                                */
-    const char *tz;     /**< The POSIX TZ string, at most GUI_ZONE_MAX.     */
-} GuiZone;
 
 /**
  * @brief One auto-lock time of the list: how long it is, what its row and
@@ -1027,7 +1027,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 /** Why a round for ASLEEP is refused at Rest while Kody has not settled, or
  *  a sleep at Rest that did not happen holds the next one back. */
 #define GUI_LP_WHY_REST    "rest not settled"
-/** Past the 30 minutes at Rest, so the board that wakes for the count finds
+/** Past Rest's time to the count, so the board that wakes for the count finds
  *  them gone. */
 #define GUI_REST_WAKE_SLACK_MS 200U
 #if CONFIG_KODE_TEST_DOT
@@ -1066,7 +1066,8 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_WHY_REST_BOT    "bottom released"                /**< What it says of Rest asked for with the bottom button on the face. */
 #define GUI_WHY_REST_IDLE   "kody_sleep"                     /**< What it says of Rest asked for by the time without input. */
 #define GUI_WHY_REST_WOKEN  "woken and left alone"           /**< What it says of Rest asked for again by a Lock that was woken and nothing touched. */
-#define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install says when AO_AppMgr stays busy. */
+#define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install, Pair new device or a radio's request says when its owner stays busy. */
+#define GUI_HINT_CARD_FULL  "SD card is full"                /**< What the glass says when an app's copy does not fit the card. */
 #define GUI_OFF_IDLE        0U                               /**< The face's red arc is not drawn. */
 #define GUI_OFF_FILL        1U                               /**< It fills while the bottom button stays down. */
 #define GUI_OFF_EMPTY       2U                               /**< It empties after the button was let go. */
@@ -1094,7 +1095,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_LOCK_DEFAULT_S  60U    /* a minute without input locks (reasonable times) */
 
 /** @brief Kody's sleep time while he follows the auto-lock's: no seconds of
- *         its own, and what a board with nothing stored does. */
+ *         its own, and the choice `config key="kody_sleep" value=lock`. */
 #define GUI_SLEEP_LOCK      UINT32_MAX
 
 /** @brief The hours on a 12 h clock's dial. */
@@ -1122,6 +1123,11 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
  * without a break (gui_face_window_open()).
  */
 #define GUI_FACE_WINDOW_MS  15000U
+
+/** @brief How long the glass takes to come up from black at boot, 12 ticks
+ *         of 33 ms (gui_cover_tick()); Kody, when he comes after the first
+ *         frame, fades in over the same time (gui_face_kody_fade_in()). */
+#define GUI_COVER_FADE_MS   396U
 
 /** @brief How far, in pixels, a slide must have gone along the direction it
  *         was claimed in, when the finger lifts, to go back out of the
@@ -1161,8 +1167,8 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
  * and from the console; every door between the face, the launcher and the
  * settings screen (the unlock, the settings door both ways, home and the
  * auto-lock), and home from the sheets; the Wi-Fi,
- * Bluetooth, Battery, Screen, About and Power off sheets, the lists of
- * zones and of auto-lock times, and the details; the Opening card's three
+ * Bluetooth, Battery, Screen, About and Power off sheets, the list of
+ * auto-lock times, and the details; the Opening card's three
  * roads, with the edge closing, and Didn't open; and the
  * empty launcher - duda's first play, the QR and back by the top button and
  * by a tap on Kody, the 20 s comeback, and all four players holding a model
@@ -1416,6 +1422,7 @@ typedef enum {
 #define GUI_NVS_KEY_BLE_NAME  "blename"
 #define GUI_CONFIG_KEY_BLE_NAME "ble_name" /* `config`'s name for kgui/blename. */
 #define GUI_BLE_NAME_NONE     "-"      /* `ble_name`'s value for no name: the serial. */
+#define GUI_BLE_NAME_BARE     "KODE-DOT" /* The name with neither a stored one nor a serial. */
 #define GUI_TAG_BLE_NAME      44U   /* the name it shows                    */
 #define GUI_TAG_BLE_FORGET    43U   /* forget every one of them             */
 #define GUI_TAG_BLE_PAIR      45U   /* show the board, so a new one pairs   */
@@ -1433,20 +1440,24 @@ typedef enum {
 #define GUI_TAG_MORE          70U   /* +GuiMore: the row of More that opens a page */
 #define GUI_TAG_MORE_SCREEN   70U   /* More's Screen row                    */
 #define GUI_TAG_MORE_BAT      71U   /* More's Battery row                   */
-#define GUI_TAG_MORE_ZONE     72U   /* More's Time zone row                 */
-#define GUI_TAG_MORE_KODY     73U   /* More's Kody row                      */
-#define GUI_TAG_MORE_TEST     74U   /* More's Self-test row                 */
-#define GUI_TAG_MORE_ABOUT    75U   /* More's About row                     */
-#define GUI_TAG_MORE_WIFI     76U   /* More's Wi-Fi row                     */
-#define GUI_TAG_MORE_BLE      77U   /* More's Bluetooth row                 */
-#define GUI_TAG_MORE_TIME     78U   /* More's Time row                      */
-#define GUI_TAG_TIME_HOUR     90U   /* Time: the hour, stepped              */
-#define GUI_TAG_TIME_MIN      91U   /* Time: the minute, stepped            */
+#define GUI_TAG_MORE_KODY     72U   /* More's Kody row                      */
+#define GUI_TAG_MORE_TEST     73U   /* More's Self-test row                 */
+#define GUI_TAG_MORE_ABOUT    74U   /* More's About row                     */
+#define GUI_TAG_MORE_WIFI     75U   /* More's Wi-Fi row                     */
+#define GUI_TAG_MORE_BLE      76U   /* More's Bluetooth row                 */
+#define GUI_TAG_MORE_TIME     77U   /* More's Time row                      */
+#define GUI_TAG_TIME_ZONE     90U   /* Time: the zone, stepped              */
+#define GUI_TAG_TIME_HOUR     91U   /* Time: the hour, stepped              */
+#define GUI_TAG_TIME_MIN      92U   /* Time: the minute, stepped            */
+#define GUI_TAG_TIME_DAY      93U   /* Time: the day, stepped               */
+#define GUI_TAG_TIME_MONTH    94U   /* Time: the month, stepped             */
+#define GUI_TAG_TIME_YEAR     95U   /* Time: the year, stepped              */
+#define GUI_TIME_VALUE_MAX    12U   /* the words under a row of Time        */
+#define GUI_TIME_NOON         12    /* the hour a clock never told starts from */
+#define GUI_US_PER_S          1000000ULL /* microseconds in a second        */
 #define GUI_MORE_VALUE_MAX    48U   /* the words under a row of More        */
-#define GUI_TEST_NEVER        "Never run" /* no report kept: the Self-test row and its page say it alike */
 #define GUI_TAG_WIFI_SAVED   100U   /* +i into saved_ssid[]                 */
 #define GUI_TAG_WIFI_SCAN    200U   /* +i into scan_ssid[]                  */
-#define GUI_TAG_ZONE         300U   /* +i into s_zones[]                    */
 #define GUI_TAG_LOCK         400U   /* +i into s_locks[]                    */
 #define GUI_TAG_TEST_START   500U   /* Self-test: run it                    */
 #define GUI_TAG_TEST_ROW     600U   /* +AUTOTEST_ID_*: run that row again   */
@@ -1459,7 +1470,6 @@ typedef enum {
 typedef enum {
     GUI_MORE_SCREEN = 0,
     GUI_MORE_BAT,
-    GUI_MORE_ZONE,
     GUI_MORE_KODY,
     GUI_MORE_TEST,
     GUI_MORE_ABOUT,
@@ -1471,10 +1481,12 @@ typedef enum {
 
 _Static_assert(((unsigned)GUI_TAG_MORE_SCREEN == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_SCREEN))
                && ((unsigned)GUI_TAG_MORE_BAT == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_BAT))
-               && ((unsigned)GUI_TAG_MORE_ZONE == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_ZONE))
                && ((unsigned)GUI_TAG_MORE_KODY == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_KODY))
                && ((unsigned)GUI_TAG_MORE_TEST == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_TEST))
-               && ((unsigned)GUI_TAG_MORE_ABOUT == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_ABOUT)),
+               && ((unsigned)GUI_TAG_MORE_ABOUT == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_ABOUT))
+               && ((unsigned)GUI_TAG_MORE_WIFI == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_WIFI))
+               && ((unsigned)GUI_TAG_MORE_BLE == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_BLE))
+               && ((unsigned)GUI_TAG_MORE_TIME == ((unsigned)GUI_TAG_MORE + (unsigned)GUI_MORE_TIME)),
                "More's row tags follow GuiMore, one each");
 _Static_assert((unsigned)GUI_MORE_COUNT <= GUI_SHEET_ROWS_MAX, "More's rows fit a sheet");
 
@@ -1491,10 +1503,10 @@ typedef struct {
 
 /**
  * @brief The pages that open over another page and the page each goes back
- *        to: More's six pages (Screen, Battery, Time zone, Kody, Self-test,
- *        About), Screen's auto-lock times, and the Wi-Fi page's keypad, which
- *        is no list and goes back the same way (to the row that opened it:
- *        me->kbd_door, not the door written here).
+ *        to: More's pages (Wi-Fi, Bluetooth, Battery, Time, Kody,
+ *        Self-test, About), Screen's auto-lock times, and the Wi-Fi
+ *        page's keypad, which is no list and goes back the same way (to
+ *        the row that opened it: me->kbd_door, not the door written here).
  *
  * ONE MECHANISM FOR ALL. A page opens only in place over its own page
  * (gui_sheet_open_taken()), and every way back - the bottom button, a drag
@@ -1503,8 +1515,6 @@ typedef struct {
  */
 static const GuiListPage s_list_pages[] = {
     { GUI_SHEET_BAT,      GUI_SHEET_MORE,   (uint16_t)GUI_TAG_MORE_BAT,
-      "Settings" },
-    { GUI_SHEET_ZONE,     GUI_SHEET_MORE,   (uint16_t)GUI_TAG_MORE_ZONE,
       "Settings" },
     { GUI_SHEET_TIME,     GUI_SHEET_MORE,   (uint16_t)GUI_TAG_MORE_TIME,
       "Settings" },
@@ -1707,7 +1717,7 @@ typedef enum {
  * label and repaint its capsule; the project name behind the row is the
  * binary's and nothing else's (gui_row_name()).
  *
- * The icon is not here: 12 KB does not belong in an entry, and a PSRAM
+ * The icon is not here: 48 KB does not belong in an entry, and a PSRAM
  * slot per entry holds it instead (me->icon_slot). What is here is whether
  * that slot is worth drawing.
  */
@@ -1722,7 +1732,7 @@ typedef struct {
     uint8_t    icon_status;                     /**< AppDataIconStatus, for the log.*/
     uint8_t    json_status;                     /**< kapp_json_status_t, ditto.     */
     bool       asked;                           /**< The folder question went out.  */
-    uint8_t    icon_parts;                      /**< Bitmask of the thirds landed.  */
+    uint8_t    icon_parts;                      /**< Bitmask of the pieces landed.  */
     bool       settled;                         /**< Its folder has answered, busy not counted; kept by a rescan. */
     bool       known;                           /**< Its category is known: all the root asks of a row (gui_meta_release()). */
     bool       shown;                           /**< The list shows this row (gui_meta_release()); kept by a rescan. */
@@ -1898,20 +1908,20 @@ typedef struct {
     uint32_t  list_out_ms;   /**< khal_time_ms() when the last question
                                *   went out. */
 
-    /* THE ICON SLOTS: one 12 KB piece of PSRAM per ENTRY, and a header
+    /* THE ICON SLOTS: one 48 KB piece of PSRAM per ENTRY, and a header
      * pointing at it. Per entry rather than per row, because a row is
      * rebuilt on every repaint while the thing an icon belongs to is not:
      * entries[i] takes slot i, installed[i] takes slot KODE_APP_LIST_MAX+i,
      * and gui_entry_slot() is the one place that arithmetic lives.
      *
      * Taken once in ui_build() for the whole ceiling and never freed. 128
-     * slots is 1.5 MB of the board's 31 MB (the row copies below add 1 MB),
+     * slots is 6 MB of the board's 31 MB (the row copies below add 1 MB),
      * and khal_alloc_psram() never falls back - an allocator whose placement
      * is a decision rather than a race is one you do not churn (khal_system.h
      * says why).
      *
-     * The three chunks of an icon land here by seq as they arrive, so a
-     * slot is a half-built picture for as long as the conversation runs.
+     * The pieces of an icon land here by seq as they arrive, so a slot is a
+     * half-built picture for as long as the conversation runs.
      * face.icon_ok is what says it may be drawn, and only APPDATA_END_SIG
      * sets it. */
     uint8_t        *icon_slot[GUI_ROWS_MAX];
@@ -1919,7 +1929,7 @@ typedef struct {
 
     /* Whose folder is being asked about right now, or empty. One question
      * in flight at a time, exactly as the manifest chain above works, and
-     * for a stronger reason: an icon is three jumbo blocks out of four, so
+     * for a stronger reason: an icon is every block of the icon pool, so
      * two conversations at once would be the pool. It is also what
      * APPDATA_END_SIG reads - the end marker is bare, and this is what says
      * whose end it is. */
@@ -2196,6 +2206,8 @@ typedef struct {
     kgui_wface_t   wface;       /**< Whose face the card of a write about no
                                  *   row wears (kgui_wface.h): the project its
                                  *   writer's reports name. */
+    bool           write_held;  /**< That card is waiting off the glass for its
+                                 *   folder's words (gui_write_card_show()). */
     GuiFace        write_face;  /**< That face: a row's when the project has
                                  *   one that is settled, else what its data
                                  *   folder answered, the project name until
@@ -2497,7 +2509,7 @@ typedef struct {
     lv_obj_t *face_date;
     uint32_t  face_min;
     bool      face_painted;
-    uint32_t  time_shown;           /**< The minute the Time page's two rows
+    uint32_t  time_shown;           /**< The minute the Time page's rows
                                       *   and the rail's Time row read, as
                                       *   gui_face_minute() numbers it, 0
                                       *   while the time is unknown
@@ -2531,6 +2543,15 @@ typedef struct {
     bool      zone_migrate; /**< kgui/zone was on the store at boot: the
                              *   boot's read decides its copy
                              *   (gui_zone_migrate()). */
+    bool      time_by_hand; /**< The Time page set the clock this boot and
+                             *   nobody wrote it since: a new zone keeps the
+                             *   local time it reads (gui_time_hand_holds()). */
+    int64_t   hand_s;       /**< The UTC second the page set last. */
+    uint32_t  hand_ms;      /**< When it set it (khal_time_ms()). */
+    bool      zone_keep;    /**< The Time page asked for a zone and keeps
+                             *   zone_keep_tm across it (gui_time_keep_local()). */
+    struct tm zone_keep_tm; /**< The local time read as that zone was asked. */
+    uint32_t  zone_keep_ms; /**< When it was read (khal_time_ms()). */
 
     /* KODY ON THE FACE. One player for the whole boot, made in ui_build()
      * inside face_scene - NULL when it could not be, and then the face is
@@ -2548,16 +2569,16 @@ typedef struct {
                                       *   KGUI_ASSETS_EV_RESOLVED; empty for
                                       *   none.                              */
     bool         face_rouse_owed;   /**< The scene's files were loading when
-                                      *   Kody was to wake: KGUI_ASSETS_EV_SCENE
-                                      *   wakes him.                         */
+                                      *   Kody was to be put in it:
+                                      *   KGUI_ASSETS_EV_SCENE puts him there. */
     bool         face_react_owed;   /**< A look was asked while its file was
                                       *   loading: KGUI_ASSETS_EV_REACTION
                                       *   plays it.                          */
     uint32_t     assets_t0_ms;      /**< khal_time_ms() the pack began to be
                                       *   read: the face's wait for it is
                                       *   counted from here.                 */
-    bool         face_chosen;       /**< face_scene_on is a choice - a swipe
-                                      *   sideways, the pad or the console
+    bool         face_chosen;       /**< face_scene_on is a choice - the
+                                      *   Screen card's row or the console
                                       *   made it, and kgui/scene keeps it -
                                       *   so the hour leaves it alone. false
                                       *   while none is chosen and the hour
@@ -2575,13 +2596,24 @@ typedef struct {
     bool         home_owed;         /**< The way home from Apps waits for him. */
     bool         home_pass;         /**< It has waited: the next one goes.    */
     uint32_t     home_owed_ms;      /**< Since when it waits.                 */
-    bool         face_woke;         /**< Kody's wake-up has played in the
-                                      *   scene the face is on: false from
-                                      *   the boot, and from every change of
-                                      *   scene - a choice, or the hour's -
-                                      *   until it has
-                                      *   (gui_face_scene_set(),
+    bool         face_woke;         /**< Kody has been put in the scene the
+                                      *   face is on, waking up or in his
+                                      *   loop: false from the boot, out of
+                                      *   Rest and from every change of scene
+                                      *   - a choice, or the hour's - until
+                                      *   he has (gui_face_scene_set(),
                                       *   gui_face_kody_rouse()).            */
+    bool         face_wake_up;      /**< The next time Kody is put in his
+                                      *   scene he wakes up in it: out of
+                                      *   Rest and at a cold boot. Otherwise
+                                      *   - back from an app, another scene -
+                                      *   he is found in his loop, awake
+                                      *   (gui_face_kody_rouse()).           */
+    bool         face_fade_in;      /**< The face lit at boot before Kody
+                                      *   stood in it, his box transparent:
+                                      *   he fades in when he is first put in
+                                      *   his scene (gui_first_hold_tick(),
+                                      *   gui_face_kody_fade_in()).          */
 
     /* THE LOCK AT REST. The face has two substates: Gui_awake is the face as
      * the person uses it, and Gui_rest is the same face dimmed, with Kody
@@ -2918,7 +2950,7 @@ typedef struct {
     lv_obj_t *deep_digit;    /**< Its figure. */
     lv_obj_t *deep_words;    /**< Its words. */
     bool     deep_fading;    /**< They are going: the glass ends black. */
-    uint32_t deep_ms;        /**< When Rest last saw anybody. */
+    uint32_t deep_ms;        /**< When Rest last saw anybody, or the cable leave. */
     uint32_t deep_ends_ms;   /**< When the count ends. */
     uint32_t deep_asked_ms;  /**< When the rest was asked for. */
     bool     deep_asked;     /**< It has been asked for, and the answer waits. */
@@ -2933,7 +2965,10 @@ typedef struct {
     uint8_t  page_scroll_n;  /**< How many are kept. */
     kgui_haptic_level_t haptic_pref; /**< What the Vibration row chose; the volume's stops may ask otherwise. */
     char     ble_name[GUI_BLE_NAME_MAX + 1U]; /**< The name chosen for Bluetooth; empty for the serial. */
-    bool     first_hold;     /**< The glass stays black: the first thing lit is whole. */
+    bool     first_hold;     /**< The glass stays black until the first screen may show (gui_first_hold_tick()). */
+    lv_obj_t *cover;         /**< At boot: the black the first frame comes up from, over everything (gui_cover_tick()). */
+    bool     cover_on;       /**< A pass has drawn it: it is fading. */
+    uint32_t cover_ms;       /**< Since when. */
     bool     disp_row;       /**< The `display` row has the glass: no pass draws. */
     uint32_t first_hold_ms;  /**< Since when. */
     bool     rest_hint;      /**< Rest says how to wake: any input but the top button. */
@@ -2970,6 +3005,8 @@ typedef struct {
      * sheet is up except the uptime, which the sheet reads for itself. */
     uint32_t c5_fw[3];       /**< The C5's major, minor and patch.          */
     bool     c5_fw_known;    /**< The link answered the version RPC.        */
+    bool     c5_state_owed;  /**< AO_Radio had no room for About's question:
+                               *   About's next look asks again.            */
     bool     sd_mounted;     /**< A card is mounted (STORAGE_INFO_SIG).     */
     bool     settings_owed;  /**< gui_settings_ask() waits for kode_up().   */
     bool     ble_name_owed;  /**< The stored Bluetooth name waits for kode_up(). */
@@ -2987,7 +3024,6 @@ typedef struct {
     bool     keep_writing;   /**< The card's copy is being written. */
     bool     keep_gate_open; /**< The link may speak: radio_boot_release() went. */
     bool     keep_listed;    /**< The card's first listing has ended. */
-    bool     keep_pack_owed; /**< Kody's pack waits for the read of the card's copy. */
     bool     sd_known;       /**< AO_Storage has answered at least once.    */
     uint32_t sd_card_mb;     /**< How big the CARD is, as it identified
                                *   itself; 0 when it did not say. Not the
@@ -2997,6 +3033,9 @@ typedef struct {
                                *   it named, in PSRAM: NULL until the first
                                *   question, and when there was no room.    */
     uint8_t  os_check;       /**< kgui_osrel_check_t: where the check stands. */
+    uint8_t  os_offer;       /**< kgui_osrel_offer_t: where the boot's card stands. */
+    uint8_t  os_asks;        /**< How many times the boot's question has gone out. */
+    QTimeEvt os_again;       /**< The boot's question goes out again (KGUI_OSREL_BOOT_AGAIN_MS). */
     uint8_t  write_what;     /**< kwrite_t: what the write on the glass is
                                *   and how it ends - the Opening sheet's
                                *   title, name and sentence, and the
@@ -3019,6 +3058,7 @@ typedef struct {
     uint32_t scan_paint_ms;  /**< When the rows were last written from it. */
     char     scan_shown[KDRV_WIFI_SCAN_MAX][GUI_SSID_BYTES];       /**< What the rows say, whatever the round has moved since. */
     uint8_t  scan_shown_auth[KDRV_WIFI_SCAN_MAX];
+    int8_t   scan_shown_rssi[KDRV_WIFI_SCAN_MAX];  /**< How each row's network was heard when the row was written, dBm. */
     uint8_t  scan_shown_n;
     uint8_t  scan_n;
     bool     scan_out;       /**< A scan this AO asked for has not answered
@@ -3028,6 +3068,9 @@ typedef struct {
     uint32_t scan_out_ms;    /**< When the scan out was asked: one never answered is given up after GUI_WIFI_SCAN_LOST_MS. */
     bool     scan_refused;   /**< The last sweep was refused: the radio's next
                                *   WIFI_STATE_SIG asks again.               */
+    bool     scan_own_join;  /**< The page asked for a join with its sweep
+                               *   out: the sweep's end, cut for the join,
+                               *   is followed soon and not at the period.  */
     bool     scan_fresh;
     bool     scan_answered;  /**< A round has reached its end since the radio
                                *   came on: only then can "No networks found"
@@ -3036,6 +3079,8 @@ typedef struct {
     char     saved_ssid[GUI_WIFI_SAVED_MAX][GUI_SSID_BYTES];
     uint8_t  saved_n;
     bool     saved_fresh;
+    bool     saved_owed;     /**< AO_Radio had no room for the listing: the
+                               *   page's next look asks again.             */
 
     /* THE KEYPAD'S ERRAND (GUI_SHEET_KEYPAD). What it is for is here; what is
      * typed is NOT: that lives in kgui_keyboard.c alone, and is never in this
@@ -3047,6 +3092,9 @@ typedef struct {
                               *   a hidden network, the name once it is typed. */
     bool     kbd_secured;    /**< The network has a password, so Join with
                               *   nothing typed is no join.                 */
+    int8_t   kbd_rssi;       /**< How the network was heard when its row was
+                              *   chosen, dBm; KGUI_WIFI_RSSI_NONE for a hidden
+                              *   one. It words a join that fails.          */
     uint16_t kbd_door;       /**< The tag of the Wi-Fi row that opened the keypad,
                               *   where the ring goes back to.              */
     uint8_t  kbd_join_dot;   /**< How many dots after Joining, less one. */
@@ -3085,6 +3133,13 @@ typedef struct {
                                *   this AO made was refused: "who: why".    */
     bool     lp_refused_due; /**< That refusal arrived while parked and is
                                *   still to be said on the glass.            */
+    uint32_t park_seq;       /**< The DISPLAY_PARK_SIG this park answers (the
+                               *   glass's own rest, `rest parts=1`); 0 for a
+                               *   round's park.                             */
+    bool     card_full_due;  /**< The card was found full while the glass
+                               *   was out of sight (parked or at Rest): it
+                               *   is said on the next face, Apps or
+                               *   Settings (gui_card_full_due_say()).      */
     bool     lp_rest;        /**< The park is Rest's (Gui_rest_asleep): the
                                *   Rest face stays on the glass.            */
     bool     lp_top_down;    /**< TOP went down while parked and has not come up. */
@@ -3099,8 +3154,6 @@ typedef struct {
     uint32_t rest_asked_ms;  /**< When.                                      */
     bool     rest_held;      /**< That ask ended awake: rounds for ASLEEP are
                                *   refused at Rest until Rest asks again.    */
-    uint32_t rest_parks;     /**< Rests that slept: each sleeps at the next
-                               *   place of the burn-in cycle.               */
 #endif
 #if CONFIG_KODE_TEST_DOT
     kgui_td_req_t td_first;  /**< The request that took the glass for the E5
@@ -3163,6 +3216,7 @@ static void gui_td_take(Gui * const me);
 static void gui_td_frame(Gui * const me, kgui_td_req_t const * const r);
 #endif
 static void gui_test_fill(Gui * const me);
+static kgui_selftest_tally_t gui_test_tally(Gui const * const me);
 static void gui_test_act(Gui * const me, uint16_t tag);
 static void gui_test_say(const char *line);
 static void gui_test_take(Gui * const me);
@@ -3194,7 +3248,9 @@ static void gui_vol_ask(void);
 static void gui_vol_answer(Gui * const me, KodeConfigAnsEvt const * const a);
 static void gui_off_after_ask(void);
 static void gui_off_after_answer(Gui * const me, KodeConfigAnsEvt const * const a);
+#if CONFIG_KODEOS_WIFI || CONFIG_KODEOS_BLE
 static GuiSetLook gui_set_look(uint8_t which);
+#endif
 static GuiSetLook gui_more_look(uint8_t which);
 static void gui_sheet_rest_take(Gui const * const me);
 static void gui_sheet_page_dress(Gui * const me);
@@ -3227,13 +3283,24 @@ static void gui_sheet_action_act(Gui * const me);
 static void gui_more_fill(Gui * const me);
 static void gui_time_fill(Gui * const me);
 static void gui_time_follow(Gui * const me);
-static uint32_t gui_time_minute(Gui const * const me, struct tm *out);
+static void gui_time_now(Gui const * const me, struct tm *t);
+static void gui_time_words(struct tm const *t, kgui_clock_field_t field, char *out, size_t cap);
+static void gui_time_set(Gui * const me, int64_t when);
+static void gui_time_hand_note(Gui * const me, int64_t when);
+static bool gui_time_hand_holds(Gui * const me);
+static bool gui_time_zone_step(Gui * const me, int8_t step);
+static void gui_time_keep_local(Gui * const me);
+static uint32_t gui_time_minute(Gui const * const me);
+#if CONFIG_KODEOS_BLE
 static const char *gui_ble_name_shown(Gui const * const me);
 static void gui_ble_name_send(Gui const * const me);
 static void gui_ble_name_config(Gui * const me, KodeConfigReqEvt const * const r);
+#endif
 static bool gui_row_cut(Gui const * const me, int32_t cy, kgui_rail_t const *edge);
 static void gui_vol_motor(Gui const * const me);
 static void gui_first_hold_tick(Gui * const me);
+static void gui_cover_put(Gui * const me);
+static void gui_cover_tick(Gui * const me, bool drew);
 static bool gui_level_back(Gui * const me, const char *source);
 static bool gui_level_grow_start(Gui * const me);
 static void gui_level_grow_cut(Gui * const me);
@@ -3291,10 +3358,11 @@ static void gui_wifi_fill(Gui * const me);
 static bool gui_wifi_scan_due(Gui const * const me, uint32_t now, bool entering);
 static void gui_wifi_act(Gui * const me, uint8_t idx);
 static void gui_wifi_forget(Gui * const me, uint8_t idx);
+static void gui_wifi_list_ask(Gui * const me);
 static void gui_wifi_link_row(Gui * const me);
 static void gui_wifi_link_text(Gui const * const me, char *out, size_t cap);
 static void gui_kbd_begin(Gui * const me, const char *ssid, bool hidden,
-                          uint16_t door);
+                          int8_t rssi, uint16_t door);
 static void gui_kbd_apply(Gui const * const me);
 static void gui_kbd_fill(Gui * const me);
 static void gui_kbd_forget(Gui * const me);
@@ -3335,6 +3403,9 @@ static void gui_fade_tick(Gui * const me);
 static lv_obj_t *gui_ble_dot(Gui const * const me);
 static void gui_ble_blink(Gui * const me);
 static void gui_wish_lost(Gui * const me);
+#if CONFIG_KODEOS_RADIO
+static void gui_radio_refused(const char *what);
+#endif
 #if CONFIG_KODEOS_WIFI
 static void gui_wifi_switch(Gui * const me);
 #endif
@@ -3350,6 +3421,17 @@ static void gui_os_ask(Gui * const me, const char *why);
 static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r);
 static kgui_osrel_row_t gui_os_row(Gui const * const me);
 static const char *gui_os_version(Gui const * const me);
+static void gui_os_install(Gui * const me, GuiAsk from);
+static void gui_update_follow(Gui * const me);
+static void gui_update_question(Gui * const me);
+#if CONFIG_KODEOS_WIFI
+static void gui_update_boot_ask(Gui * const me);
+#endif
+static void gui_update_again(Gui * const me);
+static void gui_update_tick(Gui * const me);
+static bool gui_update_may_rise(Gui const * const me);
+static void gui_update_fill(Gui * const me);
+static void gui_update_act(Gui * const me);
 static const char *gui_boot_reason_name(void);
 static void gui_uptime_text(char *dst, size_t cap);
 static void gui_sheet_open_kind(Gui * const me, GuiSheet kind);
@@ -3551,16 +3633,11 @@ static void gui_secret_begin(void);
 static void gui_secret_end(void);
 #endif
 static bool gui_secret_active(void);
-static void gui_zone_ask(Gui * const me, const char *zone);
+static bool gui_zone_ask(Gui * const me, const char *zone);
 static void gui_zone_answer(Gui * const me, KodeConfigAnsEvt const * const a);
 static void gui_zone_take(Gui * const me, KodeConfigAnsEvt const * const a);
 static void gui_zone_migrate(Gui * const me, bool stored);
 static void gui_zone_say(Gui const * const me);
-static uint8_t gui_zone_find(const char *zone);
-static const char *gui_zone_label(const char *zone);
-static uint8_t gui_zone_row(Gui const * const me);
-static void gui_zone_fill(Gui * const me);
-static void gui_zone_pick(Gui * const me, uint16_t tag);
 static void gui_lock_load(Gui * const me);
 static uint8_t gui_lock_find(uint32_t s);
 static const GuiLock *gui_lock_choice(uint32_t s);
@@ -3620,6 +3697,7 @@ static void gui_last_follow_offset(Gui * const me);
 static GuiEntry const *gui_entry_named(Gui const * const me, const char *name);
 static void gui_show_write(Gui * const me, const AppProgressEvt *p);
 static void gui_show_fail(Gui * const me);
+static void gui_data_lost(Gui * const me);
 static void gui_opening_show(Gui * const me);
 static void gui_open_hold_arm(Gui * const me);
 static void gui_write_ask(Gui * const me, GuiAsk what, const char *name);
@@ -3657,6 +3735,7 @@ static uint8_t gui_slot_by_project(Gui const * const me, const char *project);
 static void gui_face_requery(GuiFace *face);
 static void gui_icon_dsc_set(lv_image_dsc_t *dsc, const uint8_t *block);
 static void gui_write_face_show(Gui * const me);
+static void gui_write_card_show(Gui * const me);
 static void gui_face_look(const GuiFace *face, const lv_image_dsc_t *image,
                           kgui_icon_spec_t *out);
 static void gui_face_fields(GuiFace *face, AppDataFieldsEvt const * const f);
@@ -4035,6 +4114,10 @@ static void gui_dump(Gui * const me)
     /* And the empty launcher: which look it wears, and whether Kody is
      * being drawn there. */
     KLOG_N(TAG, "  empty: %s", gui_empty_state(me));
+    /* The card at boot: whether it waits, rose, or has nothing to offer. */
+    KLOG_N(TAG, "  update: offer %s, asked %u of %u",
+           kgui_osrel_offer_word((kgui_osrel_offer_t)me->os_offer),
+           (unsigned)me->os_asks, (unsigned)KGUI_OSREL_BOOT_ASKS);
 
     /* The sheet, when there is one. s_gui_state above already says "sheet", so
      * this line is the detail behind it: which one, how many rows it built
@@ -4166,6 +4249,37 @@ static void gui_dump(Gui * const me)
             }
         }
     }
+}
+
+/**
+ * @brief The PSRAM block of a row's icon, taken the first time it is asked for.
+ *
+ * @param[in,out] me    The AO.
+ * @param[in]     slot  The row's slot, under GUI_ROWS_MAX.
+ *
+ * @return The block, or NULL when PSRAM has none left: the row draws the
+ *         apps glyph on its colour.
+ */
+static uint8_t *gui_icon_slot_take(Gui * const me, uint8_t slot)
+{
+    if ( (uint8_t)GUI_ROWS_MAX <= slot )
+    {
+        return NULL;
+    }
+    if ( NULL == me->icon_slot[slot] )
+    {
+        /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
+        me->icon_slot[slot] = (uint8_t *)khal_alloc_psram(64U, KAPP_ICON_BYTES);
+        if ( NULL == me->icon_slot[slot] )
+        {
+            KLOG_W(TAG, "no PSRAM for icon slot %u; the row draws the apps glyph", (unsigned)slot);
+        }
+        else
+        {
+            gui_icon_dsc_set(&me->icon_dsc[slot], me->icon_slot[slot]);
+        }
+    }
+    return me->icon_slot[slot];
 }
 
 /* ---- LVGL plumbing ------------------------------------------------------- */
@@ -5080,6 +5194,22 @@ static void gui_pair_done(Gui * const me, uint8_t outcome)
 }
 
 /**
+ * @brief Ask AO_Radio to refuse the pairing in flight.
+ *
+ * Nothing on the glass waits for the answer. When AO_Radio has no room for the
+ * refusal it is said in the log, and the security manager's own timeout ends
+ * the pairing.
+ */
+static void gui_pair_reject(void)
+{
+    if ( !ble_pair_reject_request() )
+    {
+        KLOG_N(TAG, "pairing: AO_Radio had no room for the refusal; "
+                    "the security manager's timeout ends it");
+    }
+}
+
+/**
  * @brief The glass is taken: refuse the pairing instead of covering the work.
  *
  * A flash write is destructive and a guided test is being scored, and neither
@@ -5094,7 +5224,7 @@ static void gui_pair_refuse(BlePairEvt const * const p)
 {
     if ( (uint8_t)KDRV_BLE_PAIR_SHOW == p->phase )
     {
-        ble_pair_reject_request();
+        gui_pair_reject();
     }
 }
 
@@ -5116,7 +5246,7 @@ static void gui_pair_yield(Gui * const me)
 {
     if ( (GUI_SHEET_PAIRING == me->sheet) && me->pair_live )
     {
-        ble_pair_reject_request();
+        gui_pair_reject();
         me->pair_live = false;
         /* The code goes with the card: it is spent, and the outcome that
          * comes back is not counted on to wipe it. */
@@ -5124,6 +5254,47 @@ static void gui_pair_yield(Gui * const me)
     }
 }
 #endif /* CONFIG_KODEOS_BLE_PAIRING_PASSKEY */
+
+#if !CONFIG_KODEOS_WIFI || !CONFIG_KODEOS_BLE
+/**
+ * @brief Take a radio's circle off the control centre in a build without it.
+ *
+ * Its slot is left NULL, as a control missing from the screen is, so the pad,
+ * the taps and the painting pass over it; a cursor that stood on it starts on
+ * Settings.
+ *
+ * @param me    The AO.
+ * @param which A GuiSetCtl whose control was found.
+ * @return true when @p which is a radio this build has not got.
+ */
+static bool gui_set_absent(Gui * const me, uint8_t which)
+{
+    bool absent = false;
+
+#if !CONFIG_KODEOS_WIFI
+    if ( (uint8_t)GUI_SET_WIFI == which )
+    {
+        absent = true;
+    }
+#endif
+#if !CONFIG_KODEOS_BLE
+    if ( (uint8_t)GUI_SET_BLE == which )
+    {
+        absent = true;
+    }
+#endif
+    if ( absent )
+    {
+        lv_obj_set_hidden(me->set_ctl[which], true);
+        me->set_ctl[which] = NULL;
+        if ( which == me->set_sel )
+        {
+            me->set_sel = (uint8_t)GUI_SET_MORE;
+        }
+    }
+    return absent;
+}
+#endif
 
 /**
  * @brief Stand the UI up and wire the screens this side drives.
@@ -5425,29 +5596,11 @@ static bool ui_build(Gui * const me)
                     "will prompt on the console only");
     }
 
-    /* THE ICON SLOTS, once and for the whole ceiling: 128 entries at 12 KB
-     * is 1.5 MB of PSRAM, taken here and never given back. The header
-     * beside each one is written here too - a .k64 is 64x64 RGB565A8 by
-     * definition (https://docs.kode.diy/sdk/kdrv/apps), so nothing about these
-     * fields ever depends on the file that lands in the block.
-     *
-     * A failed allocation is not fatal and is not even unusual enough to
-     * shout about twice: every row from there on draws its colour with the
-     * apps glyph, which is a face the launcher was already going to be able
-     * to wear. The loop stops at the first failure because the next one would
-     * fail too. */
-    for ( uint8_t i = 0U; (uint8_t)GUI_ROWS_MAX > i; ++i )
-    {
-        /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
-        me->icon_slot[i] = (uint8_t *)khal_alloc_psram(64U, KAPP_ICON_BYTES);
-        if ( NULL == me->icon_slot[i] )
-        {
-            KLOG_W(TAG, "no PSRAM for icon slot %u; rows from here draw the "
-                        "apps glyph", (unsigned)i);
-            break;
-        }
-        gui_icon_dsc_set(&me->icon_dsc[i], me->icon_slot[i]);
-    }
+    /* THE ICON SLOTS are taken one by one, the first time a row's icon is
+     * written (gui_icon_slot_take()): 128 entries at 48 KB would be 6 MB of
+     * PSRAM held from boot by a board that may have three apps, and the
+     * factory's final test needs that memory for the camera on J3. A slot
+     * once taken is never given back. */
     /* One more, for the card of a write about no row (gui_write_face_take()).
      * Without it that card wears the app's letters on its colour. */
     /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
@@ -5775,6 +5928,12 @@ static bool ui_build(Gui * const me)
                        SET_CTL_NAMES[i]);
                 continue;
             }
+#if !CONFIG_KODEOS_WIFI || !CONFIG_KODEOS_BLE
+            if ( gui_set_absent(me, i) )
+            {
+                continue;
+            }
+#endif
             if ( ((uint8_t)GUI_SET_LEVEL == i) || ((uint8_t)GUI_SET_VOLUME == i) )
             {
                 /* The level is a track a finger drags, as a sheet's value
@@ -10391,8 +10550,8 @@ static void gui_desc_answer(Gui * const me, GuiEntry * const e,
 }
 
 /**
- * @brief Write the header of one icon block: a .k64 is 64x64 RGB565A8 by
- *        definition, whatever file lands in the block.
+ * @brief Write the header of one icon block: the block is 128x128 RGB565A8
+ *        by definition, whichever size of .k64 landed in it.
  *
  * @param dsc   The header.
  * @param block The block's KAPP_ICON_BYTES.
@@ -10413,7 +10572,7 @@ static void gui_icon_dsc_set(lv_image_dsc_t *dsc, const uint8_t *block)
  *
  * entries[] takes the low half, installed[] the high one, and this is the
  * only place that says so. Keyed by the ENTRY and not by the row, because
- * rows are torn down and rebuilt on every repaint while a 12 KB block that
+ * rows are torn down and rebuilt on every repaint while a 48 KB block that
  * moved with them would have to be refilled each time.
  *
  * @param kind Which model.
@@ -10574,7 +10733,7 @@ static uint8_t gui_slot_by_project(Gui const * const me, const char *project)
  * The second chain, run after the first: gui_ask_next_desc() works through
  * the binaries until none is left, and its last call comes here. One
  * question in flight, for a harder reason than the manifest chain's - an
- * icon is three of the jumbo pool's four blocks, so a second conversation
+ * icon is every block of the icon pool, so a second conversation
  * would BE the pool. AO_Storage enforces the same rule from its side; this
  * is what keeps the two from ever having to disagree.
  *
@@ -11784,17 +11943,19 @@ static void gui_meta_retry(Gui * const me)
  * Layout: the header, the entries, the installed ones, then one icon per row whose
  * face says it has one, in that order. The card's file is the same bytes. Records
  * first, the header last, so a reset in the middle leaves a block that fails its
- * check and is simply not used.
+ * check and is simply not used. The block is KHAL_KEEP_BYTES long and an icon is
+ * 48 KB of it: the rows that come first keep theirs, and a row whose icon does not
+ * fit is kept without it and drawn with its letters until the boot's own question
+ * brings it back.
  */
 #define GUI_KEEP_MAGIC     0x4B47554CUL      /* "KGUL" */
-#define GUI_KEEP_VERSION   2UL
+#define GUI_KEEP_VERSION   3UL   /* The layout's: its icons are KAPP_ICON_BYTES each, and a copy laid out with other icons is not read. */
 #define GUI_KEEP_PATH      "/sdcard/.kode/launcher.keep"
 #define GUI_KEEP_DIR       "/sdcard/.kode"
 #define GUI_KEEP_MAX       KHAL_KEEP_BYTES   /* The list's room: all of the block. */
 #define GUI_KEEP_READ_CHUNK 32768U           /* KODE_FS_CAT_MAX_CEIL */
 #define GUI_KEEP_WRITE_CHUNK 60000U          /* Under the 16 bits a write carries. */
 #define GUI_KEEP_RETRY_MS  20U               /* A refused read goes out again. */
-#define GUI_KEEP_PACK_WAIT_MS 600U           /* The most Kody's pack waits for the copy. */
 #define GUI_KEEP_SAVE_MS   1500U             /* A quiet time after the last folder. */
 #define GUI_KEEP_VERIFY_MS 5000U             /* The copy is checked this long into the boot. */
 
@@ -11879,7 +12040,7 @@ static void gui_keep_face_take(GuiFace * const f)
     f->known      = true;
     f->shown      = true;
     f->retry      = false;
-    f->icon_parts = f->icon_ok ? (uint8_t)0x07U : (uint8_t)0U;
+    f->icon_parts = f->icon_ok ? (uint8_t)GUI_ICON_PARTS_ALL : (uint8_t)0U;
 }
 
 /**
@@ -11934,7 +12095,7 @@ static uint32_t gui_keep_apply(Gui * const me)
             gui_keep_face_take(&to->face);
             if ( to->face.icon_ok )
             {
-                if ( ((uint8_t)GUI_ROWS_MAX > slot) && (NULL != me->icon_slot[slot]) )
+                if ( NULL != gui_icon_slot_take(me, slot) )
                 {
                     (void)memcpy(me->icon_slot[slot], icon, KAPP_ICON_BYTES);
                 }
@@ -11984,7 +12145,7 @@ static uint32_t gui_keep_apply(Gui * const me)
             gui_keep_face_take(&to->face);
             if ( to->face.icon_ok )
             {
-                if ( ((uint8_t)GUI_ROWS_MAX > slot) && (NULL != me->icon_slot[slot]) )
+                if ( NULL != gui_icon_slot_take(me, slot) )
                 {
                     (void)memcpy(me->icon_slot[slot], icon, KAPP_ICON_BYTES);
                 }
@@ -12048,23 +12209,12 @@ static void gui_keep_gate(Gui * const me)
         && ((uint8_t)GUI_KEEP_READ_NONE == me->keep_read) )
     {
         me->keep_gate_open = true;
+#if CONFIG_KODEOS_RADIO
         radio_boot_release();
+#endif
     }
 }
 
-/**
- * @brief The pack's read, which waited for the card's copy.
- *
- * @param me The AO.
- */
-static void gui_keep_pack_go(Gui * const me)
-{
-    if ( me->keep_pack_owed )
-    {
-        me->keep_pack_owed = false;
-        kgui_assets_start();
-    }
-}
 
 /**
  * @brief The card's copy was refused: asked again in a moment, in any state.
@@ -12146,7 +12296,6 @@ static void gui_keep_read_answer(Gui * const me, FileRspEvt const * const r)
                (unsigned long)me->keep_off);
     }
     me->keep_off = 0U;
-    gui_keep_pack_go(me);
     gui_keep_gate(me);
 }
 
@@ -12162,22 +12311,33 @@ static bool gui_keep_save(Gui * const me)
     uint32_t const    old_crc  = (GUI_KEEP_MAGIC == h->magic) ? h->crc : 0U;
     uint32_t const    file_crc = (GUI_KEEP_MAGIC == h->magic) ? h->file_crc : 0U;
     uint32_t          icons = 0U;
+    uint32_t const    records = sizeof(GuiKeepHdr) + (me->entry_count * sizeof(GuiEntry))
+                                + (me->installed_count * sizeof(InstalledEntry));
+    uint32_t          room = 0U;   /* icons the block has room for after the records */
 
+    if ( GUI_KEEP_MAX >= records )
+    {
+        room = (GUI_KEEP_MAX - records) / (uint32_t)KAPP_ICON_BYTES;
+    }
     for ( uint8_t i = 0U; i < me->entry_count; ++i )
     {
-        icons += me->entries[i].face.icon_ok ? 1U : 0U;
+        if ( me->entries[i].face.icon_ok && (icons < room) )
+        {
+            ++icons;
+        }
     }
     for ( uint8_t i = 0U; i < me->installed_count; ++i )
     {
-        icons += me->installed[i].face.icon_ok ? 1U : 0U;
+        if ( me->installed[i].face.icon_ok && (icons < room) )
+        {
+            ++icons;
+        }
     }
-    uint32_t const total = sizeof(GuiKeepHdr) + (me->entry_count * sizeof(GuiEntry))
-                           + (me->installed_count * sizeof(InstalledEntry))
-                           + (icons * (uint32_t)KAPP_ICON_BYTES);
+    uint32_t const total = records + (icons * (uint32_t)KAPP_ICON_BYTES);
 
     if ( GUI_KEEP_MAX < total )
     {
-        return false;
+        return false;   /* the records alone do not fit */
     }
     h->magic = 0U;
     khal_keep_sync(0U, sizeof(GuiKeepHdr));
@@ -12188,6 +12348,8 @@ static bool gui_keep_save(Gui * const me)
 
     (void)memcpy(e, me->entries, me->entry_count * sizeof(GuiEntry));
     (void)memcpy(in, me->installed, me->installed_count * sizeof(InstalledEntry));
+    uint32_t kept = 0U;   /* icons laid so far: the same count, in the same order, as above */
+
     for ( uint8_t i = 0U; i < me->entry_count; ++i )
     {
         uint8_t const slot = gui_entry_slot(GUI_ROW_FILE, i);
@@ -12196,22 +12358,27 @@ static bool gui_keep_save(Gui * const me)
         e[i].asked = true;
         e[i].retry = false;
         e[i].tries = 0U;
+        /* A row's icon that has no room is left out, and the row says so. */
+        e[i].face.icon_ok = me->entries[i].face.icon_ok && (kept < icons);
         gui_keep_face_take(&e[i].face);
-        if ( me->entries[i].face.icon_ok )
+        if ( e[i].face.icon_ok )
         {
             (void)memcpy(to, me->icon_slot[slot], KAPP_ICON_BYTES);
             to = &to[KAPP_ICON_BYTES];
+            ++kept;
         }
     }
     for ( uint8_t i = 0U; i < me->installed_count; ++i )
     {
         uint8_t const slot = gui_entry_slot(GUI_ROW_INSTALLED, i);
 
+        in[i].face.icon_ok = me->installed[i].face.icon_ok && (kept < icons);
         gui_keep_face_take(&in[i].face);
-        if ( me->installed[i].face.icon_ok )
+        if ( in[i].face.icon_ok )
         {
             (void)memcpy(to, me->icon_slot[slot], KAPP_ICON_BYTES);
             to = &to[KAPP_ICON_BYTES];
+            ++kept;
         }
     }
     uint32_t const crc = khal_crc32(KHAL_CRC32_INIT, (const uint8_t *)e,
@@ -12357,11 +12524,6 @@ static bool gui_keep_all_settled(Gui const * const me)
  */
 static void gui_keep_tick(Gui * const me, uint32_t now)
 {
-    if ( me->keep_pack_owed && ((now - me->assets_t0_ms) >= GUI_KEEP_PACK_WAIT_MS) )
-    {
-        /* A card that takes this long does not hold Kody up any longer. */
-        gui_keep_pack_go(me);
-    }
     if ( (0U != me->keep_verify_ms) && ((int32_t)(now - me->keep_verify_ms) >= 0)
         && gui_lists_settled(me) && ('\0' == me->appdata_project[0]) )
     {
@@ -14151,8 +14313,9 @@ static void gui_evict_end(Gui * const me, AppEvictEndEvt const * const e)
     else
     {
         /* Room is made and nobody is asked (it loads, and that
-         * is it). AO_AppMgr keeps what goes on the card first; a copy that
-         * fails stops the install with nothing removed (KFAIL_KEEP). */
+         * is it). AO_AppMgr evicts the apps the card holds a copy of; when
+         * one it must evict has none yet, nothing is written and the
+         * install fails as busy (KFAIL_BUSY). */
         KLOG_N(TAG, "install: %u app(s) make room for %s", (unsigned)e->victims,
                me->write_name);
         gui_install_write(me);
@@ -14426,13 +14589,20 @@ static void gui_syscard_arrive(Gui * const me, GuiSheet was)
  * report, a failure, a pairing, a question's answer. The launch scene that
  * flew out of the card is over, or its end would ask for a run the takeover
  * has already put another name on. A system card arriving then arrives as
- * any other does.
+ * any other does. The card at boot taken by anything but its own write's
+ * card (Update) is gone for this boot, and the log says so.
  *
  * @param me  The AO, with the new kind in me->sheet and the card filled.
  * @param was The kind that was up before.
  */
 static void gui_sheet_taken_over(Gui * const me, GuiSheet was)
 {
+    if ( (GUI_SHEET_UPDATE == was) && (GUI_SHEET_UPDATE != me->sheet)
+        && (GUI_SHEET_OPENING != me->sheet) )
+    {
+        KLOG_N(TAG, "update: the card gave its place to %s; offered again at the next boot",
+               gui_sheet_kind_name(me->sheet));
+    }
     gui_launch_end();
     gui_syscard_arrive(me, was);
 }
@@ -14598,8 +14768,9 @@ static void gui_battery_fill(Gui * const me)
  *        critical.
  *
  * The card is not raised over a locked card (a write is running), over
- * another system card (it would take the pairing's code or a question away),
- * while a guided test has the glass, or while the board rests with the glass
+ * another system card (it would take the pairing's code or a question away)
+ * but the card at boot, whose place it takes, while a guided test has the
+ * glass, or while the board rests with the glass
  * parked; the reading or the wake that finds the way clear raises it, because
  * the entry is only counted once it has risen. Nor is it raised while the
  * cable is in: it asks for the cable.
@@ -14617,7 +14788,7 @@ static void gui_battery_check(Gui * const me, bool critical)
         parked = me->lp_parked;
 #endif
         if ( kgui_crit_waits(me->sheet_locked, gui_sheet_is_system(me->sheet),
-                             gui_in_guided_test(), parked) )
+                             GUI_SHEET_UPDATE == me->sheet, gui_in_guided_test(), parked) )
         {
             KLOG_D(TAG, "battery: critical at %u %%; the glass is taken, the card waits",
                    (unsigned)me->soc);
@@ -14665,8 +14836,9 @@ static void gui_welcome_mark(const char *word)
  * @brief The landing after Welcome, on the awake Lock's tick: the ring closes
  *        and Kody reads the line (kshell_welcome.c).
  *
- * Counted from Kody starting to wake, as kshell's is, and only with him awake on
- * a bare face. A face that is never seen awake leaves the key `pending` for the
+ * Counted from Kody being put in his scene, where the way back from Welcome
+ * finds him awake in his loop (face_wake_up), and only with him awake on a
+ * bare face. A face that is never seen awake leaves the key `pending` for the
  * next boot, as kshell's dark glass does.
  *
  * @param me The AO.
@@ -14974,12 +15146,18 @@ static void gui_write_face_take(Gui * const me)
             (void)memcpy(me->write_icon, me->icon_slot[slot], KAPP_ICON_BYTES);
             me->write_face.icon_ok = true;
         }
+        /* The face Apps shows for the app: the card may rise with it. */
+        kgui_wface_known(&me->wface);
     }
     gui_ask_next_appdata(me);
 }
 
 /**
- * @brief A report of a write: keep, drop or take the face its card wears.
+ * @brief A report of a write: keep, drop or take the face its card wears, or
+ *        ask its folder again.
+ *
+ * Asked again, the face stays on the card as it is: the folder's answer is
+ * written over it and drawn when it has all arrived (gui_write_face_settle()).
  *
  * @param me The AO.
  * @param p  The report.
@@ -14988,15 +15166,25 @@ static void gui_write_face_report(Gui * const me, const AppProgressEvt *p)
 {
     bool const app = ((uint8_t)KWRITE_APP == p->what)
                      || ((uint8_t)KWRITE_APP_RUN == p->what);
-    kgui_wface_act_t const act = kgui_wface_report(&me->wface, app, p->project);
+    kgui_wface_act_t const act = kgui_wface_report(&me->wface, app, p->project,
+                                                   khal_time_ms());
 
     if ( KGUI_WFACE_TAKE == act )
     {
         gui_write_face_take(me);
+        gui_write_face_show(me);
     }
-    if ( KGUI_WFACE_KEEP != act )
+    else if ( KGUI_WFACE_DROP == act )
     {
         gui_write_face_show(me);
+    }
+    else if ( KGUI_WFACE_AGAIN == act )
+    {
+        gui_ask_next_appdata(me);
+    }
+    else
+    {
+        /* The same app, or still nobody. */
     }
 }
 
@@ -15022,14 +15210,22 @@ static void gui_write_face_settle(Gui * const me)
     else
     {
         face->icon_ok = ((uint8_t)APPDATA_ICON_OK == face->icon_status)
-                        && (0x07U == face->icon_parts)
+                        && (GUI_ICON_PARTS_ALL == face->icon_parts)
                         && (NULL != me->write_icon);
         face->settled = true;
         KLOG_D(TAG, "write face %s: \"%s\" json=%s icon=%s", me->wface.project,
                face->name,
                kapp_json_status_name((kapp_json_status_t)face->json_status),
                gui_icon_status_name(face->icon_status));
+        if ( (uint8_t)KAPP_JSON_OK == face->json_status )
+        {
+            kgui_wface_known(&me->wface);
+        }
         gui_write_face_show(me);
+        if ( me->writing && me->write_held )
+        {
+            gui_write_card_show(me);
+        }
     }
 }
 
@@ -15045,6 +15241,68 @@ static bool gui_write_face_worn(Gui const * const me, int8_t row)
     return (0 > row) && kgui_wface_has(&me->wface)
            && ((uint8_t)KWRITE_OS != me->write_what)
            && ((uint8_t)KWRITE_C5 != me->write_what);
+}
+
+/**
+ * @brief Whether the card of the write in flight waits off the glass.
+ *
+ * Only an app's write about no row, whose card has not risen: the launcher's
+ * own write rose with its row's face, and kodeOS and the radio wear their own.
+ *
+ * @param me The AO.
+ * @return true while kgui_wface_waits() says its face has no words yet.
+ */
+static bool gui_write_card_waits(Gui const * const me)
+{
+    bool const app = ((uint8_t)KWRITE_APP == me->write_what)
+                     || ((uint8_t)KWRITE_APP_RUN == me->write_what);
+
+    return app && (!me->run_after) && (GUI_SHEET_OPENING != me->sheet)
+           && kgui_wface_waits(&me->wface, khal_time_ms());
+}
+
+/**
+ * @brief Put the card of a write on the glass, or keep it off until its face
+ *        has its folder's words.
+ *
+ * A console `install` or one from the Kode channel names the file, then the
+ * project, and its folder answers last: a card raised at the first report
+ * shows a file's name (for a download, the last part of its URL), then the
+ * project's, and the project's letters where the icon goes, before the app's
+ * own. It waits instead: for a report that names the app, however long the
+ * download takes to open, then for the folder or a row that heard from it,
+ * at most KGUI_WFACE_WAIT_MS. A failure does not wait: gui_show_fail() raises
+ * its card by itself. A write that ends before its card rose is told by the
+ * notice of its done.
+ *
+ * @param me The AO.
+ */
+static void gui_write_card_show(Gui * const me)
+{
+    if ( gui_write_card_waits(me) )
+    {
+        if ( !me->write_held )
+        {
+            me->write_held = true;
+            KLOG_D(TAG, "write card: waits for the folder of '%s'",
+                   me->wface.project);
+        }
+        return;
+    }
+    if ( me->write_held )
+    {
+        const char *why = "the wait for its folder ran out";
+
+        me->write_held = false;
+        if ( me->wface.known )
+        {
+            why = "with its folder's words";
+        }
+        KLOG_I(TAG, "write card: up %u ms after a report named '%s', %s",
+               (unsigned)(khal_time_ms() - me->wface.t0_ms), me->wface.project,
+               why);
+    }
+    gui_opening_show(me);
 }
 
 /**
@@ -15080,11 +15338,23 @@ static bool gui_write_face_worn(Gui const * const me, int8_t row)
  */
 static void gui_show_write(Gui * const me, const AppProgressEvt *p)
 {
-    /* A write that begins is not the one before it: whatever face its card
-     * wore is nobody's, and the same app written again asks its folder again. */
     if ( !me->writing )
     {
-        kgui_wface_end(&me->wface);
+        /* The store fetches an app's folder and installs its image right
+         * after it: a write that begins while the card of the write before it
+         * is still on the glass wears that card's face until its image names
+         * an app, and a report that names another takes the face over
+         * (kgui_wface_report()). Off that card, a write that begins is not the
+         * one before it: whatever face its card wore is nobody's, and the same
+         * app written again asks its folder again. */
+        bool const kept = (GUI_SHEET_OPENING == me->sheet)
+                          && gui_write_face_worn(me, gui_sheet_card_row(me));
+
+        if ( !kept )
+        {
+            kgui_wface_end(&me->wface);
+        }
+        me->write_held = false;
     }
     /* Something IS in flight, which `gui` has to say even though no
      * transition happens: a report arriving over the card that is already up
@@ -15100,8 +15370,11 @@ static void gui_show_write(Gui * const me, const AppProgressEvt *p)
     if ( me->closing )
     {
         me->closing = false;
-        KLOG_W(TAG, "another write started; %s stays installed and is not "
-                    "opened", me->last_launch.name);
+        if ( me->closing_run )
+        {
+            KLOG_W(TAG, "another write started; %s stays installed and is "
+                        "not opened", me->last_launch.name);
+        }
     }
     if ( me->run_after )
     {
@@ -15134,7 +15407,7 @@ static void gui_show_write(Gui * const me, const AppProgressEvt *p)
                                p->file);
     }
     gui_write_face_report(me, p);
-    gui_opening_show(me);
+    gui_write_card_show(me);
 }
 
 /**
@@ -15209,6 +15482,32 @@ static void gui_show_fail(Gui * const me)
          * the medium, and on the console's road no card was ever raised. */
         me->sheet_row = -1;
         gui_sheet_open_kind(me, GUI_SHEET_FAILURE);
+    }
+}
+
+/**
+ * @brief The card of a fetch that brought no data folder goes without a
+ *        failure.
+ *
+ * The store fetches an app's folder and installs its image right after it.
+ * The folder is how the app looks, never what lets it install, so the failure
+ * card would tell of an install that failed when none has begun. A card on
+ * the glass closes the way a done's does, without the green edge; one still
+ * waiting off the glass for its folder (gui_write_card_show()) never rises.
+ * The install that follows raises its own.
+ *
+ * @param me The AO.
+ */
+static void gui_data_lost(Gui * const me)
+{
+    KLOG_N(TAG, "write card: no data folder came for '%s'; the card goes "
+                "without a failure", me->wface.project);
+    me->writing    = false;
+    me->write_held = false;
+    me->write_pct  = 0U;
+    if ( GUI_SHEET_OPENING == me->sheet )
+    {
+        gui_sheet_close(me);
     }
 }
 
@@ -15493,7 +15792,6 @@ static bool gui_test_sheet_given_back(GuiSheet kind)
         case GUI_SHEET_SCREEN:
         case GUI_SHEET_BAT:
         case GUI_SHEET_ABOUT:
-        case GUI_SHEET_ZONE:
         case GUI_SHEET_TIME:
         case GUI_SHEET_AUTOLOCK:
         case GUI_SHEET_WIFI:
@@ -16651,6 +16949,12 @@ static bool gui_curtain_start(Gui * const me, bool aim)
     bool                         started = false;
     kgui_curtain_spec_t          spec;
 
+    /* A curtain that shows the face shows it as it will be: the hour's scene,
+     * and Kody standing in it, before its picture is taken. */
+    if ( lv_screen_active() != kgui_screen_face )
+    {
+        (void)gui_face_kody_ready(me);
+    }
     /* The pictures are the curtain's: a page that grows on them ends. */
     gui_page_grow_cut(me);
     gui_level_grow_cut(me);
@@ -17672,7 +17976,8 @@ static void gui_drag_touch(Gui * const me, TouchEvt const * const t,
  * sheet to open each want the screen or the card as it will be, and none of
  * them waits for a spring. A release is not among them: it belongs to a press
  * the motion disarmed, and a hold's release must not cut the curtain home
- * started short.
+ * started short. Nor is the card at boot, which nobody asked for: it waits
+ * for the motion to end (gui_update_glass()), and the state refuses it.
  *
  * @param e The event.
  * @return Its name, or NULL when the event is not one of these.
@@ -17701,7 +18006,10 @@ static const char *gui_input_event(QEvt const * const e)
             break;
         }
         case GUI_SHEET_OPEN_SIG: {
-            word = "a sheet";
+            if ( (uint8_t)GUI_SHEET_UPDATE != Q_EVT_CAST(SheetOpenEvt)->kind )
+            {
+                word = "a sheet";
+            }
             break;
         }
         default: {
@@ -18227,10 +18535,12 @@ static void gui_idle_rearm(Gui * const me)
  *
  * Silence is not inactivity, so the count is held - restarted on every pass
  * - while a sheet is up (no sheet closes by itself, and closing one starts
- * the count afresh), while a finger rests on the glass or a button is held
- * down (neither publishes anything while it lasts: a pad button held at the
- * end of the list has stopped repeating, and a side button held past its
- * hold is armed no more, and both are still a hand on the board - btn_held),
+ * the count afresh; the card at boot is the exception, and the door takes it
+ * down, gui_sheet_events()), while a finger rests on the glass or a button
+ * is held down (neither publishes anything while it lasts: a pad button held
+ * at the end of the list has stopped repeating, and a side button held past
+ * its hold is armed no more, and both are still a hand on the board -
+ * btn_held),
  * while a write runs and while a curtain is still moving. When it
  * runs out it POSTS the door and restarts, so it asks once: the tick is the
  * parent's, and a child must hand it up rather than transition out of it.
@@ -18241,9 +18551,9 @@ static void gui_idle_rearm(Gui * const me)
  */
 static void gui_idle_check(Gui * const me)
 {
-    if ( (GUI_SHEET_NONE != me->sheet) || me->touch_pressed
-        || (0U != me->btn_held) || me->writing || me->curtain_up
-        || gui_list_moving(me) )
+    if ( ((GUI_SHEET_NONE != me->sheet) && (GUI_SHEET_UPDATE != me->sheet))
+        || me->touch_pressed || (0U != me->btn_held) || me->writing
+        || me->curtain_up || gui_list_moving(me) )
     {
         gui_idle_rearm(me);
     }
@@ -19003,6 +19313,7 @@ static lv_color_t gui_bat_bar_colour(Gui const * const me)
  * @param which A GuiSetCtl; out of range answers with More's look.
  * @return That control's colour, glyph and title.
  */
+#if CONFIG_KODEOS_WIFI || CONFIG_KODEOS_BLE
 static GuiSetLook gui_set_look(uint8_t which)
 {
     static const void *const GLYPHS[GUI_SET_COUNT] = {
@@ -19047,6 +19358,7 @@ static GuiSetLook gui_set_look(uint8_t which)
     look.title = TITLES[idx];
     return look;
 }
+#endif
 
 /**
  * @brief What a row of More is called and what it wears on its page.
@@ -19059,7 +19371,6 @@ static GuiSetLook gui_more_look(uint8_t which)
     static const void *const GLYPHS[GUI_MORE_COUNT] = {
         [GUI_MORE_SCREEN] = &kui_glyph_sun,
         [GUI_MORE_BAT]    = &kui_glyph_battery,
-        [GUI_MORE_ZONE]   = &kui_glyph_clock_30,
         [GUI_MORE_KODY]   = &kui_glyph_scene_30,
         [GUI_MORE_TEST]   = &kui_glyph_check_30,
         [GUI_MORE_ABOUT]  = &kui_glyph_info_30,
@@ -19070,7 +19381,6 @@ static GuiSetLook gui_more_look(uint8_t which)
     static const char *const TITLES[GUI_MORE_COUNT] = {
         [GUI_MORE_SCREEN] = "Screen",
         [GUI_MORE_BAT]    = "Battery",
-        [GUI_MORE_ZONE]   = "Time zone",
         [GUI_MORE_KODY]   = "Kody",
         [GUI_MORE_TEST]   = "Self-test",
         [GUI_MORE_ABOUT]  = "About",
@@ -19271,7 +19581,12 @@ static const char *gui_haptic_quiet_word(void)
 static void gui_settings_act(Gui * const me, uint8_t which)
 {
     KLOG_D(TAG, "control %u acted", (unsigned)which);
-    (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    /* A radio's switch buzzes for itself: a click once AO_Radio has it, a
+     * thud when AO_Radio had no room (gui_wifi_switch(), gui_ble_switch()). */
+    if ( ((uint8_t)GUI_SET_WIFI != which) && ((uint8_t)GUI_SET_BLE != which) )
+    {
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    }
     switch ( (GuiSetCtl)which )
     {
 #if CONFIG_KODEOS_WIFI
@@ -19884,7 +20199,11 @@ static lv_obj_t *gui_sheet_action_btn(Gui const * const me)
  */
 static void gui_sheet_action_act(Gui * const me)
 {
-    (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    if ( GUI_SHEET_UPDATE != me->sheet )
+    {
+        /* The card at boot buzzes by what its button did (gui_update_act()). */
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    }
     switch ( me->sheet )
     {
         case GUI_SHEET_FAILURE: {
@@ -19963,6 +20282,12 @@ static void gui_sheet_action_act(Gui * const me)
         case GUI_SHEET_RESET: {
             /* The question's answer: the card turns into the wait. */
             gui_reset_go(me);
+            break;
+        }
+        case GUI_SHEET_UPDATE: {
+            /* Update: About's install of the release the card names; grey,
+             * the log says why and the card stays (gui_update_act()). */
+            gui_update_act(me);
             break;
         }
         default: {
@@ -20086,7 +20411,6 @@ static void gui_page_title_show(Gui * const me)
         case GUI_SHEET_BLE:   { title = "Bluetooth"; break; }
         case GUI_SHEET_BAT:   { title = "Battery";   break; }
         case GUI_SHEET_TIME:  { title = "Time";      break; }
-        case GUI_SHEET_ZONE:  { title = "Time zone"; break; }
         case GUI_SHEET_ABOUT: { title = "About";     break; }
         case GUI_SHEET_TEST:  { title = "Self-test"; break; }
         default:              { break; }
@@ -20154,9 +20478,9 @@ static void gui_sheet_header_text(Gui * const me, const char *title,
  * THE DISC'S OTHER TENANT, one at a time: a monogram and a glyph in the
  * same 112 px would be drawn one over the other, so this is said after
  * gui_sheet_header_glyph() has set the ground and hidden the label it
- * hides. Two sheets use it - About's "k" and the Time zone list's - and
- * there is no glyph_k for either: a letter a font already draws does not
- * need to become a 40 px image (kui.h says so where the glyphs are declared).
+ * hides. About uses it for its "k", and there is no glyph_k for it: a
+ * letter a font already draws does not need to become a 40 px image (kui.h
+ * says so where the glyphs are declared).
  *
  * The ink is an argument because it does not survive: a sheet that inherited
  * the last letter's ink would wear a stranger's colour on its own.
@@ -20189,11 +20513,11 @@ static void gui_sheet_header_mono(Gui * const me, const char *text,
  * is about. The slot takes a glyph or a short string - one of the two, never
  * both - and a row with neither still wears the pill's own empty ink disc,
  * which is what an option not yet taken needs (an open network in the scan,
- * a zone the clock is not in, Forget all): the disc IS the ring an unchosen
+ * an auto-lock time not chosen, Forget all): the disc IS the ring an unchosen
  * option wears, and hiding it would leave a hole before the text and stop
  * the column reading as one choice. A row that has nothing to put in the
- * slot AND no reason to keep the ring - About's MAC, Last start, Up for,
- * Time zone and Update, none of them one option in a column of choices -
+ * slot AND no reason to keep the ring - About's MAC, Last start, Up for
+ * and Update, none of them one option in a column of choices -
  * says so through gui_sheet_row_plain().
  *
  * The cursor ring is swapped here, once per row, rather than on every move:
@@ -20226,7 +20550,7 @@ static lv_obj_t *gui_sheet_row(Gui * const me, const char *name,
  * unchosen one still needs the ring the chosen one's check sits inside, or
  * the column stops reading as one choice.
  * Only a row that stands in no column of choices - About's MAC, Last start,
- * Up for, Time zone and Update, and every bar - has no ring to keep, and
+ * Up for and Update, and every bar - has no ring to keep, and
  * says so explicitly instead of the caller's colour being read as a hint.
  *
  * @param me   The AO.
@@ -21156,14 +21480,12 @@ static void gui_sheet_select(Gui * const me, uint8_t want)
  *        page held to its ends.
  *
  * Where a sheet that has just opened shows its ring. Row 0 is the top
- * already on every sheet but the two lists of choices, and nothing moves.
- * A list opens on the choice that is on (gui_sheet_first_row()) and puts it
+ * already on every sheet but the list of choices, and nothing moves.
+ * The list opens on the choice that is on (gui_sheet_first_row()) and puts it
  * in the slot the row that opened it stood in on its page, under the finger
- * that tapped that row - the top slot for About's Time zone, the second for
- * Screen's Auto-lock - so a second tap there picks the choice that is
- * already on and changes nothing. A zone typed on the console, which the
- * table does not hold, is the exception: its list opens on UTC's row, and a
- * second tap there picks UTC. The least scroll gui_sheet_select() asks
+ * that tapped that row - the second slot, Screen's Auto-lock - so a second
+ * tap there picks the choice that is already on and changes nothing. The
+ * least scroll gui_sheet_select() asks
  * for would leave that choice at the foot of the page, and another one
  * under the finger. Where the page's ends do not allow the slot - a choice
  * above it at the top of the table, or one of the last ones - the page goes
@@ -21420,14 +21742,16 @@ static void gui_lines_join(char *out, size_t size, const char *l1, const char *l
  *
  * @param kind Which sheet.
  * @return true for a write, its failure, an app that stopped, a critical
- *         battery, a pairing, "Turn off?" and the factory reset's two cards.
+ *         battery, a pairing, "Turn off?", the factory reset's two cards and
+ *         a newer kodeOS.
  */
 static bool gui_sheet_framed(GuiSheet kind)
 {
     return (GUI_SHEET_OPENING == kind) || (GUI_SHEET_FAILURE == kind)
            || (GUI_SHEET_STOPPED == kind) || (GUI_SHEET_BATTERY == kind)
            || (GUI_SHEET_PAIRING == kind) || (GUI_SHEET_POWEROFF == kind)
-           || (GUI_SHEET_RESET == kind) || (GUI_SHEET_RESETTING == kind);
+           || (GUI_SHEET_RESET == kind) || (GUI_SHEET_RESETTING == kind)
+           || (GUI_SHEET_UPDATE == kind);
 }
 
 /**
@@ -21720,20 +22044,20 @@ static void gui_failure_fill(Gui * const me)
 {
     int8_t const row = gui_sheet_card_row(me);
     const GuiWriteWords * const words = gui_write_words(me->write_what);
-    /* Nothing was written and nothing is damaged: the card refused the copy
-     * of an app this install would have removed. The title stays the
-     * write's. */
-    static const char * const KEEP_WHY[3] = {
-        "Nothing changed.", "The card could not keep",
-        "an app this one replaces.",
+    /* Nothing was written and nothing is damaged: an app this install
+     * would remove has no copy on the card yet, and AO_AppMgr is making it.
+     * The title stays the write's; Try again is the answer. */
+    static const char * const BUSY_WHY[3] = {
+        "Nothing changed.", "An app this one replaces",
+        "is still being copied.",
     };
     const char * const *why = words->why;
     char                detail[GUI_SYS_DETAIL_MAX];
 
     me->sheet_locked = false;
-    if ( (uint8_t)KFAIL_KEEP == me->fail_why )
+    if ( (uint8_t)KFAIL_BUSY == me->fail_why )
     {
-        why = KEEP_WHY;
+        why = BUSY_WHY;
     }
     gui_frame_begin(me);
     gui_write_prot(me, row);
@@ -21881,10 +22205,6 @@ static void gui_sheet_fill(Gui * const me)
             gui_time_fill(me);
             break;
         }
-        case GUI_SHEET_ZONE: {
-            gui_zone_fill(me);
-            break;
-        }
         case GUI_SHEET_TEST: {
             gui_test_fill(me);
             break;
@@ -21921,6 +22241,11 @@ static void gui_sheet_fill(Gui * const me)
             /* THE WAIT for AO_Boot, or why the reset did not happen
              * (gui_resetting_fill()). */
             gui_resetting_fill(me);
+            break;
+        }
+        case GUI_SHEET_UPDATE: {
+            /* A NEWER kodeOS, offered once a boot (gui_update_fill()). */
+            gui_update_fill(me);
             break;
         }
         case GUI_SHEET_OPENING: {
@@ -22090,7 +22415,9 @@ static void gui_sheet_fill_again_as(Gui * const me, GuiSheet kind)
  *        pressed or tapped, and so clicks.
  *
  * A reading does nothing, and a press on it is not an act. The Screen card
- * is not asked: its rows click after the change (gui_screen_act()).
+ * is not asked: its rows click after the change (gui_screen_act()). Nor are
+ * the radios' switches and Forget all: they click once AO_Radio has the
+ * request and thud when it had no room.
  *
  * @param me  The AO.
  * @param tag The row's tag.
@@ -22103,15 +22430,12 @@ static bool gui_sheet_row_acts(Gui const * const me, uint16_t tag)
     switch ( me->sheet )
     {
         case GUI_SHEET_WIFI: {
-            acts = ((uint16_t)GUI_TAG_WIFI_SWITCH == tag)
-                   || ((uint16_t)GUI_TAG_WIFI_HIDDEN == tag)
+            acts = ((uint16_t)GUI_TAG_WIFI_HIDDEN == tag)
                    || ((uint16_t)GUI_TAG_WIFI_SAVED <= tag);
             break;
         }
         case GUI_SHEET_BLE: {
-            acts = ((uint16_t)GUI_TAG_BLE_SWITCH == tag)
-                   || ((uint16_t)GUI_TAG_BLE_PAIR == tag)
-                   || ((uint16_t)GUI_TAG_BLE_FORGET == tag);
+            acts = ((uint16_t)GUI_TAG_BLE_PAIR == tag);
             break;
         }
         case GUI_SHEET_ABOUT: {
@@ -22136,8 +22460,6 @@ static bool gui_sheet_row_acts(Gui const * const me, uint16_t tag)
                    && (((uint16_t)GUI_TAG_MORE + (uint16_t)GUI_MORE_COUNT) > tag);
             break;
         }
-        case GUI_SHEET_ZONE:
-        case GUI_SHEET_TIME:
         case GUI_SHEET_AUTOLOCK: {
             acts = true;
             break;
@@ -22213,7 +22535,7 @@ static void gui_sheet_act(Gui * const me, uint8_t idx, int8_t step)
              * drags and the pad steps; Auto-lock, Rest after, the scene
              * and Haptics step round their values where they stand, and the
              * switches flip (gui_screen_act()); the rows that need a
-             * page of their own - Battery, Time zone, Kody, Self-test and
+             * page of their own - Battery, Time, Kody, Self-test and
              * About - are doors, on the top button and a tap. */
             if ( (uint16_t)GUI_TAG_BRIGHT_VALUE == tag )
             {
@@ -22256,19 +22578,10 @@ static void gui_sheet_act(Gui * const me, uint8_t idx, int8_t step)
             gui_time_act(me, tag, step);
             break;
         }
-        case GUI_SHEET_ZONE: {
-            /* A zone is picked or it is not, so the horizontal pad has
-             * nothing to step here either: the top button and a tap pick the
-             * row, and the cursor walks the list on up and down. */
-            if ( 0 == step )
-            {
-                gui_zone_pick(me, tag);
-            }
-            break;
-        }
         case GUI_SHEET_AUTOLOCK: {
-            /* The same as a zone: a time is picked on the top button or a
-             * tap, and left and right have nothing to step. */
+            /* A time is picked on the top button or a tap, and left and
+             * right have nothing to step: the cursor walks the list on up
+             * and down. */
             if ( 0 == step )
             {
                 gui_lock_pick(me, tag);
@@ -22761,7 +23074,9 @@ static bool gui_wifi_listed(Gui const * const me, const char *ssid)
 {
     return me->wifi_linked && (strcmp(me->wifi_ssid, ssid) == 0);
 }
+#endif /* CONFIG_KODEOS_WIFI */
 
+#if CONFIG_KODEOS_WIFI || CONFIG_KODEOS_BLE
 /**
  * @brief A radio's row's words, with what the link to the radio chip last
  *        said (kgui_radio_words()).
@@ -22779,7 +23094,9 @@ static const char *gui_radio_words(Gui const * const me, bool on, bool linked,
 
     return kgui_radio_words(&v);
 }
+#endif
 
+#if CONFIG_KODEOS_WIFI
 /**
  * @brief The Wi-Fi sheet: the switch, then the networks.
  *
@@ -22951,6 +23268,7 @@ static void gui_wifi_fill(Gui * const me)
          * list under it. */
         (void)memcpy(me->scan_shown[i], me->scan_ssid[i], sizeof(me->scan_shown[0]));
         me->scan_shown_auth[i] = me->scan_auth[i];
+        me->scan_shown_rssi[i] = me->scan_rssi[i];
         me->scan_shown_n       = (uint8_t)(i + 1U);
     }
 
@@ -23026,13 +23344,14 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
         {
             /* A network with a password nobody has given this board: the
              * keypad asks for it. */
-            gui_kbd_begin(me, me->scan_shown[i], false, tag);
+            gui_kbd_begin(me, me->scan_shown[i], false, me->scan_shown_rssi[i], tag);
         }
         else
         {
             /* An empty password means the stored one, so this covers both
              * the open network and the one the board remembers. */
             (void)wifi_join_request(me->scan_shown[i], "", true);
+            me->scan_own_join = me->scan_out;
             KLOG_I(TAG, "joining '%s'", me->scan_shown[i]);
         }
     }
@@ -23043,6 +23362,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
         if ( i < me->saved_n )            /* the same stale-row guard */
         {
             (void)wifi_join_request(me->saved_ssid[i], "", true);
+            me->scan_own_join = me->scan_out;
             KLOG_I(TAG, "joining '%s'", me->saved_ssid[i]);
         }
     }
@@ -23050,7 +23370,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
     {
         /* A hidden network is a network chosen: the keypad takes its name
          * and its password. */
-        gui_kbd_begin(me, "", true, tag);
+        gui_kbd_begin(me, "", true, (int8_t)KGUI_WIFI_RSSI_NONE, tag);
     }
     else
     {
@@ -23094,11 +23414,35 @@ static void gui_wifi_forget(Gui * const me, uint8_t idx)
     {
         return;     /* the listing moved under the row; forget nothing */
     }
-    KLOG_I(TAG, "forgetting '%s'", me->saved_ssid[i]);
-    wifi_forget_request(me->saved_ssid[i]);
-    /* The owner's answer is what redraws the row away: the listing comes
-     * back without it, and its end marker asks for the rebuild. */
-    wifi_list_request();
+    if ( wifi_forget_request(me->saved_ssid[i]) )
+    {
+        KLOG_I(TAG, "forgetting '%s'", me->saved_ssid[i]);
+        /* The owner's answer is what redraws the row away: the listing comes
+         * back without it, and its end marker asks for the rebuild. */
+        gui_wifi_list_ask(me);
+    }
+    else
+    {
+        gui_radio_refused("forgetting a network");
+    }
+}
+
+/**
+ * @brief Ask AO_Radio for the saved networks.
+ *
+ * When AO_Radio has no room nothing answers, so the listing is owed and the
+ * page's next look asks again. That look comes GUI_WIFI_SCAN_RETRY_MS from
+ * now, as after a refused sweep, unless a sweep's end restarts the period.
+ *
+ * @param me The AO.
+ */
+static void gui_wifi_list_ask(Gui * const me)
+{
+    me->saved_owed = !wifi_list_request();
+    if ( me->saved_owed )
+    {
+        me->sheet_ask_ms = khal_time_ms() - (GUI_WIFI_SCAN_MS - GUI_WIFI_SCAN_RETRY_MS);
+    }
 }
 
 /**
@@ -23129,13 +23473,16 @@ static const char *gui_kbd_stage_name(uint8_t stage)
  * @param me     The AO.
  * @param ssid   The network's name; "" for a hidden one, whose name is typed.
  * @param hidden The network hides its name.
+ * @param rssi   How the row's network was heard, dBm; KGUI_WIFI_RSSI_NONE for
+ *               a hidden one.
  * @param door   The tag of the row that asked, where the ring goes back to.
  */
 static void gui_kbd_begin(Gui * const me, const char *ssid, bool hidden,
-                          uint16_t door)
+                          int8_t rssi, uint16_t door)
 {
     (void)snprintf(me->kbd_ssid, sizeof(me->kbd_ssid), "%s", ssid);
     me->kbd_secured = !hidden;
+    me->kbd_rssi    = rssi;
     me->kbd_door    = door;
     if ( hidden )
     {
@@ -23510,7 +23857,7 @@ static void gui_kbd_failed(Gui * const me, const char *words)
 {
     me->kbd_stage = (uint8_t)GUI_KBD_PASS;
     kgui_keyboard_hold(NULL, khal_time_ms());
-    kgui_hint(words);
+    kgui_hint_alert(words);
 }
 
 /**
@@ -23558,7 +23905,7 @@ static void gui_kbd_wifi_state(Gui * const me, WifiStateEvt const * const w)
             {
                 KLOG_I(TAG, "join of '%s': the network turned us away (%u)",
                        me->kbd_ssid, (unsigned)w->fail);
-                gui_kbd_failed(me, kgui_wifi_fail_words(w->fail));
+                gui_kbd_failed(me, kgui_wifi_fail_words(w->fail, me->kbd_rssi));
             }
             else if ( (uint8_t)KDRV_WIFI_IDLE == w->state )
             {
@@ -23785,7 +24132,7 @@ static void gui_wifi_chan_row(Gui * const me)
 static const char *gui_ble_name_shown(Gui const * const me)
 {
     size_t const prefix = sizeof(GUI_BLE_PREFIX) - 1U;
-    const char  *shown  = "KODE-DOT";
+    const char  *shown  = GUI_BLE_NAME_BARE;
 
     if ( '\0' == me->ble_name[0] )
     {
@@ -23805,17 +24152,34 @@ static const char *gui_ble_name_shown(Gui const * const me)
     return shown;
 }
 
-/** @brief Ask the radio to show the name in force, at once and with no restart. */
+/**
+ * @brief Ask the radio to show the name in force, at once and with no restart.
+ *
+ * Posted leaving KQP_RADIO_POST_MARGIN of AO_Radio's queue, as its doors do.
+ * With no room the log says so, and the radio shows the name from the next
+ * boot.
+ *
+ * @param me The AO.
+ */
 static void gui_ble_name_send(Gui const * const me)
 {
-    QEvt const * const evt = ble_rsp_evt(('\0' != me->ble_name[0]) ? me->ble_name
-                                         : (khal_identity_valid() ? khal_identity_serial()
-                                                                  : "KODE-DOT"),
-                                         NULL, 0U);
+    const char *name = me->ble_name;
+    QEvt const *evt;
 
-    if ( NULL != evt )
+    if ( '\0' == me->ble_name[0] )
     {
-        QACTIVE_POST(AO_Radio, evt, &me->super);
+        name = GUI_BLE_NAME_BARE;
+        if ( khal_identity_valid() )
+        {
+            name = khal_identity_serial();
+        }
+    }
+    evt = ble_rsp_evt(name, NULL, 0U);
+    if ( (NULL != evt)
+        && !QACTIVE_POST_X(AO_Radio, evt, KQP_RADIO_POST_MARGIN, &me->super) )
+    {
+        KLOG_N(TAG, "bluetooth name: AO_Radio had no room; it shows from the "
+                    "next boot");
     }
 }
 
@@ -24060,21 +24424,35 @@ static void gui_ble_act(Gui * const me, uint16_t tag)
         /* AO_Radio answers with BLE_STATE_SIG, and what it says there is
          * what puts the row's line up. */
         KLOG_I(TAG, "pair new device: asked");
-        ble_pair_open_request();
+        if ( !ble_pair_open_request() )
+        {
+            /* AO_Radio's queue had no room: nothing was asked, so the row
+             * would wait for an answer that never comes. */
+            KLOG_N(TAG, "pair new device: AO_Radio is busy");
+            kgui_hint(GUI_HINT_ROOM_BUSY);
+        }
     }
     else if ( (uint16_t)GUI_TAG_BLE_FORGET == tag )
     {
-        /* With a central attached nothing happens, and the row already says
-         * why. */
-        if ( !me->ble_console )
+        if ( me->ble_console )
         {
+            /* With a central attached nothing happens, and the row already
+             * says why. */
+            (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        }
+        else if ( ble_unpair_request() )
+        {
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
             KLOG_I(TAG, "forgetting %u bonded peer%s",
                    (unsigned)me->ble_bonds,
                    (1U == me->ble_bonds) ? "" : "s");
-            ble_unpair_request();
             /* The count comes back through BLE_STATE_SIG, and that is what
              * takes the row away - the same shape the Wi-Fi forget uses. */
             ble_state_request();
+        }
+        else
+        {
+            gui_radio_refused("forgetting the paired devices");
         }
     }
     else
@@ -24101,6 +24479,24 @@ static lv_obj_t *gui_ble_dot(Gui const * const me)
     return dot;
 }
 
+#if CONFIG_KODEOS_RADIO
+/**
+ * @brief A request the person made that AO_Radio had no room for.
+ *
+ * Nothing was asked, so nothing answers and nothing is painted for it: the
+ * press thuds, the hint line says the radio is busy and the log says what
+ * was refused.
+ *
+ * @param what What was refused, for the log.
+ */
+static void gui_radio_refused(const char *what)
+{
+    KLOG_N(TAG, "%s refused: AO_Radio had no room", what);
+    (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+    kgui_hint(GUI_HINT_ROOM_BUSY);
+}
+#endif
+
 #if CONFIG_KODEOS_WIFI
 /**
  * @brief A switch of a radio pressed: the page says so at once.
@@ -24108,30 +24504,47 @@ static lv_obj_t *gui_ble_dot(Gui const * const me)
  * The person has said what they want and the radio's seconds on the way there
  * are not theirs to wait for. The radio's own announcements
  * only take over once they agree, or after GUI_WISH_LOST_MS (gui_wish_lost()).
+ * A switch AO_Radio had no room for paints nothing (gui_radio_refused()).
  *
  * @param me The AO.
  */
 static void gui_wifi_switch(Gui * const me)
 {
-    bool const on = !me->wifi_on;
+    bool const  on   = !me->wifi_on;
+    const char *what = "Wi-Fi off";
+    uint8_t     wish = (uint8_t)GUI_WISH_OFF;
+    bool        asked;
 
-    me->wifi_on      = on;
-    me->wifi_wish    = (uint8_t)(on ? GUI_WISH_ON : GUI_WISH_OFF);
-    me->wifi_wish_ms = khal_time_ms();
     if ( on )
     {
-        wifi_start_request();
+        what  = "Wi-Fi on";
+        wish  = (uint8_t)GUI_WISH_ON;
+        asked = wifi_start_request();
     }
     else
     {
-        me->scan_out      = false;
-        me->scan_answered = false;
-        wifi_stop_request();
+        asked = wifi_stop_request();
     }
-    gui_cc_paint(me);
-    if ( GUI_SHEET_WIFI == me->sheet )
+    if ( asked )
     {
-        gui_sheet_refill(me);
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+        me->wifi_on      = on;
+        me->wifi_wish    = wish;
+        me->wifi_wish_ms = khal_time_ms();
+        if ( !on )
+        {
+            me->scan_out      = false;
+            me->scan_answered = false;
+        }
+        gui_cc_paint(me);
+        if ( GUI_SHEET_WIFI == me->sheet )
+        {
+            gui_sheet_refill(me);
+        }
+    }
+    else
+    {
+        gui_radio_refused(what);
     }
 }
 #endif
@@ -24140,28 +24553,46 @@ static void gui_wifi_switch(Gui * const me)
 /**
  * @brief The Bluetooth switch pressed: start or stop the radio, and the page says so at once.
  *
+ * A switch AO_Radio had no room for paints nothing (gui_radio_refused()).
+ *
  * @param me The AO.
  */
 static void gui_ble_switch(Gui * const me)
 {
-    bool const on = !me->ble_on;
+    bool const  on   = !me->ble_on;
+    const char *what = "Bluetooth off";
+    uint8_t     wish = (uint8_t)GUI_WISH_OFF;
+    bool        asked;
 
-    me->ble_on      = on;
-    me->ble_wish    = (uint8_t)(on ? GUI_WISH_ON : GUI_WISH_OFF);
-    me->ble_wish_ms = khal_time_ms();
     if ( on )
     {
-        ble_start_request();
+        what  = "Bluetooth on";
+        wish  = (uint8_t)GUI_WISH_ON;
+        asked = ble_start_request();
     }
     else
     {
-        me->adv_on = false;
-        ble_stop_request();
+        asked = ble_stop_request();
     }
-    gui_cc_paint(me);
-    if ( GUI_SHEET_BLE == me->sheet )
+    if ( asked )
     {
-        gui_sheet_refill(me);
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+        me->ble_on      = on;
+        me->ble_wish    = wish;
+        me->ble_wish_ms = khal_time_ms();
+        if ( !on )
+        {
+            me->adv_on = false;
+        }
+        gui_cc_paint(me);
+        if ( GUI_SHEET_BLE == me->sheet )
+        {
+            gui_sheet_refill(me);
+        }
+    }
+    else
+    {
+        gui_radio_refused(what);
     }
 }
 #endif
@@ -24476,11 +24907,16 @@ static bool gui_os_image_on_card(Gui const * const me)
 
 /**
  * @brief Whether this build has an update service to ask.
- * @return true unless CONFIG_KGUI_OS_UPDATE_URL is empty.
+ * @return true unless CONFIG_KGUI_OS_UPDATE_URL is empty or the build has no
+ *         AO_Net to ask it with.
  */
 static bool gui_os_service(void)
 {
+#if CONFIG_KODEOS_NET
     return (sizeof(GUI_OS_SERVICE) > GUI_OS_SERVICE_NONE);
+#else
+    return false;
+#endif
 }
 
 /**
@@ -24512,22 +24948,26 @@ static const char *gui_os_version(Gui const * const me)
 /**
  * @brief A check ended with nothing to show.
  *
- * @param me  The AO.
- * @param why What went wrong, for the log.
+ * @param me    The AO.
+ * @param check KGUI_OSREL_UNREACHED when the question never reached the
+ *              service (AO_Net refused it or did not take it), which the
+ *              boot asks again; KGUI_OSREL_FAILED for anything else.
+ * @param why   What went wrong, for the log.
  */
-static void gui_os_failed(Gui * const me, const char *why)
+static void gui_os_failed(Gui * const me, kgui_osrel_check_t check, const char *why)
 {
-    me->os_check = (uint8_t)KGUI_OSREL_FAILED;
+    me->os_check = (uint8_t)check;
     KLOG_I(TAG, "update: not checked (%s)", why);
 }
 
 /**
  * @brief Ask the update service which kodeOS is the latest.
  *
- * Asked when About opens, when Wi-Fi gets its address under that page, and
- * on the top button on its row: never by itself, since About is the only
- * place that shows the answer. Nothing is asked with no service, with no
- * address, or while a question is out. The answer comes back as
+ * Asked once a boot when Wi-Fi gets its first address (the card at boot,
+ * gui_update_question()), and again while that question never reaches the
+ * service; when About opens, when Wi-Fi gets its address under that page,
+ * and on the top button on its row. Nothing is asked with no service, with
+ * no address, or while a question is out. The answer comes back as
  * NET_HTTP_RSP_SIG (gui_os_answer()), into a block of PSRAM taken at the
  * first question and lent to AO_Net until then.
  *
@@ -24542,6 +24982,7 @@ static void gui_os_ask(Gui * const me, const char *why)
     {
         return;     /* nobody to ask, no way to ask, or asked already */
     }
+#if CONFIG_KODEOS_NET
     if ( NULL == me->os )
     {
         /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
@@ -24553,7 +24994,7 @@ static void gui_os_ask(Gui * const me, const char *why)
     }
     if ( NULL == me->os )
     {
-        gui_os_failed(me, "no memory for the answer");
+        gui_os_failed(me, KGUI_OSREL_FAILED, "no memory for the answer");
         return;
     }
     if ( net_http_ask(&me->super, false, GUI_OS_SERVICE, NULL, 0U, NULL,
@@ -24564,8 +25005,12 @@ static void gui_os_ask(Gui * const me, const char *why)
     }
     else
     {
-        gui_os_failed(me, "AO_Net did not take the question");
+        gui_os_failed(me, KGUI_OSREL_UNREACHED, "AO_Net did not take the question");
     }
+#else
+    /* Unreached: without AO_Net gui_os_service() is false. */
+    (void)why;
+#endif
 }
 
 /**
@@ -24573,7 +25018,8 @@ static void gui_os_ask(Gui * const me, const char *why)
  *
  * A release newer than the running image is kept and offered; an equal or
  * older one, and a service with no release at all, leave the board up to
- * date. About's row follows when that page is up.
+ * date. The boot's offer follows (gui_update_follow()), and About's row
+ * when that page is up.
  *
  * @param me The AO.
  * @param r  AO_Net's answer; the body is in the block the question lent.
@@ -24600,7 +25046,7 @@ static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r)
         }
         if ( !kgui_osrel_parse(me->os->answer, r->result.kept, gui_os_plain(), &rel) )
         {
-            gui_os_failed(me, "the service's answer did not read");
+            gui_os_failed(me, KGUI_OSREL_FAILED, "the service's answer did not read");
         }
         else if ( kgui_osrel_newer(rel.version, running) )
         {
@@ -24621,12 +25067,22 @@ static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r)
         me->os_check = (uint8_t)KGUI_OSREL_CURRENT;
         KLOG_I(TAG, "update: the service names no release");
     }
+    else if ( !reached )
+    {
+        /* AO_Net answered for the service: its one worker had another job
+         * (the Kode channel joins on the same first address), the address
+         * went, or the guard ran out. */
+        KLOG_I(TAG, "update: the service gave status %u, HTTP %u",
+               (unsigned)r->rc, (unsigned)r->result.status);
+        gui_os_failed(me, KGUI_OSREL_UNREACHED, "the question did not reach the service");
+    }
     else
     {
         KLOG_I(TAG, "update: the service gave status %u, HTTP %u",
                (unsigned)r->rc, (unsigned)r->result.status);
-        gui_os_failed(me, "no answer from the service");
+        gui_os_failed(me, KGUI_OSREL_FAILED, "no answer from the service");
     }
+    gui_update_follow(me);
     if ( GUI_SHEET_ABOUT == me->sheet )
     {
         gui_sheet_refill(me);
@@ -24648,6 +25104,319 @@ static kgui_osrel_row_t gui_os_row(Gui const * const me)
     view.power   = kgui_osrel_power_ok(me->soc, me->vbus);
     view.check   = (kgui_osrel_check_t)me->os_check;
     return kgui_osrel_row(&view);
+}
+
+/**
+ * @brief Start the update of kodeOS: the write's card, then the image.
+ *
+ * About's Software update row and the card at boot both end here. The image
+ * goes into the inactive kodeOS slot, and AO_AppMgr ends every write there
+ * with AO_Boot's switch and a restart into it, which is what the Opening card
+ * says. The card rises first, at 0 %, about no row and wearing the k, and
+ * the image is asked for once it has (gui_write_ask()): AO_AppMgr's reports
+ * then fill it.
+ *
+ * @param me   The AO.
+ * @param from GUI_ASK_OS for the card's kodeos.bin, GUI_ASK_OS_NET for the
+ *             release the service named.
+ */
+static void gui_os_install(Gui * const me, GuiAsk from)
+{
+    me->write_what = (uint8_t)KWRITE_OS;
+    me->write_pct  = 0U;
+    me->run_after  = false;
+    me->open_hold  = false;
+    me->sheet_row  = -1;
+    (void)snprintf(me->write_name, sizeof(me->write_name), "kodeOS");
+    gui_write_ask(me, from, "");
+    gui_sheet_open_kind(me, GUI_SHEET_OPENING);
+}
+
+/* ---- The card at boot ------------------------------------------------------------ */
+
+/**
+ * @brief Whether a notice line is owed to the face: waiting for it, waiting
+ *        for Kody's reaction to begin, or on its way on and off the glass.
+ * @param me The AO.
+ * @return true while the line is not through.
+ */
+static bool gui_face_notice_owed(Gui const * const me)
+{
+    return ((uint8_t)GUI_VISIT_NONE != me->visit_kind)
+           || ((uint8_t)GUI_VISIT_NONE != me->pill_wait)
+           || me->pill_due || me->pill_up;
+}
+
+/**
+ * @brief What holds the glass now, as the card's rule reads it
+ *        (kgui_osrel_offer_may_rise()).
+ *
+ * The screen is the state the glass is in (me->screen): the face, awake or
+ * at Rest, Apps and the settings screen; a test, the way back from an app
+ * and the board asleep leave it NULL. A card over any of them is a card.
+ *
+ * @param me The AO.
+ * @return The glass.
+ */
+static kgui_osrel_glass_t gui_update_glass(Gui const * const me)
+{
+    kgui_osrel_glass_t g;
+
+    g.screen = KGUI_OSREL_SCREEN_OTHER;
+    if ( Q_STATE_CAST(&Gui_face) == me->screen )
+    {
+        g.screen = KGUI_OSREL_SCREEN_FACE;
+    }
+    else if ( Q_STATE_CAST(&Gui_browsing) == me->screen )
+    {
+        g.screen = KGUI_OSREL_SCREEN_APPS;
+    }
+    else if ( Q_STATE_CAST(&Gui_settings) == me->screen )
+    {
+        g.screen = KGUI_OSREL_SCREEN_SETTINGS;
+    }
+    else
+    {
+        /* Any other state holds the glass. */
+    }
+    g.rest      = me->at_rest;
+    g.card      = gui_card_on_glass(me);
+    g.prompt    = me->prompt_open;
+    g.locked    = me->sheet_locked;
+    g.writing   = me->writing;
+    g.deciding  = gui_install_deciding(me);
+    g.resetting = me->rs_busy;
+#if CONFIG_KODE_LOWPOWER
+    g.parked    = me->lp_parked;
+#else
+    g.parked    = false;    /* no AO_LowPower: the glass is never handed over */
+#endif
+    g.moving    = me->curtain_up || me->page_grow || me->level_grow || gui_list_moving(me);
+    g.hand      = me->touch_pressed || (0U != me->btn_held);
+    g.greeting  = kgui_welcome_greeting(&me->welcome, gui_face_notice_owed(me));
+    return g;
+}
+
+/**
+ * @brief Whether the card at boot may rise now.
+ * @param me The AO.
+ * @return true for a due offer on a free glass.
+ */
+static bool gui_update_may_rise(Gui const * const me)
+{
+    kgui_osrel_glass_t const g = gui_update_glass(me);
+
+    return kgui_osrel_offer_may_rise((kgui_osrel_offer_t)me->os_offer, &g);
+}
+
+/**
+ * @brief The check moved: the boot's offer follows it (kgui_osrel_offer_follow()).
+ *
+ * An offer that turns to AGAIN arms the one-shot that asks again
+ * (gui_update_again()), and the log says so once for that wait.
+ *
+ * @param me The AO.
+ */
+static void gui_update_follow(Gui * const me)
+{
+    kgui_osrel_offer_t const was = (kgui_osrel_offer_t)me->os_offer;
+    kgui_osrel_offer_t const now = kgui_osrel_offer_follow(was, (kgui_osrel_check_t)me->os_check,
+                                                           me->os_asks);
+
+    me->os_offer = (uint8_t)now;
+    if ( (KGUI_OSREL_OFFER_DUE == now) && (KGUI_OSREL_OFFER_DUE != was)
+        && (!gui_update_may_rise(me)) )
+    {
+        KLOG_D(TAG, "update: the card waits for the glass");
+    }
+    else if ( (KGUI_OSREL_OFFER_AGAIN == now) && (KGUI_OSREL_OFFER_AGAIN != was) )
+    {
+        (void)QTimeEvt_disarm(&me->os_again);
+        QTimeEvt_armX(&me->os_again, KQP_TICKS_PER_MS(KGUI_OSREL_BOOT_AGAIN_MS), 0U);
+        KLOG_I(TAG, "update: the question did not reach the service; asked again in %u s "
+                    "(%u of %u)", (unsigned)KGUI_OSREL_BOOT_AGAIN_MS / GUI_MS_PER_S,
+               (unsigned)me->os_asks, (unsigned)KGUI_OSREL_BOOT_ASKS);
+    }
+    else if ( (KGUI_OSREL_OFFER_NONE == now) && (KGUI_OSREL_OFFER_NONE != was)
+             && ((uint8_t)KGUI_OSREL_UNREACHED == me->os_check) )
+    {
+        KLOG_I(TAG, "update: the question did not reach the service in %u tries; "
+                    "no card this boot", (unsigned)me->os_asks);
+    }
+    else if ( (KGUI_OSREL_OFFER_NONE == now) && (KGUI_OSREL_OFFER_NONE != was) )
+    {
+        KLOG_D(TAG, "update: no card this boot");
+    }
+    else
+    {
+        /* Nothing new to say. */
+    }
+}
+
+/**
+ * @brief The boot's question goes out, the first time or again.
+ *
+ * Asked as About asks it (gui_os_ask()), and counted whether AO_Net takes it
+ * or not, so that it goes out KGUI_OSREL_BOOT_ASKS times at most; an answer
+ * already on its way for About is the boot's answer too.
+ *
+ * @param me The AO.
+ */
+static void gui_update_question(Gui * const me)
+{
+    if ( KGUI_OSREL_BOOT_ASKS > me->os_asks )
+    {
+        ++me->os_asks;
+    }
+    me->os_offer = (uint8_t)KGUI_OSREL_OFFER_UNASKED;
+    gui_os_ask(me, "boot");
+    gui_update_follow(me);
+}
+
+#if CONFIG_KODEOS_WIFI
+/**
+ * @brief Wi-Fi has an address: the boot's question, while the boot has one.
+ *
+ * The first address since the boot asks it; a later one asks it only while
+ * the question is waiting to go out again, which it then does at once.
+ *
+ * @param me The AO.
+ */
+static void gui_update_boot_ask(Gui * const me)
+{
+    if ( ((uint8_t)KGUI_OSREL_OFFER_UNASKED == me->os_offer)
+        || ((uint8_t)KGUI_OSREL_OFFER_AGAIN == me->os_offer) )
+    {
+        gui_update_question(me);
+    }
+}
+#endif
+
+/**
+ * @brief The wait after a question that never reached the service is over
+ *        (GUI_OS_AGAIN_SIG): it goes out again.
+ *
+ * An offer that moved on meanwhile (an answer About asked for, an address
+ * that asked at once) leaves nothing to do. With no address now, the
+ * question waits for the next one (gui_update_boot_ask()) and spends no try.
+ *
+ * @param me The AO.
+ */
+static void gui_update_again(Gui * const me)
+{
+    if ( (uint8_t)KGUI_OSREL_OFFER_AGAIN != me->os_offer )
+    {
+        /* Answered meanwhile, or asked already. */
+    }
+    else if ( me->wifi_linked )
+    {
+        gui_update_question(me);
+    }
+    else
+    {
+        me->os_offer = (uint8_t)KGUI_OSREL_OFFER_UNASKED;
+        KLOG_D(TAG, "update: no address; the question waits for the next one");
+    }
+}
+
+/**
+ * @brief The tick's share: the card at boot rises once the glass is free.
+ *
+ * Posted (gui_sheet_open_kind()), and asked again where the open is answered
+ * (gui_sheet_open_taken()): a card refused there leaves the offer due, and a
+ * later tick asks again.
+ *
+ * @param me The AO.
+ */
+static void gui_update_tick(Gui * const me)
+{
+    /* The greeting holds the card until its line is through. */
+    kgui_welcome_notice(&me->welcome, gui_face_notice_owed(me));
+    if ( ((uint8_t)KGUI_OSREL_OFFER_DUE == me->os_offer) && gui_update_may_rise(me) )
+    {
+        gui_sheet_open_kind(me, GUI_SHEET_UPDATE);
+    }
+}
+
+/**
+ * @brief What the card's Update can do now.
+ * @param me The AO.
+ * @return READY, or why it is grey.
+ */
+static kgui_osrel_card_t gui_update_card(Gui const * const me)
+{
+    return kgui_osrel_card(me->wifi_linked, kgui_osrel_power_ok(me->soc, me->vbus));
+}
+
+/**
+ * @brief Write the card at boot: kodeOS, the version it offers, and Update.
+ *
+ * On the system screen's frame, as the pairing card. Update is the yellow
+ * pill while it can install, and grey with a line that says why while there
+ * is no network or not the charge (rule 6). Writing the card spends the
+ * boot's offer: it comes back at the next boot.
+ *
+ * @param me The AO.
+ */
+static void gui_update_fill(Gui * const me)
+{
+    kgui_osrel_card_t const card = gui_update_card(me);
+    GuiActRole              role = GUI_ACT_DISABLED;
+    char                    second[KGUI_OSREL_TEXT_MAX];
+    char                    why[KGUI_OSREL_TEXT_MAX];
+
+    if ( (uint8_t)KGUI_OSREL_OFFER_DUE == me->os_offer )
+    {
+        KLOG_N(TAG, "update: the card rises for kodeOS %s", gui_os_version(me));
+        /* Rest and the auto-lock count under this card: from its rise, the
+         * whole of their time. */
+        gui_idle_rearm(me);
+    }
+    me->os_offer     = (uint8_t)kgui_osrel_offer_shown((kgui_osrel_offer_t)me->os_offer);
+    me->sheet_locked = false;
+    kgui_osrel_card_version(gui_os_version(me), second, sizeof(second));
+    kgui_osrel_card_why(card, why, sizeof(why));
+    gui_frame_begin(me);
+    kgui_sys_word(&me->sys, KGUI_OSREL_CARD_WORD);
+    kgui_sys_text(&me->sys, KGUI_SYS_ROOM_TOP, KGUI_SYS_ROOM_END, KGUI_OSREL_CARD_TITLE,
+                  second, why);
+    if ( KGUI_OSREL_CARD_READY == card )
+    {
+        role = GUI_ACT_PRIMARY;
+    }
+    gui_sheet_action(me, KGUI_OSREL_CARD_BUTTON, role);
+}
+
+/**
+ * @brief Update, on the card at boot: About's install of the release it names.
+ *
+ * Grey, it installs nothing, buzzes as a refusal does and the log says why;
+ * the card stays. Yellow, it clicks as every answer button does.
+ *
+ * @param me The AO.
+ */
+static void gui_update_act(Gui * const me)
+{
+    kgui_osrel_card_t const card = gui_update_card(me);
+
+    if ( KGUI_OSREL_CARD_OFFLINE == card )
+    {
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        KLOG_N(TAG, "update: no Wi-Fi address; Update waits");
+    }
+    else if ( KGUI_OSREL_CARD_CHARGE == card )
+    {
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        KLOG_N(TAG, "update: %u %% and no cable, under %u %%; Update waits",
+               (unsigned)me->soc, (unsigned)KGUI_OSREL_MIN_PCT);
+    }
+    else
+    {
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+        KLOG_N(TAG, "update: Update on the card; updating kodeOS to %s from the "
+                    "update service", gui_os_version(me));
+        gui_os_install(me, GUI_ASK_OS_NET);
+    }
 }
 
 /**
@@ -24679,10 +25448,7 @@ static void gui_more_value(Gui const * const me, uint8_t which, char *out,
             (void)snprintf(out, cap, "%u %%%s", (unsigned)me->soc, how);
             break;
         }
-        case GUI_MORE_ZONE: {
-            (void)snprintf(out, cap, "%s", gui_zone_label(me->zone));
-            break;
-        }
+#if CONFIG_KODEOS_WIFI
         case GUI_MORE_WIFI: {
             const char * const w = gui_radio_words(me, me->wifi_on, me->wifi_linked,
                                                    me->wifi_reconnecting);
@@ -24695,10 +25461,13 @@ static void gui_more_value(Gui const * const me, uint8_t which, char *out,
             (void)snprintf(out, cap, "%s", say);
             break;
         }
+#endif
+#if CONFIG_KODEOS_BLE
         case GUI_MORE_BLE: {
             (void)snprintf(out, cap, "%s", gui_radio_words(me, me->ble_on, false, false));
             break;
         }
+#endif
         case GUI_MORE_TIME: {
             struct tm t;
 
@@ -24717,18 +25486,22 @@ static void gui_more_value(Gui const * const me, uint8_t which, char *out,
             break;
         }
         case GUI_MORE_TEST: {
-            if ( 0U == me->test_rep_n )
+            /* A pass only when the page says All good: a row nobody judged
+             * is one to look at, as a failed one is. */
+            kgui_selftest_tally_t const t = gui_test_tally(me);
+
+            if ( 0U == t.rows )
             {
-                (void)snprintf(out, cap, "%s", GUI_TEST_NEVER);
+                (void)snprintf(out, cap, "%s", KGUI_SELFTEST_NEVER);
             }
-            else if ( 0U == me->test_rep_problems )
+            else if ( kgui_selftest_all_good(&t) )
             {
                 (void)snprintf(out, cap, "Last run: pass");
             }
             else
             {
                 (void)snprintf(out, cap, "Last run: %u to look at",
-                               (unsigned)me->test_rep_problems);
+                               (unsigned)t.failed + (unsigned)kgui_selftest_unchecked(&t));
             }
             break;
         }
@@ -24762,9 +25535,9 @@ static void gui_more_row(Gui * const me, uint8_t which)
 /**
  * @brief Write More: kshell's flat Settings list.
  *
- * Wi-Fi, Bluetooth and the battery, the time and the zone, the settings that
- * change where they stand, the rails' pages, and About last: each row with its
- * glyph, its name and what its page reads.
+ * Wi-Fi, Bluetooth and the battery, the time (its zone is on its page),
+ * the settings that change where they stand, the rails' pages, and About
+ * last: each row with its glyph, its name and what its page reads.
  *
  * @param me The AO.
  */
@@ -24773,13 +25546,18 @@ static void gui_more_fill(Gui * const me)
     gui_sheet_header(me, NULL, KUI_COLOR_TEXT, "Settings", "");
     /* What a person looks for, first: the radios and the
      * battery, also here though their circles open them; the time; what
-     * changes where it stands; the self-test; and the Dot itself last. */
+     * changes where it stands; the self-test; and the Dot itself last. A
+     * radio the build has not got has no row here and no circle
+     * (gui_set_absent()). */
+#if CONFIG_KODEOS_WIFI
     gui_more_row(me, (uint8_t)GUI_MORE_WIFI);
+#endif
+#if CONFIG_KODEOS_BLE
     gui_more_row(me, (uint8_t)GUI_MORE_BLE);
+#endif
     gui_more_row(me, (uint8_t)GUI_MORE_BAT);
-    me->time_shown = gui_time_minute(me, NULL);
+    me->time_shown = gui_time_minute(me);
     gui_more_row(me, (uint8_t)GUI_MORE_TIME);
-    gui_more_row(me, (uint8_t)GUI_MORE_ZONE);
     gui_screen_fill_more(me);
     gui_rails_fill(me);
     gui_more_row(me, (uint8_t)GUI_MORE_TEST);
@@ -24787,36 +25565,161 @@ static void gui_more_fill(Gui * const me)
 }
 
 /**
- * @brief The Time page: the hour and the minute, each changing where it stands.
+ * @brief The rows of the Time page that step a part of the local time, in
+ *        the page's order under the Time zone row.
+ */
+typedef struct {
+    uint16_t           tag;    /**< The row's tag.                 */
+    kgui_clock_field_t field;  /**< The part of the time it steps. */
+    const char        *name;   /**< The row's name.                */
+} GuiTimeRow;
+
+/** @brief The hour and the minute, then the date. */
+static const GuiTimeRow s_time_rows[] = {
+    { (uint16_t)GUI_TAG_TIME_HOUR,  KGUI_CLOCK_HOUR,   "Hour"   },
+    { (uint16_t)GUI_TAG_TIME_MIN,   KGUI_CLOCK_MINUTE, "Minute" },
+    { (uint16_t)GUI_TAG_TIME_DAY,   KGUI_CLOCK_DAY,    "Day"    },
+    { (uint16_t)GUI_TAG_TIME_MONTH, KGUI_CLOCK_MONTH,  "Month"  },
+    { (uint16_t)GUI_TAG_TIME_YEAR,  KGUI_CLOCK_YEAR,   "Year"   },
+};
+
+/** @brief How many rows s_time_rows holds. */
+#define GUI_TIME_ROWS  (sizeof(s_time_rows) / sizeof(s_time_rows[0]))
+
+/**
+ * @brief The Time page: the zone, the hour and the minute, the day, the
+ *        month and the year, each changing where it stands.
  *
- * A tap or right is one more, left is one less, in the zone in use. The date
- * stays as it is.
+ * A tap, the top button or right is one more, left is one less
+ * (gui_time_act()). The zone comes first because it decides what the other
+ * five read, and it is all a board on Wi-Fi needs. The same page opens from
+ * Settings and from the face's yellow pill.
  *
  * @param me The AO.
  */
 static void gui_time_fill(Gui * const me)
 {
     struct tm t;
-    char      line[8];
+    char      line[GUI_TIME_VALUE_MAX];
 
     gui_sheet_header(me, NULL, KUI_COLOR_TEXT, "Time", "");
-    me->time_shown = gui_time_minute(me, &t);
-    (void)snprintf(line, sizeof(line), "%02d", t.tm_hour);
-    gui_screen_row(me, (uint16_t)GUI_TAG_TIME_HOUR, "Hour", line, false, false, &kui_glyph_clock_30);
-    (void)snprintf(line, sizeof(line), "%02d", t.tm_min);
-    gui_screen_row(me, (uint16_t)GUI_TAG_TIME_MIN, "Minute", line, false, false, &kui_glyph_clock_30);
+    me->time_shown = gui_time_minute(me);
+    gui_time_now(me, &t);
+    gui_screen_row(me, (uint16_t)GUI_TAG_TIME_ZONE, "Time zone",
+                   kgui_clock_zone_label(me->zone), false, false, &kui_glyph_clock_30);
+    for ( size_t i = 0U; GUI_TIME_ROWS > i; ++i )
+    {
+        gui_time_words(&t, s_time_rows[i].field, line, sizeof(line));
+        gui_screen_row(me, s_time_rows[i].tag, s_time_rows[i].name, line, false, false,
+                       &kui_glyph_clock_30);
+    }
+}
+
+/**
+ * @brief The local time the Time page reads and steps from.
+ *
+ * While the clock was never told the time it is the day this image was
+ * built, at noon: the rows show it, and the first press steps from what
+ * they show.
+ *
+ * @param me The AO.
+ * @param t  Receives the local time.
+ */
+static void gui_time_now(Gui const * const me, struct tm *t)
+{
+    (void)memset(t, 0, sizeof(*t));
+    if ( !gui_local_tm(me, t) )
+    {
+        static const char MONTHS[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+        kdrv_slot_desc_t self;
+        char mon[4];
+        int  d = 1;
+        int  y = KGUI_CLOCK_YEAR_MIN;
+
+        (void)memset(mon, 0, sizeof(mon));
+        if ( kdrv_running_desc(&self) == KODE_OK )
+        {
+            (void)sscanf(self.date, "%3s %d %d", mon, &d, &y);
+        }
+        const char * const at = strstr(MONTHS, mon);
+
+        t->tm_mon = 0;
+        if ( ('\0' != mon[0]) && (NULL != at) )
+        {
+            /* cppcheck-suppress misra-c2012-18.4 ; strstr() found it inside MONTHS: the difference is its offset there */
+            ptrdiff_t const off = at - MONTHS;
+
+            t->tm_mon = (int)off / GUI_DATE_MONTH_LEN;
+        }
+        if ( (KGUI_CLOCK_YEAR_MIN > y) || (KGUI_CLOCK_YEAR_MAX < y) )
+        {
+            y = KGUI_CLOCK_YEAR_MIN;
+        }
+        t->tm_mday  = d;
+        t->tm_year  = y - KGUI_CLOCK_TM_YEAR0;
+        t->tm_hour  = GUI_TIME_NOON;
+        t->tm_isdst = -1;
+    }
+}
+
+/**
+ * @brief What one row of the Time page shows for @p t.
+ *
+ * The hour and the minute with two figures, in 24 hours whatever the face
+ * shows; the day as a person writes it; the month by its English name; the
+ * year whole.
+ *
+ * @param t     The local time.
+ * @param field The row.
+ * @param out   Receives the words.
+ * @param cap   Its size.
+ */
+static void gui_time_words(struct tm const *t, kgui_clock_field_t field, char *out, size_t cap)
+{
+    static const char *const MONTHS[KGUI_CLOCK_MONTHS] = {
+        "January", "February", "March", "April", "May", "June", "July",
+        "August", "September", "October", "November", "December",
+    };
+
+    switch ( field )
+    {
+        case KGUI_CLOCK_HOUR: {
+            (void)snprintf(out, cap, "%02d", t->tm_hour);
+            break;
+        }
+        case KGUI_CLOCK_MINUTE: {
+            (void)snprintf(out, cap, "%02d", t->tm_min);
+            break;
+        }
+        case KGUI_CLOCK_DAY: {
+            (void)snprintf(out, cap, "%d", t->tm_mday);
+            break;
+        }
+        case KGUI_CLOCK_MONTH: {
+            const char *name = "";
+
+            if ( (0 <= t->tm_mon) && (KGUI_CLOCK_MONTHS > t->tm_mon) )
+            {
+                name = MONTHS[t->tm_mon];
+            }
+            (void)snprintf(out, cap, "%s", name);
+            break;
+        }
+        default: {
+            (void)snprintf(out, cap, "%d", t->tm_year + KGUI_CLOCK_TM_YEAR0);
+            break;
+        }
+    }
 }
 
 /**
  * @brief Read the clock as the Time page and the rail's Time row number it.
  *
- * @param me  The AO.
- * @param out Receives the local time, zeroed while the time is unknown; NULL
- *            when only the minute is wanted.
+ * @param me The AO.
  * @return The minute as gui_face_minute() numbers it, 0 while the time is
  *         unknown.
  */
-static uint32_t gui_time_minute(Gui const * const me, struct tm *out)
+static uint32_t gui_time_minute(Gui const * const me)
 {
     struct tm t;
     uint32_t  minute = 0U;
@@ -24825,10 +25728,6 @@ static uint32_t gui_time_minute(Gui const * const me, struct tm *out)
     if ( gui_local_tm(me, &t) )
     {
         minute = gui_face_minute(&t);
-    }
-    if ( NULL != out )
-    {
-        *out = t;
     }
     return minute;
 }
@@ -24841,7 +25740,7 @@ static uint32_t gui_time_minute(Gui const * const me, struct tm *out)
  * (gui_face_time_paint()), and it does nothing until the minute the rows
  * read differs from the clock's: the minute rolling over, a `time set`, a
  * time server's answer, a new zone or the clock becoming unknown. Under the
- * Time page the two values are rewritten in place; under the rail the Time
+ * Time page the five values are rewritten in place; under the rail the Time
  * row's value is. Never rebuilt, so a finger on a row and the ring stay
  * where they are.
  *
@@ -24851,7 +25750,7 @@ static void gui_time_follow(Gui * const me)
 {
     struct tm t;
     char      line[GUI_MORE_VALUE_MAX];
-    uint32_t const minute = gui_time_minute(me, &t);
+    uint32_t const minute = gui_time_minute(me);
 
     if ( minute == me->time_shown )
     {
@@ -24865,15 +25764,23 @@ static void gui_time_follow(Gui * const me)
     }
     else
     {
-        (void)snprintf(line, sizeof(line), "%02d", t.tm_hour);
-        gui_sheet_row_sub(me, gui_sheet_find(me, (uint16_t)GUI_TAG_TIME_HOUR), line);
-        (void)snprintf(line, sizeof(line), "%02d", t.tm_min);
-        gui_sheet_row_sub(me, gui_sheet_find(me, (uint16_t)GUI_TAG_TIME_MIN), line);
+        gui_time_now(me, &t);
+        for ( size_t i = 0U; GUI_TIME_ROWS > i; ++i )
+        {
+            gui_time_words(&t, s_time_rows[i].field, line, sizeof(line));
+            gui_sheet_row_sub(me, gui_sheet_find(me, s_time_rows[i].tag), line);
+        }
     }
 }
 
 /**
- * @brief Change the hour or the minute and set the clock with it.
+ * @brief Step one row of the Time page and set the clock with it.
+ *
+ * The zone is AO_Boot's to change (gui_time_zone_step()); every other row
+ * steps its part of the local time where it stands (kgui_clock_step_to())
+ * and sets the clock to it. Like the Screen rows, a press clicks after the
+ * change, and one that changes nothing - a year at either end, a time the
+ * clock would not count as known, a zone AO_Boot is not asked for - thuds.
  *
  * @param me   The AO.
  * @param tag  The row.
@@ -24882,61 +25789,176 @@ static void gui_time_follow(Gui * const me)
 static void gui_time_act(Gui * const me, uint16_t tag, int8_t step)
 {
     struct tm t;
-    int const dir = (0 > step) ? -1 : 1;
+    int64_t   when = 0;
+    size_t    i    = 0U;
 
-    (void)memset(&t, 0, sizeof(t));
-    if ( !gui_local_tm(me, &t) )
+    if ( (uint16_t)GUI_TAG_TIME_ZONE == tag )
     {
-        /* A clock never told: the day this image was built, as the apocrifa
-         * does, until something knows better. */
-        static const char MONTHS[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-        kdrv_slot_desc_t self;
-        char mon[4];
-        int  d = 1;
-        int  y = 2026;
-
-        (void)memset(mon, 0, sizeof(mon));
-        if ( kdrv_running_desc(&self) == KODE_OK )
+        if ( gui_time_zone_step(me, step) )
         {
-            (void)sscanf(self.date, "%3s %d %d", mon, &d, &y);
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
         }
-        const char * const at = strstr(MONTHS, mon);
-
-        t.tm_mon  = 0;
-        if ( ('\0' != mon[0]) && (NULL != at) )
+        else
         {
-            /* cppcheck-suppress misra-c2012-18.4 ; strstr() found it inside MONTHS: the difference is its offset there */
-            ptrdiff_t const off = at - MONTHS;
-
-            t.tm_mon = (int)off / GUI_DATE_MONTH_LEN;
+            (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
         }
-        t.tm_mday = d;
-        t.tm_year = y - 1900;
-        t.tm_hour = 12;
+        return;
     }
-    if ( (uint16_t)GUI_TAG_TIME_HOUR == tag )
+    while ( (GUI_TIME_ROWS > i) && (s_time_rows[i].tag != tag) )
     {
-        t.tm_hour = (t.tm_hour + (int)GUI_DAY_HOURS + dir) % (int)GUI_DAY_HOURS;
+        ++i;
     }
-    else if ( (uint16_t)GUI_TAG_TIME_MIN == tag )
-    {
-        t.tm_min = (t.tm_min + (int)GUI_HOUR_MIN + dir) % (int)GUI_HOUR_MIN;
-    }
-    else
+    if ( GUI_TIME_ROWS <= i )
     {
         return;
     }
-    t.tm_sec   = 0;
-    t.tm_isdst = -1;
-    time_t const when = mktime(&t);
-
-    if ( 0 < when )
+    gui_time_now(me, &t);
+    t.tm_sec = 0;
+    if ( !kgui_clock_step_to(&t, s_time_rows[i].field, step, &when) )
     {
-        khal_time_wall_set((uint64_t)when * 1000000ULL);
+        KLOG_D(TAG, "time: %s stays where it is", s_time_rows[i].name);
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        return;
+    }
+    gui_time_set(me, when);
+    (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+    gui_sheet_refill(me);
+}
+
+/**
+ * @brief Set the clock by hand, from the Time page.
+ *
+ * The clock is told a person set it (kdrv_clocks_wall_note_set()). A board
+ * with no zone chosen stores the one the page shows: whoever sets the time
+ * by hand sets it in that zone, which is the page's first row, so the face
+ * asks nothing more.
+ *
+ * @param me   The AO.
+ * @param when The new time, UTC seconds.
+ */
+static void gui_time_set(Gui * const me, int64_t when)
+{
+    khal_time_wall_set((uint64_t)when * GUI_US_PER_S);
+    kdrv_clocks_wall_note_set();
+    gui_time_hand_note(me, when);
+    if ( me->zone_heard && (!me->zone_stored) )
+    {
+        KLOG_N(TAG, "time: set by hand in %s, which is now chosen",
+               kgui_clock_zone_label(me->zone));
+        (void)gui_zone_ask(me, me->zone);
+    }
+    me->face_painted = false;
+    gui_face_time_paint(me);
+}
+
+/**
+ * @brief Note the second the Time page set the clock to, and when.
+ *
+ * @param me   The AO.
+ * @param when The UTC second set.
+ */
+static void gui_time_hand_note(Gui * const me, int64_t when)
+{
+    me->time_by_hand = true;
+    me->hand_s       = when;
+    me->hand_ms      = khal_time_ms();
+}
+
+/**
+ * @brief Whether the clock is still the one the Time page set this boot.
+ *
+ * It is while it has run on from the second the page set, give or take a
+ * second (kgui_clock_hand_holds()), and the clock's own note still says a
+ * person set it. A `time set` from the console or the Kode channel, or a time
+ * server, that wrote it since makes it theirs: the page forgets it set it,
+ * and a change of zone moves the hour the clock reads instead of keeping it.
+ *
+ * @param me The AO.
+ * @return true while the clock is the page's.
+ */
+static bool gui_time_hand_holds(Gui * const me)
+{
+    bool holds = false;
+
+    if ( me->time_by_hand && (KDRV_CLOCKS_WALL_SET == kdrv_clocks_wall_source()) )
+    {
+        uint32_t const since_ms = khal_time_ms() - me->hand_ms;
+
+        holds = kgui_clock_hand_holds(me->hand_s, since_ms, khal_time_wall_us());
+    }
+    if ( me->time_by_hand && (!holds) )
+    {
+        KLOG_D(TAG, "time: written elsewhere since the Time page set it");
+    }
+    me->time_by_hand = holds;
+    return holds;
+}
+
+/**
+ * @brief Step the Time zone row: ask AO_Boot for the next zone of the table.
+ *
+ * The answer repaints the row (gui_zone_take()). A clock this page set by
+ * hand, that nobody wrote since (gui_time_hand_holds()), keeps the local
+ * time it reads across the change: the reading is taken now and put back
+ * once the new zone is in force (gui_time_keep_local()). Every step of zone
+ * is then a set of the clock, as the hour's own row is: AO_Scheduler hears
+ * it, and a step west of an hour or more makes it forget the minutes it ran
+ * (`the clock was set back N minutes`). A clock a time server, the console or
+ * an earlier boot set keeps its UTC, and the new zone moves the hour it reads.
+ *
+ * @param me   The AO.
+ * @param step Left is to the west; a tap and right are to the east.
+ * @return false when AO_Boot could not be asked: nothing changes.
+ */
+static bool gui_time_zone_step(Gui * const me, int8_t step)
+{
+    uint8_t const at = kgui_clock_zone_step(me->zone, step);
+    bool          asked;
+
+    me->zone_keep = false;
+    if ( gui_time_hand_holds(me) )
+    {
+        me->zone_keep    = gui_local_tm(me, &me->zone_keep_tm);
+        me->zone_keep_ms = khal_time_ms();
+    }
+    asked = gui_zone_ask(me, kgui_clock_zone_tz(at));
+    if ( !asked )
+    {
+        /* No answer comes: nothing is kept across a zone that never changes,
+         * nor across the next answer, which may be anybody's. */
+        me->zone_keep = false;
+    }
+    return asked;
+}
+
+/**
+ * @brief Put back the local time the Time page read before its zone changed.
+ *
+ * Called with the new zone in force (AO_Boot applies it before it answers):
+ * the same local reading, later by however long the answer took, becomes the
+ * clock's UTC.
+ *
+ * @param me The AO.
+ */
+static void gui_time_keep_local(Gui * const me)
+{
+    uint32_t const later_s = (khal_time_ms() - me->zone_keep_ms) / GUI_MS_PER_S;
+    int64_t        when    = 0;
+
+    me->zone_keep = false;
+    if ( !gui_time_hand_holds(me) )
+    {
+        /* Written elsewhere while AO_Boot answered: that time stands. */
+        return;
+    }
+    if ( kgui_clock_utc_of(&me->zone_keep_tm, later_s, &when) )
+    {
+        KLOG_N(TAG, "time: %02d:%02d set by hand, kept in %s",
+               me->zone_keep_tm.tm_hour, me->zone_keep_tm.tm_min,
+               kgui_clock_zone_label(me->zone));
+        khal_time_wall_set((uint64_t)when * GUI_US_PER_S);
         kdrv_clocks_wall_note_set();
-        me->face_painted = false;
-        gui_face_time_paint(me);
-        gui_sheet_refill(me);
+        gui_time_hand_note(me, when);
     }
 }
 
@@ -24951,7 +25973,6 @@ static void gui_more_act(Gui * const me, uint16_t tag)
     static const GuiSheet KINDS[GUI_MORE_COUNT] = {
         [GUI_MORE_SCREEN] = GUI_SHEET_SCREEN,
         [GUI_MORE_BAT]    = GUI_SHEET_BAT,
-        [GUI_MORE_ZONE]   = GUI_SHEET_ZONE,
         [GUI_MORE_KODY]   = GUI_SHEET_KODY,
         [GUI_MORE_TEST]   = GUI_SHEET_TEST,
         [GUI_MORE_ABOUT]  = GUI_SHEET_ABOUT,
@@ -25191,19 +26212,7 @@ static void gui_about_act(Gui * const me, uint16_t tag)
         KLOG_N(TAG, "updating kodeOS to %s from the update service",
                gui_os_version(me));
     }
-    /* The image goes into the inactive kodeOS slot, and AO_AppMgr ends
-     * every write there with AO_Boot's switch and a restart into it, which
-     * is what the Opening card says. The card rises first, at 0 %, about no
-     * row and wearing the k, and the image is asked for once it has
-     * (gui_write_ask()): AO_AppMgr's reports then fill it. */
-    me->write_what = (uint8_t)KWRITE_OS;
-    me->write_pct  = 0U;
-    me->run_after  = false;
-    me->open_hold  = false;
-    me->sheet_row  = -1;
-    (void)snprintf(me->write_name, sizeof(me->write_name), "kodeOS");
-    gui_write_ask(me, from, "");
-    gui_sheet_open_kind(me, GUI_SHEET_OPENING);
+    gui_os_install(me, from);
 }
 
 /**
@@ -25224,8 +26233,9 @@ static void gui_about_act(Gui * const me, uint16_t tag)
  *     seconds: about thirty lines per period, enough to break a screenshot
  *     mid-stream. The GUI asks for the one number it cannot get any other
  *     way and nothing more.
- *   - About, every GUI_SET_RSSI_MS, for the uptime alone - the one row on
- *     that page that is different every time it is looked at.
+ *   - About, every GUI_SET_RSSI_MS, for the uptime - the one row on that
+ *     page that is different every time it is looked at - and for the C5's
+ *     state while AO_Radio has had no room for the page's first question.
  *   - Wi-Fi, every tick, for the countdown on the Kode ecosystem row while the
  *     channel waits: it only compares two integers, and writes the line when
  *     the seconds changed.
@@ -25323,14 +26333,23 @@ static void gui_sheet_tick(Gui * const me)
                 }
                 if ( !me->scan_out && gui_wifi_scan_due(me, now, entering) )
                 {
-                    me->scan_out     = true;
-                    me->scan_out_ms  = now;
-                    me->scan_refused = false;
-                    wifi_scan_request();
+                    if ( wifi_scan_request(NULL) )
+                    {
+                        me->scan_out      = true;
+                        me->scan_out_ms   = now;
+                        me->scan_refused  = false;
+                        me->scan_own_join = false;
+                    }
+                    else
+                    {
+                        /* AO_Radio's queue had no room: nothing was asked and
+                         * nothing will answer. The page asks again soon. */
+                        me->sheet_ask_ms = now - (GUI_WIFI_SCAN_MS - GUI_WIFI_SCAN_RETRY_MS);
+                    }
                 }
-                if ( entering || !me->wifi_linked )
+                if ( entering || !me->wifi_linked || me->saved_owed )
                 {
-                    wifi_list_request();
+                    gui_wifi_list_ask(me);
                 }
                 break;
             }
@@ -25356,6 +26375,15 @@ static void gui_sheet_tick(Gui * const me)
                     gui_uptime_text(up, sizeof(up));
                     gui_sheet_row_sub(me, idx, up);
                 }
+#if CONFIG_KODEOS_RADIO
+                if ( me->c5_state_owed )
+                {
+                    /* AO_Radio had no room for the question About asked as it
+                     * came up (gui_sheet_ask_first()): asked on each look until
+                     * it has. */
+                    me->c5_state_owed = !radio_state_request();
+                }
+#endif
                 break;
             }
             default: {
@@ -25428,6 +26456,10 @@ static void gui_sheet_open_kind(Gui * const me, GuiSheet kind)
  * glass: any kind that is no system card, over a system card. A click that
  * reached the page under the card (a press that began before the card rose)
  * would otherwise open it on top of the card's question.
+ * The card at boot is asked again here, on the glass of this step and not
+ * of the tick that posted it (gui_update_may_rise()), before the face's
+ * pill is read, and it never takes the pill's ask: refused, its offer stays
+ * due for a later tick.
  * A refusal changes nothing and says so at debug level.
  *
  * @param me        The AO.
@@ -25444,12 +26476,23 @@ static bool gui_sheet_open_taken(Gui * const me, QEvt const * const e,
     GuiListPage const * const  list     = gui_sheet_list_page(me, kind);
     bool const                 sys_card = gui_sheet_over_face(kind);
     bool                       taken    = false;
-    bool const                 prompted = me->prompt_open;
+    bool                       prompted = false;
 
-    me->prompt_open = false;
+    if ( GUI_SHEET_UPDATE != kind )
+    {
+        /* The card at boot answers no pill: the page the pill asked for is
+         * still on its way, and the card waits for it (gui_update_glass()). */
+        prompted        = me->prompt_open;
+        me->prompt_open = false;
+    }
     if ( GUI_SHEET_NONE == kind )
     {
         /* Nothing was asked for. */
+    }
+    else if ( (GUI_SHEET_UPDATE == kind) && (!gui_update_may_rise(me)) )
+    {
+        KLOG_D(TAG, "sheet refused: %s, the glass is not free",
+               gui_sheet_kind_name(kind));
     }
     else if ( prompted )
     {
@@ -25574,13 +26617,11 @@ static const GuiListPage *gui_sheet_list_page(Gui const * const me,
 /**
  * @brief Where the ring starts on a sheet that has just been opened.
  *
- * The first row on every sheet but the two lists of choices, which open on
- * the choice that is on - the zone the clock runs in (gui_zone_row(), UTC's
- * row for a zone the table does not hold), the auto-lock time
- * (gui_lock_find()): the answer the reader already has is the
- * place to look from, and the page shows it where the row that opened the
- * list stood (gui_sheet_ring_at()). A choice's row in its table is its row
- * on the card (gui_zone_fill(), gui_lock_fill()).
+ * The first row on every sheet but the list of choices, which opens on the
+ * choice that is on - the auto-lock time (gui_lock_find()): the answer the
+ * reader already has is the place to look from, and the page shows it where
+ * the row that opened the list stood (gui_sheet_ring_at()). A choice's row
+ * in its table is its row on the card (gui_lock_fill()).
  *
  * @param me The AO, its sheet already the one being opened.
  * @return The row to ring.
@@ -25589,11 +26630,7 @@ static uint8_t gui_sheet_first_row(Gui const * const me)
 {
     uint8_t row = 0U;
 
-    if ( GUI_SHEET_ZONE == me->sheet )
-    {
-        row = gui_zone_row(me);
-    }
-    else if ( GUI_SHEET_AUTOLOCK == me->sheet )
+    if ( GUI_SHEET_AUTOLOCK == me->sheet )
     {
         row = gui_lock_find(me->lock_s);
     }
@@ -27399,17 +28436,20 @@ static GuiSceneId gui_face_scene_want(Gui const * const me)
 }
 
 /**
- * @brief Put the face on another scene: Kody has yet to wake up in it.
+ * @brief Put the face on another scene: Kody has yet to be put in it.
  *
- * What a choice of scene and the hour's change of scene both come to, and
- * state alone (gui_face_scene_choose(), gui_face_scene_hour()): the scene is
- * the face's from here, Kody has not woken in it, and while he is on the
- * glass the face counts as seen afresh, so that the face's tick wakes him up
- * in it the way it does at boot (gui_face_kody_wake()). Nothing is played
- * from here: every wake-up starts from that one place in the tick, on the
- * stack frames of the boot's, whatever changed the scene. At Rest he stays
- * on the frame he stands on, and the wake that ends Rest plays his wake-up in
- * the new scene.
+ * What a choice of scene, the hour's change of scene and a pack read again
+ * all come to, and state alone (gui_face_scene_choose(),
+ * gui_face_scene_hour(), gui_assets_resolved()): the scene is the face's from
+ * here and Kody is not in it yet. While he is on the glass the face counts as
+ * seen afresh, so that the face's tick puts him in it (gui_face_kody_wake()):
+ * with a cut, and in his loop, since he wakes up only at a cold boot and out
+ * of Rest (face_wake_up). While he is out of sight he is stood in it before
+ * the face is pictured again (gui_face_kody_ready()). Nothing is played from
+ * here: every play starts from that one place in the tick, on the stack
+ * frames of the boot's, whatever changed the scene. At Rest he stays on the
+ * frame he stands on, and the wake that ends Rest plays his wake-up in the
+ * new scene.
  *
  * @param me The AO.
  * @param id The scene; another than the one the face is on.
@@ -27426,68 +28466,63 @@ static void gui_face_scene_set(Gui * const me, GuiSceneId id)
 
 /**
  * @brief The hour's change of scene: with none chosen, put the face on the
- *        scene the hour asks for.
+ *        scene the hour asks for, while nobody is looking at it.
  *
- * Asked on the face's every tick while Kody can be seen - awake, or about to
- * wake on this tick (gui_face_kody_tick()). So the change comes AT THE HOUR,
- * on the tick whose time paint reads the new one: at 06:00 and at 10:00 with
- * the face seen; as the face is seen again, when the hour moved meanwhile;
- * and whenever the zone, the wall clock or a scene set to `auto` leaves
- * the hour asking for another scene than the one he is in. He wakes up in it
- * exactly as he does in a scene chosen (gui_face_scene_set()): a cut,
- * because two scenes share no pose to link at.
+ * NEVER WHILE THE FACE IS SEEN. Two scenes share no pose to link at, so a
+ * change of scene is a cut, and a cut in front of the person reads as the
+ * face breaking. So the change is made ahead, with the face off the glass:
+ * asked while another screen is up and again as a door starts back to the
+ * face (gui_face_kody_ready()), which then stands Kody in the new scene
+ * before the first picture of the face is taken. A face that stays on the
+ * glass keeps its scene past the hour; the wake that ends Rest takes the
+ * hour's scene by itself (gui_face_kody_wake()).
  *
- * NEVER IN THE MIDDLE OF A LOOK. The player says whether one waits for its
- * anchor or plays (kui_kody_is_reacting()), paused or not, and while one
- * does the face stays on the scene it is on: this asks again on the next
- * tick, and the change comes on the first tick after the look has ended. A
- * choice does not wait: it cuts a look.
+ * Only once the new scene's files are read: until then the face keeps the
+ * scene it is on, whole, and this asks again.
  *
  * A scene chosen is the one the face is on, so with one chosen the hour
- * asks for no change. Nor does it before Kody has woken in the scene the
- * face is on: the wake-up to come takes the hour's scene by itself
- * (gui_face_kody_wake()).
+ * asks for no change. Nor does it before Kody has been put in the scene the
+ * face is on: what stands him there takes the hour's scene by itself.
  *
- * @param me The AO; Kody is seen, and no card is up.
+ * @param me The AO; Kody is out of sight.
  */
 static void gui_face_scene_hour(Gui * const me)
 {
     GuiSceneId const want = gui_face_scene_want(me);
 
-    if ( me->face_woke && (want != me->face_scene_on) )
+    if ( me->face_woke && (want != me->face_scene_on) && kgui_assets_scene_load(want) )
     {
-        if ( !kui_kody_is_reacting(me->face_kody) )
+        if ( 0 > me->face_hour )
         {
-            if ( 0 > me->face_hour )
-            {
-                KLOG_I(TAG, "face: the %s scene, the time unknown",
-                       kgui_assets_scene_name(want));
-            }
-            else
-            {
-                KLOG_I(TAG, "face: the %s scene, local hour %d",
-                       kgui_assets_scene_name(want), (int)me->face_hour);
-            }
-            gui_face_scene_set(me, want);
+            KLOG_I(TAG, "face: the %s scene, the time unknown, ahead of the next sight",
+                   kgui_assets_scene_name(want));
         }
+        else
+        {
+            KLOG_I(TAG, "face: the %s scene, local hour %d, ahead of the next sight",
+                   kgui_assets_scene_name(want), (int)me->face_hour);
+        }
+        gui_face_scene_set(me, want);
     }
 }
 
 /**
- * @brief Choose the face's scene: it is kept, and Kody wakes up in it.
+ * @brief Choose the face's scene: it is kept, and Kody is put in it.
  *
  * Where `config key="scene"` and the Screen card's Kody row end
- * (gui_scene_config()). The scene is a choice from here on, which the hour leaves alone, and
- * kgui/scene keeps its name for the next boot; a store that refuses is said,
- * and the scene holds until the restart. When it is another scene than the
- * one the face is on, the face goes on it (gui_face_scene_set()): Kody has
- * not woken in it yet, and the face's tick wakes him up in it the way it
- * does at boot (gui_face_kody_wake()), on its next pass while he is on the
- * glass - the face counts as seen afresh - and otherwise the next time the
- * face is seen, from under a card, from another screen, or once the panel
- * has answered. Nothing is played from here, so every wake-up starts from
- * the face's tick, whoever chose the scene. Choosing the scene he is in
- * already changes nothing on the glass: it stops the hour from picking.
+ * (gui_scene_config()). The scene is a choice from here on, which the hour
+ * leaves alone, and kgui/scene keeps its name for the next boot; a store that
+ * refuses is said, and the scene holds until the restart. When it is another
+ * scene than the one the face is on, the face goes on it
+ * (gui_face_scene_set()): Kody is not in it yet, and the face's tick puts him
+ * in it (gui_face_kody_wake()), on its next pass while he is on the glass -
+ * the face counts as seen afresh - and otherwise the next time the face is
+ * seen, from under a card, from another screen, or once the panel has
+ * answered. He is found there awake, in his loop, with a cut and no wake-up:
+ * that is played at a cold boot and out of Rest alone (face_wake_up). Nothing
+ * is played from here, so every play starts from the face's tick, whoever
+ * chose the scene. Choosing the scene he is in already changes nothing on the
+ * glass: it stops the hour from picking.
  *
  * @param me  The AO.
  * @param id  The scene: one of the active pack's, or KGUI_ASSETS_BUILTIN.
@@ -27517,26 +28552,60 @@ static void gui_face_scene_choose(Gui * const me, GuiSceneId id,
 /** @brief Tries to wake Kody: the chosen scene, then the built-in one. */
 #define GUI_FACE_ROUSE_PASSES 2U
 
+/** @brief An lv_anim's setter: the opacity of Kody's box on the face. */
+static void gui_face_kody_opa(void *o, int32_t v)
+{
+    lv_obj_set_style_opa(gui_anim_obj(o), (lv_opa_t)v, LV_PART_MAIN);
+}
+
 /**
- * @brief Wake Kody in the scene the face is on: its wake-up once, then its
- *        loop.
+ * @brief Fade Kody's box in: his scene comes after a face that lit at boot
+ *        without him (face_fade_in).
  *
- * The boot's first sight of the face, every choice of another scene and
- * every change of scene the hour makes come here, all by way of
- * gui_face_kody_wake() and so from one place in the face's tick. The
- * wake-up's last frame is the loop's first, and kui_kody_then() is asked
- * right after the play, where the hand-over cannot be missed; from there the
- * loop plays for as long as the face is seen. Whatever the player is doing
- * ends at once: two scenes share no pose to link at, so a change of scene is
- * a cut. A choice cuts a look and a wake-up still under way, and a second
- * one while the first wakes simply starts the newer scene; the hour's change
- * is not made until a look has ended (gui_face_scene_hour()). A window of
- * passes opens here, so the line that closes it counts this scene's passes
- * and no other's (gui_face_window_log()). A wake-up that cannot play (the
- * player says why) leaves the face to the time, and the next time the face
- * is seen tries it again. A scene of the pack whose files are not read yet
- * is waited for (KGUI_ASSETS_EV_SCENE comes back here), and one that cannot
- * play gives the face to the built-in scene.
+ * The box was made transparent when the face lit (gui_first_hold_tick()); the
+ * scene's first frame is drawn under it, and it comes up to full over
+ * GUI_COVER_FADE_MS, as the glass came up from black, so he joins the time
+ * and the date in the same motion rather than at once.
+ *
+ * @param me The AO; Kody has just been put in his scene.
+ */
+static void gui_face_kody_fade_in(Gui * const me)
+{
+    lv_anim_t a;
+
+    me->face_fade_in = false;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, me->face_kody);
+    lv_anim_set_exec_cb(&a, &gui_face_kody_opa);
+    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_duration(&a, GUI_COVER_FADE_MS);
+    lv_anim_set_path_cb(&a, &lv_anim_path_ease_in_out);
+    (void)lv_anim_start(&a);
+    KLOG_D(TAG, "face: Kody fades in over %u ms", (unsigned)GUI_COVER_FADE_MS);
+}
+
+/**
+ * @brief Put Kody in the scene the face is on: its wake-up once and then its
+ *        loop, out of Rest and at a cold boot; its loop alone any other time
+ *        (face_wake_up).
+ *
+ * The boot's first sight of the face, the wake that ends Rest, every choice
+ * of another scene and every scene the hour brought while the face was away
+ * come here, all by way of gui_face_kody_wake() and so from one place in the
+ * face's tick. When he wakes up, the wake-up's last frame is the loop's
+ * first, and kui_kody_then() is asked right after the play, where the
+ * hand-over cannot be missed; from there, as when he is put straight in his
+ * loop, the loop plays for as long as the face is seen. Whatever the player
+ * is doing ends at once: two scenes share no pose to link at, so a change of
+ * scene is a cut. A choice cuts a look and a wake-up still under way, and a
+ * second one while the first plays simply starts the newer scene; the hour's
+ * change is never made on a face that is seen (gui_face_scene_hour()). A
+ * window of passes opens here, so the line that closes it counts this scene's
+ * passes and no other's (gui_face_window_log()). A play that cannot start
+ * (the player says why) leaves the face to the time and face_wake_up as it
+ * was, and the next time the face is seen tries it again. A scene of the pack
+ * whose files are not read yet is waited for (KGUI_ASSETS_EV_SCENE comes back
+ * here), and one that cannot play gives the face to the built-in scene.
  *
  * @param me The AO; Kody is on the glass.
  */
@@ -27573,18 +28642,40 @@ static void gui_face_kody_rouse(Gui * const me)
     {
         GuiSceneId const id = me->face_scene_on;
 
-        /* kui_kody_play() says why when it cannot. */
-        me->face_woke = kui_kody_play(me->face_kody, kgui_assets_wake(id),
-                                      false);
-        if ( me->face_woke )
+        bool const up = me->face_wake_up;
+
+        /* kui_kody_play() says why when it cannot. Out of Rest, and at a
+         * cold boot, he wakes up and then loops; any other time he is found
+         * awake, in his loop: back from an app the board has only just
+         * booted, and a wake-up on every return reads as a tic. */
+        if ( up )
         {
-            kui_kody_then(me->face_kody, kgui_assets_loop(id), true);
+            me->face_woke = kui_kody_play(me->face_kody, kgui_assets_wake(id), false);
+            if ( me->face_woke )
+            {
+                kui_kody_then(me->face_kody, kgui_assets_loop(id), true);
+            }
+        }
+        else
+        {
+            me->face_woke = kui_kody_play(me->face_kody, kgui_assets_loop(id), true);
         }
         if ( me->face_woke )
         {
+            const char *how = "is awake";
+
+            if ( up )
+            {
+                how = "wakes";
+            }
+            me->face_wake_up = false;
             /* The player holds this scene's descriptors and no other's now. */
             kgui_assets_scene_keep(id);
-            KLOG_D(TAG, "face: Kody wakes in the %s scene", kgui_assets_scene_name(id));
+            KLOG_D(TAG, "face: Kody %s in the %s scene", how, kgui_assets_scene_name(id));
+            if ( me->face_fade_in )
+            {
+                gui_face_kody_fade_in(me);
+            }
         }
         gui_face_window_open(me);
     }
@@ -27613,21 +28704,24 @@ static void gui_face_kody_hide(Gui * const me)
 }
 
 /**
- * @brief The face has been seen: wake Kody.
+ * @brief The face has been seen: put Kody in his scene, or let him go on.
  *
- * The first time, at boot, he wakes up in the scene the face is to be on:
- * the one chosen, or while none is chosen the one the hour asks for
- * (gui_face_scene_want(), gui_face_kody_rouse()). So he does in every scene
- * the face has gone on since he last woke (gui_face_scene_set()): one chosen
- * on the face, which shows him the face afresh, one chosen while he is out
- * of sight - a scene the console set under a card or on another screen -
- * and the one the hour has just asked for (gui_face_scene_hour()). And so he
- * does whenever the wake-up could not play the last time.
+ * While he is not in the scene the face is on (face_woke), he is put in the
+ * one the face is to be on: the one chosen, or while none is chosen the one
+ * the hour asks for (gui_face_scene_want(), gui_face_kody_rouse()). That is
+ * the first sight of the face after a boot, the wake that ends Rest, and
+ * every scene the face has gone on since he was last put in one
+ * (gui_face_scene_set()): one chosen on the face, which shows him the face
+ * afresh, one chosen while he is out of sight - a scene the console set under
+ * a card or on another screen - and the one the hour asked for while the face
+ * was off the glass (gui_face_scene_hour()). And so it is whenever the play
+ * could not start the last time. He wakes up there at a cold boot and out of
+ * Rest, and is found awake in his loop any other time (face_wake_up).
  *
- * Every other time he has woken in this scene already, and goes on from
- * where he stood, wherever the pause that hid him caught him - in a look
- * too, which plays on to its end, the hour's change of scene waiting for
- * it.
+ * Every other time he is in this scene already, and goes on from where he
+ * stood, wherever the pause that hid him caught him - in a look too, which
+ * plays on to its end. The hour does not change his scene here: a face that
+ * stays on the glass keeps its scene past the hour.
  *
  * @param me The AO.
  */
@@ -27951,7 +29045,8 @@ static void gui_rest_knock(Gui * const me, bool on)
  * The count is the launcher's and the settings screen's (gui_idle_check()),
  * started when the Lock is entered and again on every button, hold and touch
  * on the face (gui_awake_input()), and held the same way: while a finger
- * rests on the glass or a button is held down, while a card is up or a write
+ * rests on the glass or a button is held down, while a card is up (but the
+ * card at boot, which the door takes down, gui_sheet_events()) or a write
  * runs or a curtain moves, and while a look waits or plays, which is Kody's
  * answer to an input. While a cable keeps the Lock awake (`usb_awake` with
  * VBUS present) nothing is asked and the count is left as it stands, so the
@@ -27974,8 +29069,8 @@ static void gui_rest_check(Gui * const me)
         look = kui_kody_is_reacting(me->face_kody);
     }
     if ( me->touch_pressed || (0U != me->btn_held)
-        || (GUI_SHEET_NONE != me->sheet) || me->curtain_up || me->writing
-        || look )
+        || ((GUI_SHEET_NONE != me->sheet) && (GUI_SHEET_UPDATE != me->sheet))
+        || me->curtain_up || me->writing || look )
     {
         gui_idle_rearm(me);
     }
@@ -28014,9 +29109,8 @@ static void gui_rest_check(Gui * const me)
  * What Kody stands on whenever Rest begins, and what a pack read again puts
  * him on. A scene that cannot play is left for
  * the built-in one. A scene whose files are not read yet is asked for, and
- * KGUI_ASSETS_EV_SCENE comes back (gui_assets_notify()). He counts as woken
- * in the scene from here, so the wake that ends Rest goes on with the loop
- * from its first frame (gui_face_kody_wake()) and plays no wake-up over it.
+ * KGUI_ASSETS_EV_SCENE comes back (gui_assets_notify()). Whatever he stands
+ * on, the wake that ends Rest plays his wake-up over it (gui_rest_leave()).
  *
  * @param me The AO; Kody has a player.
  * @return What he stands on, in words for the log; "no frame" when the
@@ -28067,11 +29161,10 @@ static const char *gui_rest_frame(Gui * const me)
  *
  * He stands on the first frame of his scene's loop (gui_rest_frame()),
  * wherever the press that rests the Lock caught him, paused so nothing is
- * rasterised from here on, and he stays woken in the scene: the wake that
- * ends Rest goes on from that frame (gui_face_kody_wake()), unless the hour
- * has asked for another scene by then. When the scene cannot be drawn he
- * stops on the frame he is on. A look asked for and not answered goes with
- * him.
+ * rasterised from here on. The wake that ends Rest plays his wake-up, in the
+ * scene the hour asks for by then (gui_rest_leave(), gui_face_kody_wake()).
+ * When the scene cannot be drawn he stops on the frame he is on. A look asked
+ * for and not answered goes with him.
  *
  * @param me The AO; Kody is on the glass, awake or not woken yet.
  */
@@ -28502,7 +29595,6 @@ static uint32_t gui_knock_wait(Gui const * const me, uint32_t next)
 #define GUI_FIRST_HOLD_MAX_MS   5000U    /* The longest the first frame waits to be whole. */
 #define GUI_HOME_WHOLE_MAX_MS    600U    /* The longest the way home from Apps waits for Kody. */
 #define GUI_WRITE_CANCEL_MS     5000U    /* A write called off speaks again after this. */
-#define GUI_DEEP_AFTER_REST_MS  1800000U /* Rest, with nobody there, until the count: 30 min. */
 #define GUI_DEEP_COUNT_MS       5000U    /* The count. */
 #define GUI_DEEP_ANSWER_MS      4000U    /* A rest not taken by then was refused. */
 #define GUI_DEEP_COUNT_TICK_MS  100U     /* The tick while the count stands. */
@@ -28536,6 +29628,23 @@ static void gui_deep_off(Gui * const me)
     me->deep_fading = false;
     me->deep_asked  = false;
     me->deep_forced = false;
+}
+
+/**
+ * @brief How long Rest lasts, with nobody there, until the count.
+ *
+ * The time "Turn off after" says: AO_LowPower's `off_after`, whose word this
+ * AO hears at the start and whenever it moves (gui_off_after_answer()). One
+ * time for the board's OFF, whichever of the two counts it: Rest no longer has
+ * a time of its own under a row that promised another.
+ *
+ * @param me The AO.
+ * @return The time in milliseconds; 0 when the setting is "never", and Rest
+ *         stays for good.
+ */
+static uint32_t gui_deep_after_ms(Gui const * const me)
+{
+    return kgui_rest_off_ms(me->off_word, KODE_LOWPOWER_OFF_AFTER_DEF_S * GUI_MS_PER_S);
 }
 
 /**
@@ -28601,7 +29710,7 @@ static void gui_deep_begin(Gui * const me)
         else
         {
             KLOG_N(TAG, "rest: nobody for %u s; the count before the deep rest",
-                   (unsigned)(GUI_DEEP_AFTER_REST_MS / 1000U));
+                   (unsigned)(gui_deep_after_ms(me) / GUI_MS_PER_S));
         }
         gui_tick_now(me);
     }
@@ -28610,7 +29719,9 @@ static void gui_deep_begin(Gui * const me)
 /**
  * @brief Rest's share of the deep rest: the wait, the count, and asking for it.
  *
- * On the battery only: a cable never sleeps.
+ * On the battery only: a cable never sleeps. The wait is counted from the
+ * entry into Rest, from the last press or touch, and from the cable leaving
+ * (Gui_running's POWER_EVT_SIG), whichever came last.
  *
  * @param me The AO, at Rest.
  */
@@ -28627,8 +29738,10 @@ static void gui_deep_tick(Gui * const me)
     }
     else if ( NULL == me->deep_warn )
     {
-        if ( (!me->vbus) && (!me->rest_knock) && (!me->rest_hint)
-            && ((now - me->deep_ms) >= GUI_DEEP_AFTER_REST_MS) )
+        uint32_t const after = gui_deep_after_ms(me);
+
+        if ( (0U != after) && (!me->vbus) && (!me->rest_knock) && (!me->rest_hint)
+            && ((now - me->deep_ms) >= after) )
         {
             gui_deep_begin(me);
         }
@@ -28730,15 +29843,19 @@ static void gui_rest_hint(Gui * const me)
 /**
  * @brief Paint the time at Rest, and move the face's content on its burn-in cycle each minute.
  *
- * The first paint of a Rest only takes its place in the cycle. The content
- * does not move while Kody is awake for the second press (rest_knock).
+ * The first paint of a Rest takes the content to the place this Rest starts
+ * at (gui_rest_enter()): as a movement while Kody falls asleep, so nothing
+ * jumps once he is still. With no fall the place is home, where it stands.
+ * Each minute after it is one step of the cycle, a pixel on each axis. The
+ * content does not move while Kody is awake for the second press (rest_knock).
  *
  * @param me The AO.
  */
 static void gui_rest_paint(Gui * const me)
 {
     uint32_t key;
-    bool     move = false;
+    bool     move  = false;
+    bool     first = false;
 
     gui_face_time_paint(me);
     key = me->face_min;
@@ -28751,6 +29868,7 @@ static void gui_rest_paint(Gui * const me)
         me->rest_painted = true;
         me->rest_key     = key;
         move             = true;
+        first            = true;
     }
     else if ( (key != me->rest_key) && !me->rest_knock )
     {
@@ -28768,7 +29886,16 @@ static void gui_rest_paint(Gui * const me)
     {
         kgui_rest_offset_t const at = kgui_rest_offset(me->rest_step);
 
-        kgui_screen_face_shift(at.x, at.y);
+        if ( first && ((uint8_t)GUI_FALL_NONE != me->rest_fall) )
+        {
+            /* Every frame is drawn until the veil is over (gui_tick_wait()),
+             * which is longer than this takes. */
+            kgui_screen_face_glide(at.x, at.y, KGUI_VEIL_MS);
+        }
+        else
+        {
+            kgui_screen_face_shift(at.x, at.y);
+        }
     }
 }
 
@@ -29048,10 +30175,13 @@ static uint32_t gui_tick_wait(Gui const * const me, uint32_t lvgl_next)
  * @brief The Lock goes to Rest: the entry of Gui_rest.
  *
  * In this order: an armed press and the bottom button's hold end, Kody stands
- * still on a frame of his scene, the face's content takes
- * its place in the burn-in cycle (gui_rest_paint()), and the glass starts to
- * dim. The clock, the date and the scene stay in colour. The tick slows down to
- * KGUI_REST_TICK_MS (gui_tick_wait()).
+ * still on a frame of his scene, the face's content sets off for this Rest's
+ * place in the burn-in cycle, past the one the Rest before stood at
+ * (kgui_rest_start(), gui_rest_paint()) - or stays home when Kody has no
+ * fall to move under - and the glass starts to dim. The date goes: it shows
+ * for a few seconds on waking, and the tick that takes it off does not run at
+ * Rest. The clock stays. The tick slows down to KGUI_REST_TICK_MS
+ * (gui_tick_wait()).
  *
  * @param me The AO.
  */
@@ -29066,6 +30196,21 @@ static void gui_rest_enter(Gui * const me)
     gui_rest_kody(me);
     me->face_painted = false;   /* the yellow pills go */
     me->rest_painted = false;
+    /* The date shows for a few seconds on waking and its end is counted by
+     * the awake Lock's tick, which does not run from here: a Rest entered
+     * inside those seconds would keep it for good. The hour stands alone. */
+    me->date_until_ms = 0U;
+    kgui_screen_face_date(false);
+    if ( (uint8_t)GUI_FALL_NONE != me->rest_fall )
+    {
+        me->rest_step = kgui_rest_start(me->rest_step);
+    }
+    else
+    {
+        /* He has no fall to hide the way in: this Rest stands at home,
+         * where the awake face is, rather than jump there. */
+        me->rest_step = 0U;
+    }
     me->deep_ms      = khal_time_ms();
     gui_rest_paint(me);
     if ( (uint8_t)GUI_FALL_NONE == me->rest_fall )
@@ -29078,11 +30223,12 @@ static void gui_rest_enter(Gui * const me)
 /**
  * @brief The Lock leaves Rest: the exit of Gui_rest, whatever it leaves for.
  *
- * A hint over the Rest face goes, the face's content goes back home, the glass comes back to the stored level, which
- * AO_Display is asked for first (gui_settle_begin()), and Kody is seen again:
- * the face's tick lets him go on from the frame he stands on, or wakes him in
- * the scene the hour asks for by then, and it comes at once rather than up to
- * KGUI_REST_TICK_MS late (gui_tick_now()). The Lock is woken from here, and
+ * A hint over the Rest face goes, the face's content goes back home, the
+ * glass comes back to the stored level, which AO_Display is asked for first
+ * (gui_settle_begin()), and Kody is seen again: the face's tick plays his
+ * wake-up, in the scene the hour asks for by then (face_wake_up), and it
+ * comes at once rather than up to KGUI_REST_TICK_MS late (gui_tick_now()).
+ * The Lock is woken from here, and
  * rests again after KGUI_WOKEN_REST_MS unless something touches it. A state
  * that takes the glass instead of the face hides Kody again on its way.
  *
@@ -29103,11 +30249,11 @@ static void gui_rest_leave(Gui * const me)
     kgui_hint_dismiss();
     /* Rest moved the content to save the panel. Home at a stroke is the jump
      * between the sleeping Kody and the waking one (measured up
-     * to 4 px on the Dot): it goes home while he leaps. The next Rest starts
-     * from home, as the apocrifa's does (kshell_face.c). */
+     * to 4 px on the Dot): it goes home while he leaps. The next Rest goes
+     * on from the place this one stood at (gui_rest_enter()). */
     kgui_screen_face_home(GUI_REST_HOME_DELAY_MS, GUI_REST_HOME_MS);
-    me->rest_step    = 0U;
     me->face_woke    = false;
+    me->face_wake_up = true;    /* out of Rest he wakes up */
     me->joke_ok      = true;   /* waking: the joke may come */
     me->kody_sight   = GUI_KODY_SEEN;
     me->woken        = true;
@@ -29235,14 +30381,11 @@ static void gui_face_window_log(Gui const * const me)
 /**
  * @brief Kody's share of the face's tick.
  *
- * In this order: while he can be seen and no scene is chosen, put the face
- * on the scene the hour asks for, once no look is under way
- * (gui_face_scene_hour()); wake him when the face has just been seen and no
- * card is up - in the scene chosen, or the hour's, when there is one, since
- * either shows him the face afresh (gui_face_scene_set()); answer a look; and close a window of passes that
- * has run its length, opening the next. The hour is the one the time paint
- * has just read, on the same tick. Nothing here transitions: the face's
- * tick hands up to the parent's as ever.
+ * In this order: put him in his scene when the face has just been seen and
+ * no card is up - the scene chosen, or the hour's (gui_face_kody_wake()) -;
+ * answer a look; and close a window of passes that has run its length,
+ * opening the next. Nothing here transitions: the face's tick hands up to
+ * the parent's as ever.
  *
  * Awake, he plays, and his scene loops for as long as the face is seen. Two
  * things stop him: the face's exit or a card over it, which pause him
@@ -29250,14 +30393,15 @@ static void gui_face_window_log(Gui const * const me)
  * still (gui_rest_kody()). At Rest the awake Lock's tick, and so this, does
  * not run.
  *
- * The hour's change is made before a look is answered, so a look recorded
- * as the hour moves finds Kody waking and is refused, and no row of looks
- * holds the hour back.
+ * The hour does not change his scene here. A change of scene is a cut, and
+ * it is made only while the face is off the glass (gui_face_scene_hour()): a
+ * face that stays on the glass keeps its scene past the hour, and no look
+ * waits for one.
  *
- * Until he has woken, nothing but a wake-up puts him on the glass: a face
- * whose wake-up could not play stays the time alone until it is seen again,
- * or another scene is chosen. No line closes a window of passes on such a
- * face: it would say a scene played that is not on the glass.
+ * Until he has been put in his scene, nothing else puts him on the glass: a
+ * face whose play could not start stays the time alone until it is seen
+ * again, or another scene is chosen. No line closes a window of passes on
+ * such a face: it would say a scene played that is not on the glass.
  *
  * @param me The AO.
  */
@@ -29278,8 +30422,9 @@ static void gui_face_kody_tick(Gui * const me)
     }
     if ( (GUI_KODY_HIDDEN != me->kody_sight) && (GUI_SHEET_NONE == me->sheet) )
     {
-        /* Seen, with nothing over the face: awake, or about to wake. */
-        gui_face_scene_hour(me);
+        /* Seen, with nothing over the face: awake, or about to wake. The
+         * hour's change of scene is not made here, in front of the person
+         * (gui_face_scene_hour()). */
         if ( GUI_KODY_SEEN == me->kody_sight )
         {
             gui_face_kody_wake(me);
@@ -29299,18 +30444,23 @@ static void gui_face_kody_tick(Gui * const me)
 }
 
 /**
- * @brief Have Kody in his box before the face has been seen: its hour, its
- *        scene and him on the first frame of his wake-up.
+ * @brief Have Kody in his box before the face is seen: its hour, its scene
+ *        and him on the first frame of what he will play - his wake-up at a
+ *        cold boot, his loop any other time.
  *
  * The face first seen behind a curtain, back from an app: the first frame was
- * Apps, so nobody woke him, and the curtain's picture would be a face without
- * him, who comes in when it lands. The first_hold's rule holds
- * here too: he is there from the first frame of the fade. The wake-up that
- * plays when the face lands starts from this very frame, so nothing jumps.
- * Nothing moves until then: he is paused (gui_kody_stand()).
+ * Apps, so nobody put him in his scene, and the curtain's picture would be a
+ * face without him, who comes in when it lands. The first_hold's rule holds
+ * here too: he is there from the first frame of the fade. What he plays when
+ * the face lands starts from this very frame, so nothing jumps. Nothing moves
+ * until then: he is paused (gui_kody_stand()).
+ *
+ * A face that has been seen and is away has its scene changed here when the
+ * hour asks for another (gui_face_scene_hour()), and he is stood in the new
+ * one in the same call.
  *
  * The scene's files are asked for here and read in the background, as the
- * face's own wake-up asks for them (kgui_assets_scene_load()): being asked
+ * face's own play asks for them (kgui_assets_scene_load()): being asked
  * again until they are in is harmless.
  *
  * @param me The AO.
@@ -29321,6 +30471,15 @@ static bool gui_face_kody_ready(Gui * const me)
 {
     bool whole = true;
 
+    if ( (NULL != me->face_kody) && me->face_woke && kgui_assets_ready()
+        && (GUI_KODY_HIDDEN == me->kody_sight) && (!me->at_rest)
+        && (lv_screen_active() != kgui_screen_face) )
+    {
+        /* The hour may have moved on while the face was away: its scene is
+         * changed here, out of sight, and he is stood in it below. */
+        gui_face_time_paint(me);
+        gui_face_scene_hour(me);
+    }
     if ( (NULL != me->face_kody) && (!me->face_woke)
         && (GUI_KODY_HIDDEN == me->kody_sight) )
     {
@@ -29344,9 +30503,15 @@ static bool gui_face_kody_ready(Gui * const me)
             else if ( kgui_assets_scene_load(id) )
             {
                 uint32_t const t0 = khal_time_ms();
+                /* The frame his play starts from (gui_face_kody_rouse()). */
+                const kui_kody_anim_t *first = kgui_assets_loop(id);
 
+                if ( me->face_wake_up )
+                {
+                    first = kgui_assets_wake(id);
+                }
                 me->face_scene_on = id;
-                gui_kody_stand(me, kgui_assets_wake(id));
+                gui_kody_stand(me, first);
                 me->face_stood = (uint16_t)id;
                 KLOG_N(TAG, "face: Kody stands in the %s scene before it is seen, "
                             "%u ms after boot, drawn in %u ms",
@@ -29396,19 +30561,21 @@ static bool gui_home_holds(Gui * const me)
 }
 
 /**
- * @brief On Apps, with the face not seen yet: get him ready, and let go a way
- *        home that waited for it.
+ * @brief Off the face - on Apps, in Settings - get him ready for the next
+ *        sight of it, in the scene the hour asks for by then, and let go a
+ *        way home that waited for it.
  *
  * Not while the first frame is held: that frame is Apps, and his read and his
- * first frame come after it, not in front of it.
+ * first frame come after it, not in front of it. Nor while the glass comes
+ * up from black: drawing him takes two frames' time out of it.
  *
  * @param me The AO.
  */
 static void gui_face_ready_tick(Gui * const me)
 {
-    if ( (lv_screen_active() == kgui_screen_launcher) && (!me->first_hold)
+    if ( (lv_screen_active() != kgui_screen_face) && (!me->first_hold)
         && (!kgui_return_holds(&me->back)) && (!me->curtain_up)
-        && (GUI_SHEET_NONE == me->sheet) )
+        && (NULL == me->cover) && (GUI_SHEET_NONE == me->sheet) )
     {
         bool const whole = gui_face_kody_ready(me);
 
@@ -29521,23 +30688,31 @@ static void on_face_loaded(lv_event_t *e)
 }
 
 /**
- * @brief A yellow pill is up: the tap or the top button opens its page.
+ * @brief A yellow pill is up: the tap or the top button opens the Time page,
+ *        whichever of the two it is.
  *
  * @param me The AO.
  * @return true when the press was the pill's.
  */
 static bool gui_face_prompt_open(Gui * const me)
 {
-    bool const unknown = !khal_time_wall_known();
-    bool const zone    = (!unknown) && me->zone_heard && (!me->zone_stored);
+    /* A press reaches here only off Rest, where the pill shows. */
+    kgui_clock_ask_t const ask = kgui_clock_ask(khal_time_wall_known(), me->zone_heard,
+                                                me->zone_stored, false);
 
-    if ( unknown || zone )
+    if ( KGUI_CLOCK_ASK_NONE != ask )
     {
-        KLOG_N(TAG, "face: the yellow pill asks for the %s", unknown ? "time" : "zone");
+        const char *what = "zone";
+
+        if ( KGUI_CLOCK_ASK_TIME == ask )
+        {
+            what = "time";
+        }
+        KLOG_N(TAG, "face: the yellow pill asks for the %s", what);
         me->prompt_open = true;
-        gui_sheet_open_kind(me, unknown ? GUI_SHEET_TIME : GUI_SHEET_ZONE);
+        gui_sheet_open_kind(me, GUI_SHEET_TIME);
     }
-    return unknown || zone;
+    return KGUI_CLOCK_ASK_NONE != ask;
 }
 
 /**
@@ -29567,8 +30742,9 @@ static void gui_face_tap(Gui * const me)
  * choice to the hour, with a warning, and the key as it is, for the pack
  * that has it. With none chosen the hour picks. Either way the face goes on
  * that scene afresh (gui_face_scene_set()): the players were stopped when
- * the old pack was retired, so Kody wakes up again, in it, on the face's
- * next tick while he is on the glass.
+ * the old pack was retired, so Kody is put in it again on the face's next
+ * tick while he is on the glass - in his loop, or waking up when a cold boot
+ * or Rest still owes him his wake-up (face_wake_up).
  *
  * @param me The AO.
  */
@@ -30046,7 +31222,7 @@ static bool gui_local_tm_of(uint64_t secs, struct tm *out)
  * @brief The wall clock as local time, in the zone the face runs in.
  *
  * The board keeps UTC; the zone is AO_Boot's, applied at boot and again
- * whenever the list of zones or the console changes it, and this AO shows
+ * whenever the Time page or the console changes it, and this AO shows
  * what AO_Boot answers (gui_zone_take()). ESP-IDF's FAT driver stamps the
  * files it writes in the same zone.
  *
@@ -30061,7 +31237,7 @@ static bool gui_local_tm(Gui const * const me, struct tm *out)
     (void)me;
     if ( khal_time_wall_known() )
     {
-        known = gui_local_tm_of(khal_time_wall_us() / 1000000ULL, out);
+        known = gui_local_tm_of(khal_time_wall_us() / GUI_US_PER_S, out);
     }
     return known;
 }
@@ -30152,11 +31328,12 @@ static void gui_face_time_paint(Gui * const me)
     {
         return;
     }
-    /* What the clock lacks is asked for in yellow, as the apocrifa does; at
-     * Rest nothing asks. */
-    kgui_screen_face_prompt((0U == min) && (!me->at_rest),
-                            (0U != min) && me->zone_heard && (!me->zone_stored)
-                            && (!me->at_rest));
+    /* What the clock lacks is asked for in yellow, as the apocrifa does, one
+     * thing at a time; at Rest nothing asks. */
+    kgui_clock_ask_t const ask = kgui_clock_ask(0U != min, me->zone_heard,
+                                                me->zone_stored, me->at_rest);
+
+    kgui_screen_face_prompt(KGUI_CLOCK_ASK_TIME == ask, KGUI_CLOCK_ASK_ZONE == ask);
     if ( 0U == min )
     {
         kgui_screen_face_time(-1, 0, me->clock_12h, false);
@@ -30189,51 +31366,6 @@ static void gui_face_time_paint(Gui * const me)
 /* ---- The time zone -------------------------------------------------------- */
 
 /**
- * @brief The zones the list offers, west to east, one row each.
- *
- * The label is what a reader recognises - a city, or two that keep the same
- * time - and the string is the POSIX TZ the clock runs in there, daylight
- * saving included where the place keeps it and left out where it does not:
- * Mexico City keeps none, so it is not Chicago, and neither do Bogota and
- * Lima, so they are not New York. GUI_ZONE_UTC's row is
- * where a board with nothing stored stands, and where the list's cursor
- * starts for a zone the table does not hold. Every string fits GUI_ZONE_MAX.
- */
-static const GuiZone s_zones[] = {
-    { "Honolulu",           "HST10"                        },
-    { "Los Angeles",        "PST8PDT,M3.2.0,M11.1.0"       },
-    { "Denver",             "MST7MDT,M3.2.0,M11.1.0"       },
-    { "Chicago",            "CST6CDT,M3.2.0,M11.1.0"       },
-    { "Mexico City",        "CST6"                         },
-    { "New York",           "EST5EDT,M3.2.0,M11.1.0"       },
-    { "Bogota, Lima",       "<-05>5"                       },
-    { "Sao Paulo",          "<-03>3"                       },
-    { "UTC",                GUI_ZONE_UTC                   },
-    { "London, Lisbon",     "GMT0BST,M3.5.0/1,M10.5.0"     },
-    { "Madrid, Paris",      "CET-1CEST,M3.5.0,M10.5.0/3"   },
-    { "Athens",             "EET-2EEST,M3.5.0/3,M10.5.0/4" },
-    { "Johannesburg",       "SAST-2"                       },
-    { "Istanbul, Moscow",   "<+03>-3"                      },
-    { "Dubai",              "<+04>-4"                      },
-    { "Mumbai",             "IST-5:30"                     },
-    { "Bangkok",            "<+07>-7"                      },
-    { "Beijing, Perth",     "<+08>-8"                      },
-    { "Tokyo, Seoul",       "JST-9"                        },
-    { "Sydney",             "AEST-10AEDT,M10.1.0,M4.1.0/3" },
-    { "Auckland",           "NZST-12NZDT,M9.5.0,M4.1.0/3"  },
-};
-
-/** @brief How many zones s_zones holds. */
-#define GUI_ZONE_COUNT  ((uint8_t)(sizeof(s_zones) / sizeof(s_zones[0])))
-
-/* The list is one sheet with a row per zone and nothing else in its body, so
- * the table has to fit the card's rows whole: a zone left off would be a city
- * the glass cannot choose, and every row after it would stand at a place in
- * the table it is not at (gui_sheet_first_row()). */
-_Static_assert(GUI_ZONE_COUNT <= GUI_SHEET_ROWS_MAX,
-               "the list of zones must fit one sheet's rows");
-
-/**
  * @brief Ask AO_Boot for the zone, or to take @p zone, through `config`.
  *
  * Posted to the setting's owner like the console's own request
@@ -30243,15 +31375,17 @@ _Static_assert(GUI_ZONE_COUNT <= GUI_SHEET_ROWS_MAX,
  *
  * @param me   The AO.
  * @param zone A zone to set, or NULL to read the one in force.
+ * @return true when the request was posted: an answer comes.
  */
-static void gui_zone_ask(Gui * const me, const char *zone)
+static bool gui_zone_ask(Gui * const me, const char *zone)
 {
     KodeConfigReqEvt * const e = Q_NEW_X(KodeConfigReqEvt, 1U, CONFIG_REQ_SIG);
+    bool posted = false;
 
     if ( NULL == e )
     {
         KLOG_W(TAG, "zone: out of events; the zone is not asked");
-        return;
+        return false;
     }
     me->zone_asks += 1U;
     e->seq = GUI_ZONE_SEQ_BASE + (me->zone_asks & GUI_ZONE_SEQ_MASK);
@@ -30265,10 +31399,12 @@ static void gui_zone_ask(Gui * const me, const char *zone)
     {
         (void)snprintf(e->s, sizeof(e->s), "%s", zone);
     }
-    if ( !kode_config_post(e, &me->super) )
+    posted = kode_config_post(e, &me->super);
+    if ( !posted )
     {
         KLOG_W(TAG, "zone: AO_Boot is busy; the zone is not asked");
     }
+    return posted;
 }
 
 /**
@@ -30293,8 +31429,10 @@ static void gui_zone_answer(Gui * const me, KodeConfigAnsEvt const * const a)
  * the one before it, and that is what the glass goes on showing. A zone that
  * moved repaints what shows it: the face, whose minute is a local one and so
  * is the hour Kody's scene is picked by (the face's tick wakes him in the new
- * hour's scene, gui_face_kody_tick()); More's Time zone row in place; the
- * list with its check on the new city.
+ * hour's scene, gui_face_kody_tick()); the Time page's zone row in place,
+ * whose other rows follow the clock on the page's tick (gui_time_follow()).
+ * A zone the Time page asked for over a clock it set by hand first puts that
+ * local time back (gui_time_keep_local()).
  *
  * @param me The AO.
  * @param a  The answer to a `zone` request.
@@ -30306,7 +31444,7 @@ static void gui_zone_take(Gui * const me, KodeConfigAnsEvt const * const a)
     if ( (uint8_t)KODE_OK != a->status )
     {
         KLOG_D(TAG, "zone: refused; the clock stays in %s",
-               gui_zone_label(me->zone));
+               kgui_clock_zone_label(me->zone));
     }
     moved = (strcmp(me->zone, a->value) != 0) || (!me->zone_heard)
             || (me->zone_stored != a->stored);
@@ -30317,25 +31455,24 @@ static void gui_zone_take(Gui * const me, KodeConfigAnsEvt const * const a)
     {
         gui_zone_migrate(me, a->stored);
     }
+    if ( me->zone_keep )
+    {
+        if ( moved && ((uint8_t)KODE_OK == a->status) )
+        {
+            gui_time_keep_local(me);
+        }
+        me->zone_keep = false;
+    }
     if ( moved )
     {
         gui_zone_say(me);
         me->face_painted = false;
         gui_face_time_paint(me);
-        if ( GUI_SHEET_MORE == me->sheet )
+        if ( GUI_SHEET_TIME == me->sheet )
         {
             gui_sheet_row_sub(me,
-                              gui_sheet_find(me, (uint16_t)GUI_TAG_MORE_ZONE),
-                              gui_zone_label(me->zone));
-        }
-        else if ( GUI_SHEET_ZONE == me->sheet )
-        {
-            gui_sheet_refill(me);
-        }
-        else
-        {
-            /* No sheet that shows the zone is up: the face is all there is
-             * to repaint. */
+                              gui_sheet_find(me, (uint16_t)GUI_TAG_TIME_ZONE),
+                              kgui_clock_zone_label(me->zone));
         }
     }
 }
@@ -30365,7 +31502,7 @@ static void gui_zone_migrate(Gui * const me, bool stored)
         && ('\0' != old[0]) )
     {
         KLOG_N(TAG, "zone: %s moves from kgui to the system", old);
-        gui_zone_ask(me, old);
+        (void)gui_zone_ask(me, old);
     }
     else if ( !stored )
     {
@@ -30373,7 +31510,7 @@ static void gui_zone_migrate(Gui * const me, bool stored)
          * stays for it: the same city, in this one's words. */
         static const char *const APOCRIFA[] = {
             "HST10", "PST8PDT,M3.2.0,M11.1.0", "MST7MDT,M3.2.0,M11.1.0",
-            "CST6CDT,M3.2.0,M11.1.0", "EST5EDT,M3.2.0,M11.1.0", "<-03>3", GUI_ZONE_UTC,
+            "CST6CDT,M3.2.0,M11.1.0", "EST5EDT,M3.2.0,M11.1.0", "<-03>3", KGUI_CLOCK_ZONE_UTC,
             "GMT0BST,M3.5.0/1,M10.5.0", "CET-1CEST,M3.5.0,M10.5.0/3",
             "CET-1CEST,M3.5.0,M10.5.0/3", "EET-2EEST,M3.5.0/3,M10.5.0/4", "<+03>-3",
             "<+04>-4", "IST-5:30", "<+07>-7", "<+08>-8", "JST-9",
@@ -30385,7 +31522,7 @@ static void gui_zone_migrate(Gui * const me, bool stored)
             && ((sizeof(APOCRIFA) / sizeof(APOCRIFA[0])) > at) )
         {
             KLOG_N(TAG, "zone: %s comes from the apocrifa", APOCRIFA[at]);
-            gui_zone_ask(me, APOCRIFA[at]);
+            (void)gui_zone_ask(me, APOCRIFA[at]);
         }
     }
     else
@@ -30417,146 +31554,7 @@ static void gui_zone_say(Gui const * const me)
     }
     else
     {
-        KLOG_D(TAG, "zone: %s (%s)", gui_zone_label(me->zone), me->zone);
-    }
-}
-
-/**
- * @brief Where @p zone stands in s_zones.
- *
- * Empty is GUI_ZONE_UTC's row: a board with nothing set runs in UTC.
- *
- * @param zone A POSIX TZ string, or empty.
- * @return Its row, or GUI_ZONE_COUNT when the table does not hold it.
- */
-static uint8_t gui_zone_find(const char *zone)
-{
-    const char *want  = zone;
-    uint8_t     found = GUI_ZONE_COUNT;
-
-    if ( '\0' == want[0] )
-    {
-        want = GUI_ZONE_UTC;
-    }
-    for ( uint8_t i = 0U; (GUI_ZONE_COUNT > i) && (GUI_ZONE_COUNT == found);
-         ++i )
-    {
-        if ( strcmp(s_zones[i].tz, want) == 0 )
-        {
-            found = i;
-        }
-    }
-    return found;
-}
-
-/**
- * @brief What the list, About's Time zone row and the log call @p zone.
- * @param zone A POSIX TZ string, or empty for UTC.
- * @return Its row's label, or "Custom" for a string the table does not hold;
- *         never NULL.
- */
-static const char *gui_zone_label(const char *zone)
-{
-    uint8_t const i     = gui_zone_find(zone);
-    const char   *label = "Custom";
-
-    if ( GUI_ZONE_COUNT > i )
-    {
-        label = s_zones[i].label;
-    }
-    return label;
-}
-
-/**
- * @brief The row of s_zones the clock runs in: its own, or UTC's for a zone
- *        the table does not hold.
- *
- * Where the list's cursor starts (gui_sheet_first_row()): a zone typed on the
- * console has no row of its own, and UTC's is where a board with nothing set
- * stands.
- *
- * @param me The AO.
- * @return A row of s_zones, always below GUI_ZONE_COUNT.
- */
-static uint8_t gui_zone_row(Gui const * const me)
-{
-    uint8_t row = gui_zone_find(me->zone);
-
-    if ( GUI_ZONE_COUNT <= row )
-    {
-        row = gui_zone_find("");
-    }
-    return row;
-}
-
-/**
- * @brief The list of zones: About's Time zone row, opened into a page of its
- *        own in About's place.
- *
- * The table's cities in its order, west to east, each a choice row - the
- * ringed slot of a column of choices - and the zone the clock runs in
- * checked in kode blue; none is, for a zone the console set that the table
- * does not hold. The header says which zone that is by the label About's row
- * shows, and wears About's own "k": this is the same page one level down.
- * Every row is tagged GUI_TAG_ZONE plus its place in s_zones, which is also
- * its place on the card, and that is what lets the ring start on the zone -
- * on UTC's row for a zone the table does not hold - before a row of the
- * list exists (gui_sheet_first_row()).
- *
- * @param me The AO.
- */
-static void gui_zone_fill(Gui * const me)
-{
-    uint8_t const on = gui_zone_find(me->zone);
-
-    gui_sheet_header(me, NULL, KUI_COLOR_OFF, "Time zone",
-                     gui_zone_label(me->zone));
-    gui_sheet_header_mono(me, "k", KUI_COLOR_TEXT_ON_BG);
-    for ( uint8_t i = 0U; GUI_ZONE_COUNT > i; ++i )
-    {
-        lv_color_t  col   = KUI_COLOR_SURFACE;
-        const void *glyph = NULL;
-
-        if ( i == on )
-        {
-            col   = KUI_COLOR_ACCENT;
-            glyph = &kui_glyph_check;
-        }
-        if ( gui_sheet_row(me, s_zones[i].label, NULL, col, glyph, NULL)
-            != NULL )
-        {
-            me->sheet_tag[me->sheet_n - 1U] =
-                (uint16_t)((uint16_t)GUI_TAG_ZONE + (uint16_t)i);
-        }
-    }
-}
-
-/**
- * @brief Pick a zone from the list: AO_Boot is asked to take it, and the card
- *        goes back to More.
- *
- * The top button's release and a tap on a row both end here
- * (gui_sheet_act()). The pick is a `config key="zone"` set, the same a
- * console line makes (gui_zone_ask()); AO_Boot applies and stores it, and its
- * answer repaints the face and More's row (gui_zone_take()). Nothing is
- * rebuilt from here, because a tap arrives inside the click callback of the
- * very row being picked: the way back is the list's close, posted
- * (gui_sheet_close()). The close and AO_Boot's answer may reach this queue in
- * either order: More is built from the zone in force, and an answer that
- * comes after repaints its row in place.
- *
- * @param me  The AO.
- * @param tag The row's tag: GUI_TAG_ZONE plus its place in s_zones.
- */
-static void gui_zone_pick(Gui * const me, uint16_t tag)
-{
-    /* A tag below the list's first, or past its last row, is no zone. */
-    if ( ((uint16_t)GUI_TAG_ZONE <= tag)
-        && ((uint16_t)(tag - (uint16_t)GUI_TAG_ZONE)
-            < (uint16_t)GUI_ZONE_COUNT) )
-    {
-        gui_zone_ask(me, s_zones[tag - (uint16_t)GUI_TAG_ZONE].tz);
-        gui_sheet_close(me);
+        KLOG_D(TAG, "zone: %s (%s)", kgui_clock_zone_label(me->zone), me->zone);
     }
 }
 
@@ -30675,8 +31673,7 @@ static void gui_lock_load(Gui * const me)
  * @brief The list of auto-lock times: the Screen sheet's Auto-lock row,
  *        opened into a page of its own in Screen's place.
  *
- * Built the way the list of zones is (gui_zone_fill()): the table's times in
- * its order, each a choice row - the ringed slot of a column of choices -
+ * The table's times in its order, each a choice row - the ringed slot of a column of choices -
  * and the time that is on checked in kode blue. The header says which time
  * that is, under Screen's own sun on the level's yellow: this is the same
  * page one level down. Every row is tagged GUI_TAG_LOCK plus its place in
@@ -30820,7 +31817,7 @@ static const char *const s_clock_words[] = { "24h", "12h" };
  */
 static const uint32_t s_sleeps[] = { GUI_SLEEP_LOCK, 30U, 60U, 300U, 600U, 0U };
 
-/** @brief The face rests after half a minute untouched on a board with nothing stored (the apocrifa's is a minute; reasonable times). */
+/** @brief The face rests after a minute untouched on a board with nothing stored: `config` reads `1m`, the Sleep after row `1 min`. */
 #define GUI_SLEEP_DEFAULT_S 60U   /* the apocrifa's CONFIG_KODEOS_SHELL_IDLE_DEFAULT_S */
 
 /** @brief Their words, in s_sleeps' order. */
@@ -30897,7 +31894,7 @@ static int gui_hour_shown(Gui const * const me, int hour)
 /**
  * @brief Read `clock` and `kody_sleep` from kgui's store, once, at boot.
  *
- * A missing key is the default (24 h; Kody follows the auto-lock), and so is
+ * A missing key is the default (24 h; Rest after GUI_SLEEP_DEFAULT_S), and so is
  * one that does not read as a value the table offers, said with a warning.
  *
  * @param me The AO.
@@ -30922,12 +31919,12 @@ static void gui_clock_sleep_load(Gui * const me)
     }
     else if ( KODE_DENIED != st )
     {
-        KLOG_W(TAG, "kgui/%s does not read as a sleep time; Kody follows the "
-                    "auto-lock", GUI_NVS_KEY_SLEEP);
+        KLOG_W(TAG, "kgui/%s does not read as a sleep time; the face rests "
+                    "after %u s", GUI_NVS_KEY_SLEEP, (unsigned)GUI_SLEEP_DEFAULT_S);
     }
     else
     {
-        /* Nothing stored: he follows the auto-lock. */
+        /* Nothing stored: GUI_SLEEP_DEFAULT_S. */
     }
     h12 = 0U;
     if ( me->clock_12h )
@@ -30981,8 +31978,8 @@ static void gui_clock_config(Gui * const me, KodeConfigReqEvt const * const r)
  * @brief Make a row of s_sleeps the time to Rest, and keep it.
  *
  * The one place the setting is written, for the console and for the Screen
- * card's Rest after row alike. `lock` erases the key: following the
- * auto-lock is the absence of a time of its own.
+ * card's Rest after row alike. `lock` is stored as GUI_SLEEP_LOCK, like any
+ * other choice: an absent key is the default time, GUI_SLEEP_DEFAULT_S.
  *
  * @param me  The AO.
  * @param idx A place in s_sleeps, below GUI_SLEEP_COUNT.
@@ -30992,15 +31989,8 @@ static void gui_sleep_set(Gui * const me, uint8_t idx)
     kode_status_t st;
 
     me->sleep_s = s_sleeps[idx];
-    if ( GUI_SLEEP_LOCK == me->sleep_s )
-    {
-        st = khal_nvs_erase(GUI_NVS_NAMESPACE, GUI_NVS_KEY_SLEEP);
-    }
-    else
-    {
-        st = khal_nvs_set_blob(GUI_NVS_NAMESPACE, GUI_NVS_KEY_SLEEP,
-                               &me->sleep_s, sizeof(me->sleep_s));
-    }
+    st = khal_nvs_set_blob(GUI_NVS_NAMESPACE, GUI_NVS_KEY_SLEEP,
+                           &me->sleep_s, sizeof(me->sleep_s));
     if ( KODE_OK != st )
     {
         KLOG_W(TAG, "the store refused kgui/%s; Kody's sleep holds until "
@@ -31012,9 +32002,9 @@ static void gui_sleep_set(Gui * const me, uint8_t idx)
 /**
  * @brief Answer `config key="kody_sleep"`, setting it first when asked.
  *
- * `lock` erases the key, as `scene=auto` does: following the auto-lock is
- * the absence of a time of its own. A set counts from the face's last input,
- * like the auto-lock's.
+ * `lock` is stored like any other choice, so it holds across a restart; a
+ * key never set reads as the default time. A set counts from the face's last
+ * input, like the auto-lock's.
  *
  * @param me The AO.
  * @param r  The request; its value is an index into s_sleeps.
@@ -31124,7 +32114,7 @@ static void gui_scene_say(Gui const * const me)
  * are the pack's, which is not read yet: the name is kept as it is
  * (scene_stored) and resolved when the pack has been
  * (KGUI_ASSETS_EV_RESOLVED, gui_assets_resolved()). There a name the pack
- * has makes that scene the face's, as a choice: Kody wakes in it, and the
+ * has makes that scene the face's, as a choice: Kody is put in it, and the
  * hour leaves it alone. With no key no scene is chosen and the hour picks.
  * So it does for a name the pack does not have, and for a key that does not
  * read, each said with a warning; the key is left as it is, for the pack
@@ -31229,11 +32219,13 @@ static const char *gui_scene_word(Gui const * const me)
 /**
  * @brief Answer `config key="scene"`, choosing or forgetting first when asked.
  *
- * A scene to choose is chosen as a swipe chooses it (gui_face_scene_choose()):
- * kept, and Kody wakes up in it, on the face's next tick while he is on the
- * glass and otherwise the next time the face is seen. GUI_SCENE_AUTO forgets
- * the choice: the key goes from the store, and the hour picks from here on,
- * by its own rule (gui_face_kody_tick()). The name is resolved against the
+ * A scene to choose is chosen as the Screen card's row chooses it
+ * (gui_face_scene_choose()): kept, and Kody is put in it, on the face's next
+ * tick while he is on the glass and otherwise the next time the face is seen.
+ * GUI_SCENE_AUTO forgets the choice: the key goes from the store, and the
+ * hour picks from here on, by its own rule, which changes the scene the next
+ * time the face is off the glass (gui_face_scene_hour()). The name is
+ * resolved against the
  * active pack, and one it does not have is refused. Before the pack has been
  * read - Gui_waiting, or the first second of the face - the name is kept and
  * stored, and resolved with the pack. The value is the scene chosen, the one
@@ -31724,7 +32716,8 @@ static void gui_rails_fill(Gui * const me)
  * @brief Ask AO_Radio to switch the header's 3.3 V the other way.
  *
  * One switch at a time: a press while one waits is refused with a thud. The
- * row says Switching until EXP_POWER_SIG ends it.
+ * row says Switching until EXP_POWER_SIG ends it. A switch AO_Radio had no
+ * room for is refused the same way, and the row stays as it was.
  *
  * @param me The AO.
  * @return true when the switch was asked.
@@ -31742,11 +32735,17 @@ static bool gui_rail_3v3_ask(Gui * const me)
     {
         bool const on = !me->rail_3v3;
 
-        me->rail_3v3_asked = true;
-        exp_power_request(on);
-        KLOG_N(TAG, "header 3.3 V: %s asked", gui_on_off(on));
-        gui_sheet_refill(me);
-        asked = true;
+        if ( exp_power_request(on) )
+        {
+            me->rail_3v3_asked = true;
+            KLOG_N(TAG, "header 3.3 V: %s asked", gui_on_off(on));
+            gui_sheet_refill(me);
+            asked = true;
+        }
+        else
+        {
+            gui_radio_refused("header 3.3 V");
+        }
     }
 #else
     (void)me;
@@ -32119,9 +33118,12 @@ static kode_status_t gui_deep_run(const kode_value_t *arg)
     return KODE_OK;
 }
 
-/* Every row answers in records (kode_functions.h): the console keeps the
+/* The pack's rows answer in records (kode_functions.h): the console keeps the
  * line open for as long as its row says the job may take. A commit checks
- * every file of the pack and moves it, and an update downloads it first. */
+ * every file of the pack and moves it, and an update downloads it first.
+ * The last three rows are done when their run returns, so they answer at
+ * once and send no function_end(). */
+#define GUI_ANSWER_AT_ONCE    0U      /**< Done when the run returns: `>ok` at once. */
 #define GUI_ANSWER_MS         5000U   /**< A row that only reads.               */
 #define GUI_ANSWER_CHECK_MS   60000U  /**< A row that reads every file.         */
 #define GUI_ANSWER_COMMIT_MS  120000U /**< A commit: check and move every file. */
@@ -32151,11 +33153,11 @@ static const kode_function_t s_functions[] = {
     { .name = "assets_try", .arg = KODE_TYPE_STRING, .run = gui_a_try_run,
       .desc = GUI_A_TRY_DESC, .answer_ms = GUI_ANSWER_CHECK_MS },
     { .name = "welcome_key", .arg = KODE_TYPE_STRING, .run = gui_welcome_run,
-      .desc = GUI_WELCOME_DESC, .answer_ms = GUI_ANSWER_MS },
+      .desc = GUI_WELCOME_DESC, .answer_ms = GUI_ANSWER_AT_ONCE },
     { .name = "keep_drop", .arg = KODE_TYPE_NONE, .run = gui_keep_drop_run,
-      .desc = "Forget the lists kept in PSRAM", .answer_ms = GUI_ANSWER_MS },
+      .desc = "Forget the lists kept in PSRAM", .answer_ms = GUI_ANSWER_AT_ONCE },
     { .name = "deep_warn", .arg = KODE_TYPE_NONE, .run = gui_deep_run,
-      .desc = "Show the count before the deep rest", .answer_ms = GUI_ANSWER_MS },
+      .desc = "Show the count before the deep rest", .answer_ms = GUI_ANSWER_AT_ONCE },
 };
 #endif
 
@@ -32364,24 +33366,68 @@ static void gui_lp_quiet(Gui * const me)
 }
 
 /**
- * @brief Take the glass to rest: the entry of Gui_asleep.
+ * @brief Answer a round's park with a black glass: no figures of the time.
  *
- * In this order: the tick stops and what the person was doing ends, the page
- * the rest holds reaches the glass - for ASLEEP the face with Kody on the
- * first frame of his scene (gui_lp_face_page()), for OFF the black page -
- * the figures of the clock are rendered once into PSRAM (for ASLEEP; the panel
- * of an OFF board is put to sleep and shows nothing), and they are handed to
- * AO_Display, which takes the link down on them. The figures are drawn last,
- * so nothing is drawn between them and the hand-over, and nothing after it:
- * the link going down frees both framebuffers. The round is answered last.
+ * AO_Display takes the link down on it. No strip is handed: the glass shows
+ * no time.
  *
- * @param me The AO, with lp_round and lp_target set.
+ * @param me The AO, parked.
  */
-static void gui_lp_park(Gui * const me)
+static void gui_lp_hand_dark(Gui * const me)
 {
     DisplayGlyphsEvt glyphs;
 
-    s_gui_state = "asleep";
+    (void)memset(&glyphs, 0, sizeof(glyphs));
+    me->lp_strip.buf = NULL;
+    glyphs.rest_pct  = gui_lp_rest_pct(me);
+    display_glyphs_hand(&glyphs);
+}
+
+/**
+ * @brief Tell AO_Display this AO has stopped drawing, for the park it asked.
+ *
+ * Answered again for a second ask while parked: each rest of the glass waits
+ * for its own number.
+ *
+ * @param me The AO, parked, with park_seq set.
+ */
+static void gui_park_answer(Gui const * const me)
+{
+    KLOG_N(TAG, "screen: parked for the glass's rest");
+    if ( KODE_OK != kode_sys_screen_parked(me->park_seq) )
+    {
+        /* AO_Display's wait runs out and refuses the rest; its repaint, if
+         * the glass stays lit, brings the face back. */
+        KLOG_E(TAG, "screen: could not tell the display it stopped drawing");
+    }
+}
+
+/**
+ * @brief Take the glass to rest: the entry of Gui_asleep.
+ *
+ * In this order: the tick stops and what the person was doing ends, the black
+ * page reaches the glass and its flush is waited for, and AO_Display is
+ * answered. Nothing is drawn after the answer: the link going down frees both
+ * framebuffers. The face at Rest parks with the clock on it instead
+ * (Gui_rest_asleep).
+ *
+ * A round is answered with a black glass, no figures of the time
+ * (gui_lp_hand_dark()), and then lowpower_ready(). The glass's own rest
+ * (DISPLAY_PARK_SIG, park_seq set) is answered with the park's number alone:
+ * no round is open.
+ *
+ * @param me The AO, with lp_round and lp_target set, or park_seq.
+ */
+static void gui_lp_park(Gui * const me)
+{
+    if ( 0U != me->park_seq )
+    {
+        s_gui_state = "parked";
+    }
+    else
+    {
+        s_gui_state = "asleep";
+    }
     me->lp_rest = false;
     gui_lp_quiet(me);
 
@@ -32391,7 +33437,7 @@ static void gui_lp_park(Gui * const me)
      * wake. */
     gui_deep_off(me);
     lv_screen_load(kgui_screen_dark);
-    if ( (uint8_t)KODE_LP_ASLEEP == me->lp_target )
+    if ( (0U == me->park_seq) && ((uint8_t)KODE_LP_ASLEEP == me->lp_target) )
     {
         me->kody_sight = GUI_KODY_ASLEEP;
     }
@@ -32399,12 +33445,18 @@ static void gui_lp_park(Gui * const me)
     lv_refr_now(me->disp);
     gui_flush_wait_cb(me->disp);
 
-    /* The deep rest is a black glass, with no time on it. */
-    (void)memset(&glyphs, 0, sizeof(glyphs));
-    me->lp_strip.buf = NULL;
-    glyphs.rest_pct  = gui_lp_rest_pct(me);
-    display_glyphs_hand(&glyphs);
-    lowpower_ready(me->lp_who, me->lp_round, false, NULL);
+    if ( 0U != me->park_seq )
+    {
+        /* The glass's own rest: no round to answer and no figures to hand,
+         * only the park's number. The glass comes back with
+         * DISPLAY_REPAINT_SIG, to the face (gui_lp_resume()). */
+        gui_park_answer(me);
+    }
+    else
+    {
+        gui_lp_hand_dark(me);
+        lowpower_ready(me->lp_who, me->lp_round, false, NULL);
+    }
 }
 
 /**
@@ -32450,6 +33502,36 @@ static void gui_lp_refused(Gui * const me, LowPowerRefusedEvt const * const r)
 }
 
 /**
+ * @brief Say on the glass that the card is full.
+ *
+ * AO_AppMgr skips the copy of an app that does not fit the card and says so
+ * once for each card mounted; the person is told, to free some space.
+ *
+ * @param me The AO, its face awake, Apps or Settings on the glass.
+ */
+static void gui_card_full_say(Gui * const me)
+{
+    me->card_full_due = false;
+    KLOG_N(TAG, "the card is full: an app's copy does not fit");
+    kgui_hint(GUI_HINT_CARD_FULL);
+}
+
+/**
+ * @brief Say the card's "full" that came while the glass was out of sight.
+ *
+ * Called on the way into the face awake, Apps and Settings.
+ *
+ * @param me The AO.
+ */
+static void gui_card_full_due_say(Gui * const me)
+{
+    if ( me->card_full_due )
+    {
+        gui_card_full_say(me);
+    }
+}
+
+/**
  * @brief The board is awake and the glass is back: draw again, on the face.
  *
  * The framebuffers are fetched again (the link may have come back elsewhere),
@@ -32467,7 +33549,7 @@ static QState gui_lp_resume(Gui * const me)
         gui_buffers_align(me->disp);
     }
     kgui_screen_face_strip_free(&me->lp_strip);
-    kgui_screen_face_bare(false);
+    kgui_screen_face_bare(false, false);
     me->lp_parked = false;
     me->lp_rest   = false;
     /* The BOT that woke the board is Rest's first press (Gui_face's init). */
@@ -32641,7 +33723,7 @@ static void gui_lp_woke(Gui * const me, LowPowerStateEvt const * const s)
  * AO_Display, which writes the hour into the panel's memory each minute. The
  * same wakes as ever bring it back - TOP for the knock, BOT for the hint, the
  * cable, BLE, the broker - into Rest as it was, at the Rest level, and the
- * 30 minutes of Rest are a wake time given to AO_LowPower
+ * time Rest lasts (`off_after`) is a wake time given to AO_LowPower
  * (lowpower_wake_at()), so the board is up for the count when they end.
  */
 
@@ -32726,15 +33808,19 @@ static void gui_rest_sleep_tick(Gui * const me)
 /**
  * @brief Rest's park: the entry of Gui_rest_asleep.
  *
- * What gui_lp_park() does, with the Rest face for its page. The content takes
- * the next place of the burn-in cycle, since nothing moves on the glass while
- * the board sleeps: each sleep stands somewhere else. The face is drawn bare
- * of its clock, its date and its battery - the hour is AO_Display's from here,
- * written over a rectangle that would cut the battery in two, and the date
- * would stay a day behind - and that frame is the last the link carries. The
+ * What gui_lp_park() does, with the Rest face for its page. The content stays
+ * where this Rest put it, so nothing jumps as the board goes to sleep; only
+ * from an odd place of the burn-in cycle does it take the next one, a pixel
+ * away, for the hour's even pixels (kgui_rest_even()). Nothing moves on the
+ * glass while the board sleeps, and each Rest stands somewhere else
+ * (kgui_rest_start()). The face is drawn bare
+ * of its date and its battery - the hour is AO_Display's from here, written
+ * over a rectangle that would cut the battery in two, and the date would stay
+ * a day behind - with its clock left where the panel writes it again, so the
+ * hour never goes out, and that frame is the last the link carries. The
  * figures are rendered after it (gui_lp_park() says why), placed where the
- * face's clock stands at that place of the cycle. The time left of the 30
- * minutes of Rest is given to AO_LowPower before the answer, which is what
+ * face's clock stands at that place of the cycle. The time left of
+ * Rest (gui_deep_after_ms()) is given to AO_LowPower before the answer, which is what
  * wakes the board for the count; the round forgets times given before it.
  *
  * @param me The AO, at Rest and settled, with lp_round and lp_target set.
@@ -32743,6 +33829,7 @@ static void gui_rest_park(Gui * const me)
 {
     DisplayGlyphsEvt   glyphs;
     kgui_rest_offset_t at;
+    uint32_t           after;
     uint32_t           left;
     uint16_t           x = 0U;
     uint16_t           y = 0U;
@@ -32750,11 +33837,12 @@ static void gui_rest_park(Gui * const me)
     s_gui_state = "rest asleep";
     me->lp_rest = true;
     gui_lp_quiet(me);
-    me->rest_parks += 1U;
-    me->rest_step   = me->rest_parks;
+    me->rest_step = kgui_rest_even(me->rest_step);
     at = kgui_rest_offset(me->rest_step);
     kgui_screen_face_shift(at.x, at.y);
-    kgui_screen_face_bare(true);
+    /* The clock stays in the last frame: the panel writes the same figures
+     * over it, so the hour never goes out on the way to sleep. */
+    kgui_screen_face_bare(true, true);
     (void)lv_obj_invalidate(kgui_screen_face);
     lv_refr_now(me->disp);
     gui_flush_wait_cb(me->disp);
@@ -32780,13 +33868,27 @@ static void gui_rest_park(Gui * const me)
     else
     {
         KLOG_N(TAG, "rest: asleep with no hour on the glass (round %u)", (unsigned)me->lp_round);
+        /* Nobody will write the hour: the glass does not keep a stale one. */
+        kgui_screen_face_bare(true, false);
+        (void)lv_obj_invalidate(kgui_screen_face);
+        lv_refr_now(me->disp);
+        gui_flush_wait_cb(me->disp);
     }
     glyphs.rest_pct = gui_lp_rest_pct(me);
-    left = kgui_rest_left_ms(khal_time_ms() - me->deep_ms, GUI_DEEP_AFTER_REST_MS);
-    (void)lowpower_wake_at(me->lp_who, khal_time_us()
-                           + (((uint64_t)left + (uint64_t)GUI_REST_WAKE_SLACK_MS) * 1000ULL));
-    KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, the count in %u s",
-           (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN), (unsigned)(left / 1000U));
+    after = gui_deep_after_ms(me);
+    left  = kgui_rest_left_ms(khal_time_ms() - me->deep_ms, after);
+    if ( 0U != after )
+    {
+        (void)lowpower_wake_at(me->lp_who, khal_time_us()
+                               + (((uint64_t)left + (uint64_t)GUI_REST_WAKE_SLACK_MS) * 1000ULL));
+        KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, the count in %u s",
+               (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN), (unsigned)(left / GUI_MS_PER_S));
+    }
+    else
+    {
+        KLOG_N(TAG, "rest: asleep on the face, place %u of the cycle, no count (off_after never)",
+               (unsigned)(me->rest_step % KGUI_REST_CYCLE_LEN));
+    }
     display_glyphs_hand(&glyphs);
     lowpower_ready(me->lp_who, me->lp_round, false, NULL);
 }
@@ -32798,9 +33900,9 @@ static void gui_rest_park(Gui * const me)
  * clock back in place of the panel's; the glass is at the Rest level already
  * (AO_Display restores the level it was last asked for). A wake by TOP is the
  * knock, as is a TOP pressed while the glass was parked; a wake by BOT says
- * how to wake. Anything else - the cable, BLE, the broker, the 30 minutes -
+ * how to wake. Anything else - the cable, BLE, the broker, Rest's time -
  * lands on Rest as it was, and the tick decides from there: the count once the
- * 30 minutes are gone, or another sleep once Kody has settled again. A round
+ * time is gone, or another sleep once Kody has settled again. A round
  * that was given up, with the board never asleep, holds the next sleep back
  * until Rest asks again, so a busy owner does not take the glass down and up
  * on every retry of AO_LowPower's; one a person ended with a button does not.
@@ -32819,7 +33921,7 @@ static QState gui_rest_unpark(Gui * const me)
         gui_buffers_align(me->disp);
     }
     kgui_screen_face_strip_free(&me->lp_strip);
-    kgui_screen_face_bare(false);
+    kgui_screen_face_bare(false, false);
     me->lp_parked   = false;
     me->lp_rest     = false;
     me->lp_woke_bot = false;
@@ -32884,6 +33986,7 @@ void Gui_ctor(void)
     QActive_ctor(&me->super, Q_STATE_CAST(&Gui_initial));
     QTimeEvt_ctorX(&me->tick, &me->super, (enum_t)GUI_TICK_SIG, 0U);
     QTimeEvt_ctorX(&me->keep_retry, &me->super, (enum_t)GUI_KEEP_RETRY_SIG, 0U);
+    QTimeEvt_ctorX(&me->os_again, &me->super, (enum_t)GUI_OS_AGAIN_SIG, 0U);
     me->sel_idx         = -1;
     me->sel_name[0]     = '\0';
     me->level           = (uint8_t)GUI_LEVEL_ROOT;
@@ -32914,9 +34017,11 @@ void Gui_ctor(void)
     me->apps_from           = 0U;
 #if CONFIG_KODEOS_WIFI
     me->scan_out        = false;
+    me->scan_own_join   = false;
     me->scan_answered   = false;
     me->scan_fresh      = true;
     me->saved_fresh     = true;
+    me->saved_owed      = false;
 #endif
     me->list_answered   = false;
     me->apps_answered   = false;
@@ -33037,9 +34142,16 @@ void Gui_ctor(void)
     me->kody_sight      = GUI_KODY_HIDDEN;
     me->face_stood      = KUI_PACK_NONE;
     me->face_woke       = false;
+    me->face_wake_up    = true;
+    me->face_fade_in    = false;
+    me->cover           = NULL;
+    me->cover_on        = false;
+    me->cover_ms        = 0U;
     /* The Lock is awake, nobody woke it, and no cable is asked to keep it so;
      * the glass is at the level the store holds, until Rest dims it. */
     me->at_rest         = false;
+    me->card_full_due   = false;
+    me->park_seq        = 0U;
     me->woken           = false;
     me->usb_awake       = false;
     me->rail_3v3        = false;
@@ -33183,6 +34295,9 @@ static QState Gui_initial(Gui * const me, void const * const par)
     QActive_subscribe(&me->super, DISPLAY_STATE_SIG);
     QActive_subscribe(&me->super, DISPLAY_REPAINT_SIG);
 #if CONFIG_KODE_LOWPOWER
+    /* The glass's own rest asks whoever draws to stop, as an app's sleep of
+     * the screen does: parked like a round, answered with the park's number. */
+    QActive_subscribe(&me->super, DISPLAY_PARK_SIG);
     me->lp_who = lowpower_join(&me->super, "gui");
     if ( KODE_LOWPOWER_WHO_NONE != me->lp_who )
     {
@@ -33227,6 +34342,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
     QActive_subscribe(&me->super, APP_FLASH_PROGRESS_SIG);
     QActive_subscribe(&me->super, APP_FLASH_DONE_SIG);
     QActive_subscribe(&me->super, APP_FLASH_FAIL_SIG);
+    QActive_subscribe(&me->super, APP_CARD_FULL_SIG);
     QActive_subscribe(&me->super, APP_ERASE_DONE_SIG);
 #if CONFIG_KODE_TEST_DOT
     /* AO_TestDot's screens and patterns: the E5 test takes the glass. */
@@ -33266,6 +34382,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
      * have to tell one round from another with no way to. */
     QActive_subscribe(&me->super, WIFI_SCAN_ENTRY_SIG);
     QActive_subscribe(&me->super, WIFI_SCAN_END_SIG);
+    QActive_subscribe(&me->super, WIFI_SCAN_AGAIN_SIG);
     QActive_subscribe(&me->super, WIFI_SAVED_ENTRY_SIG);
     QActive_subscribe(&me->super, WIFI_SAVED_END_SIG);
 #if CONFIG_KODEOS_CHANNEL
@@ -33290,7 +34407,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
         me->zone_migrate = (khal_nvs_get_str(GUI_NVS_NAMESPACE, GUI_NVS_KEY_ZONE,
                                              old, sizeof(old)) == KODE_OK)
                            || (khal_nvs_get_u8(GUI_NVS_NAMESPACE, "tzi", &tzi) == KODE_OK);
-        gui_zone_ask(me, NULL);
+        (void)gui_zone_ask(me, NULL);
     }
     /* The scene chosen for the face, read beside it for the second of those
      * reasons: a scene the console sets while AO_Gui waits replaces it too. NVS
@@ -33326,31 +34443,35 @@ static QState Gui_initial(Gui * const me, void const * const par)
      * Ask for the announcement again rather than waiting for one that already
      * happened - the whole reason this component can start whenever it likes. */
     display_state_request();
-    /* Kody's pack is read while the panel comes up: its 230 ms
-     * no longer come after the panel's. His wake-up waits for it,
+    /* Kody's pack is read while the panel comes up, from the internal FAT
+     * without waiting for the card; a pack on the card is read once the
+     * card mounts, and wins (kgui_assets_start()). His wake-up waits for it,
      * CONFIG_KGUI_ASSETS_WAIT_MS at most, counted from here
-     * (gui_face_kody_tick()). */
+     * (gui_face_kody_tick()), so he wakes in the pack's scene and not
+     * for a moment in the built-in one. */
     me->assets_t0_ms = khal_time_ms();
+    /* Asked before anything on the card: the internal FAT mounts at its first
+     * use, and a card's mount started first holds it back, a second or more. */
+    kgui_assets_start();
     /* The lists: the block if the last firmware left it whole, else the card's
-     * copy, which goes before the pack: both want AO_Storage's one reader, and the
-     * pack's files keep it busy for a second. The pack starts when the copy has
-     * been read, or when the panel is up if that is sooner (a card that will not
-     * answer). Before AO_Radio starts, so the link leaves the card and the first
-     * read alone. */
+     * copy. The card is mounted on AO_Storage's worker first, and the read
+     * waits there for it: a read that found the card unmounted would mount it
+     * inside AO_Storage, and the pack's reads of the internal FAT would wait
+     * behind that second. Before AO_Radio starts, so the link leaves the card
+     * and the first read alone. */
     if ( khal_keep() != NULL )
     {
         me->keep_ok = gui_keep_whole(gui_keep_hdr());
     }
     if ( (khal_keep() != NULL) && !me->keep_ok )
     {
-        me->keep_pack_owed = true;
+        storage_request(KDRV_MEDIUM_SD, STORAGE_OP_MOUNT);
         gui_keep_read_next(me);
     }
-    else
-    {
-        kgui_assets_start();
-    }
+#if CONFIG_KODEOS_RADIO
     radio_boot_hold();
+#endif
+#if CONFIG_KODEOS_BLE
     /* The name chosen for Bluetooth: the radio keeps it for its adverts. It
      * is sent once every owner has its queue (GUI_TICK_SIG): this AO starts
      * in kode_init()'s early row, before AO_Radio, and a post to an AO with
@@ -33365,6 +34486,7 @@ static QState Gui_initial(Gui * const me, void const * const par)
     {
         me->ble_name[0] = '\0';
     }
+#endif
     return Q_TRAN(&Gui_waiting);
 }
 
@@ -33415,12 +34537,11 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                 /* The kept copy first, so that the first frame has it and the
                  * listings find its rows standing. */
                 gui_keep_seed(me);
-                if ( (uint8_t)GUI_KEEP_READ_NONE == me->keep_read )
-                {
-                    gui_keep_pack_go(me);
-                }
                 gui_request_list(me);
                 gui_request_installed(me);
+                /* How long Rest lasts before the count is AO_LowPower's
+                 * `off_after`: heard now, and again whenever it moves. */
+                gui_off_after_ask();
                 /* Kody's pack, read since Gui_initial, may have ended already:
                  * what it asks of the face is done now the face exists. */
                 if ( me->assets_owed )
@@ -33433,10 +34554,14 @@ static QState Gui_waiting(Gui * const me, QEvt const * const e)
                  * the lists arrive while it is up. Back from an app the first
                  * frame is Apps instead, and waits for the installed list
                  * (Gui_returning). */
-                /* Nothing is lit until it is whole: the face with
-                 * its scene and Kody standing in it, Apps with its rows. */
+                /* The face goes at once and Kody comes into it; Apps waits
+                 * for its rows (gui_first_hold_tick()). */
                 me->first_hold    = true;
                 me->first_hold_ms = khal_time_ms();
+                /* A cold boot greets with his wake-up; back from an app he
+                 * is found awake. Either way the glass comes up from black. */
+                me->face_wake_up  = (boot_reason() != KBOOT_FROM_APP);
+                gui_cover_put(me);
                 if ( gui_return_begin(me) )
                 {
                     status = Q_TRAN(&Gui_returning);
@@ -33547,7 +34672,9 @@ static void gui_settings_ask(void)
     gui_vol_ask();
     gui_off_after_ask();
 #if CONFIG_KODEOS_WIFI
-    wifi_state_request();
+    /* Refused, it is asked again as Settings comes up and by its tick's signal
+     * request, which WIFI_STATE_SIG answers too. */
+    (void)wifi_state_request();
 #if CONFIG_KODEOS_CHANNEL
     (void)channel_state_request();
 #endif
@@ -33631,11 +34758,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 me->settings_owed = false;
                 gui_settings_ask();
             }
+#if CONFIG_KODEOS_BLE
             if ( me->ble_name_owed && kode_up() )
             {
                 me->ble_name_owed = false;
                 gui_ble_name_send(me);
             }
+#endif
             /* The long step of the whole system, which is why AO_Gui sits
              * near the bottom of the priority list, with only AO_Net below
              * it: a repaint spends most of its time blocked inside LVGL
@@ -33728,6 +34857,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             gui_remove_tick(me);
             gui_launch_tick(me);
             gui_syscard_tick(me);
+            gui_update_tick(me);
             gui_off_arc_tick(me);
             gui_evict_tick(me);
             gui_list_tick(me);
@@ -33746,11 +34876,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
 
                 next = lv_timer_handler();
                 gui_pass_measure(me, t0, (me->flushes != flushes));
+                gui_cover_tick(me, true);
             }
             else
             {
-                /* The first frame after an app waits for the installed list
-                 * (Gui_returning): the glass stays black until it may go. */
+                /* The first frame waits (gui_first_hold_tick(), Gui_returning):
+                 * the glass stays black until it may go. */
+                gui_cover_tick(me, false);
             }
             /* Reduced motion's frame of fade, once a pass has drawn it. */
             gui_fade_tick(me);
@@ -34077,7 +35209,9 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
              * takes the Opening card over when one is up and raises the
              * failure by itself when none is. The event carries a reason:
              * it says which sentence the card wears, the write's own or the
-             * card that could not keep an app. */
+             * app still being copied to the card. A fetch of an app's data
+             * folder that made none wrote no app, and its card goes without
+             * a failure (gui_data_lost()). */
             me->fail_why = Q_EVT_CAST(AppFlashFailEvt)->why;
             if ( me->write_cancel )
             {
@@ -34085,10 +35219,22 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 gui_request_list(me);
                 gui_request_installed(me);
             }
+            else if ( (uint8_t)KFAIL_DATA == me->fail_why )
+            {
+                gui_data_lost(me);
+            }
             else
             {
                 gui_show_fail(me);
             }
+            status = Q_HANDLED();
+            break;
+        }
+        case APP_CARD_FULL_SIG: {
+            /* The glass is out of sight - parked, at Rest, or a screen that
+             * is not the face, Apps or Settings, which say it themselves:
+             * it is said on the way into the next of them. */
+            me->card_full_due = true;
             status = Q_HANDLED();
             break;
         }
@@ -34409,6 +35555,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                  * here, not from an input that was long ago. */
                 gui_idle_rearm(me);
             }
+            if ( me->at_rest && was_vbus && (!p->vbus) )
+            {
+                /* On a cable Rest counts nothing down, and the time spent on
+                 * one is not time with nobody there: the wait for the count
+                 * to OFF starts as the cable leaves. */
+                me->deep_ms = khal_time_ms();
+            }
             me->chg_state = (uint8_t)chg_state;
             {
                 char       t[32];
@@ -34518,6 +35671,14 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             else if ( (GUI_SHEET_BATTERY == me->sheet) && (was_soc != me->soc) )
             {
                 /* The critical card says the charge. */
+                gui_sheet_refill(me);
+            }
+            else if ( (GUI_SHEET_UPDATE == me->sheet)
+                     && (kgui_osrel_power_ok(was_soc, was_vbus)
+                         != kgui_osrel_power_ok(me->soc, me->vbus)) )
+            {
+                /* The card at boot: Update turns yellow or grey with the
+                 * charge and the cable, and its line follows. */
                 gui_sheet_refill(me);
             }
             else
@@ -34714,6 +35875,11 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             status = Q_HANDLED();
             break;
         }
+        case GUI_OS_AGAIN_SIG: {
+            gui_update_again(me);
+            status = Q_HANDLED();
+            break;
+        }
 #if CONFIG_KODEOS_WIFI
         case WIFI_STATE_SIG: {
             WifiStateEvt const * const w = Q_EVT_CAST(WifiStateEvt);
@@ -34755,9 +35921,11 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                  * waiting for would stop it ever asking another. And what
                  * it knew about the air is no longer known. */
                 me->scan_out      = false;
+                me->scan_own_join = false;
                 me->scan_answered = false;
             }
-            bool const joined = got_ip && (!me->wifi_linked);
+            bool const was_linked = me->wifi_linked;
+            bool const joined     = got_ip && (!was_linked);
 
             me->wifi_linked = ((uint8_t)KDRV_WIFI_GOT_IP == w->state);
             me->wifi_rssi   = w->rssi;
@@ -34788,6 +35956,18 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             }
             /* And the keypad, whose join this may be the answer to. */
             gui_kbd_wifi_state(me, w);
+            /* The boot's question, on the first address since the boot,
+             * whatever is on the glass (gui_update_boot_ask()). */
+            if ( joined )
+            {
+                gui_update_boot_ask(me);
+            }
+            /* The card at boot: Update turns grey or yellow with the link,
+             * and its line follows. */
+            if ( (GUI_SHEET_UPDATE == me->sheet) && (was_linked != me->wifi_linked) )
+            {
+                gui_sheet_refill(me);
+            }
             /* About's update row reads the link, and an address that
              * arrives under that page is the one its question waited for. */
             if ( (GUI_SHEET_ABOUT == me->sheet) && (!same) )
@@ -34973,13 +36153,20 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                    x->ok ? "ok" : "refused or cut", (unsigned)x->count,
                    (unsigned)me->scan_n, (unsigned)was_n);
             /* The question is answered, so the wait for the next one starts
-             * HERE. A refusal taught nothing and asks again sooner. */
-            me->scan_out = false;
+             * HERE. A refusal taught nothing and asks again sooner; a sweep
+             * somebody else's newer Wi-Fi request ended does not: whoever
+             * ended it has the radio, and asking at once would end theirs in
+             * turn. One the page's own join ended is asked again soon: the
+             * list is wanted back, and a sweep waits for a join. */
+            bool const own_join = me->scan_own_join;
+
+            me->scan_out      = false;
+            me->scan_own_join = false;
             if ( GUI_SHEET_WIFI == me->sheet )
             {
                 me->sheet_ask    = false;
                 me->sheet_ask_ms = now;
-                if ( !x->ok )
+                if ( KGUI_SCAN_NEXT_SOON == kgui_wifi_scan_next(x->ok, x->cut, own_join) )
                 {
                     me->sheet_ask_ms = now - (GUI_WIFI_SCAN_MS - GUI_WIFI_SCAN_RETRY_MS);
                     /* A busy radio is in the middle of a job that its next
@@ -34995,6 +36182,22 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             {
                 gui_sheet_refill(me);
             }
+            status = Q_HANDLED();
+            break;
+        }
+        case WIFI_SCAN_AGAIN_SIG: {
+            /* A newer `wifi_scan` ended the sweep in flight and the listing
+             * starts again: the list is emptied, because what it holds was
+             * heard by a sweep that did not reach its end, and the new one
+             * fills it from the first channel. A listing is out from here to
+             * its end, whoever asked for it: the page says it is looking,
+             * asks for no sweep of its own meanwhile, and gives up the wait
+             * as it does for its own question. */
+            me->scan_n      = 0U;
+            me->scan_fresh  = true;
+            me->scan_dirty  = true;
+            me->scan_out    = true;
+            me->scan_out_ms = khal_time_ms();
             status = Q_HANDLED();
             break;
         }
@@ -35454,27 +36657,29 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             break;
         }
         case APPDATA_ICON_SIG: {
-            /* One third of the picture, straight into the entry's PSRAM
+            /* One piece of the picture, straight into the entry's PSRAM
              * slot at its own offset. Nothing is drawn from it yet: the
              * slot is a half-built image until the end marker says the
-             * three thirds all landed, and face.icon_ok is what a repaint
+             * pieces all landed, and face.icon_ok is what a repaint
              * asks. */
             AppDataIconEvt const * const ic = Q_EVT_CAST(AppDataIconEvt);
             uint8_t const slot = gui_slot_by_project(me, ic->project);
             GuiFace * const face = gui_face_by_project(me, ic->project);
             if ( ((uint8_t)GUI_ROWS_MAX > slot) && (NULL != face)
-                && (NULL != me->icon_slot[slot]) && (3U > ic->seq) )
+                && (NULL != gui_icon_slot_take(me, slot))
+                && ((uint8_t)KODE_APP_ICON_PIECES > ic->seq) )
             {
                 (void)memcpy(&me->icon_slot[slot][(size_t)ic->seq
-                                                  * KODE_RECV_CHUNK],
-                             ic->data, KODE_RECV_CHUNK);
+                                                  * KODE_APP_ICON_PIECE],
+                             ic->data, KODE_APP_ICON_PIECE);
                 face->icon_parts |= (uint8_t)(1U << ic->seq);
             }
             if ( kgui_wface_is(&me->wface, ic->project)
-                && (NULL != me->write_icon) && (3U > ic->seq) )
+                && (NULL != me->write_icon)
+                && ((uint8_t)KODE_APP_ICON_PIECES > ic->seq) )
             {
-                (void)memcpy(&me->write_icon[(size_t)ic->seq * KODE_RECV_CHUNK],
-                             ic->data, KODE_RECV_CHUNK);
+                (void)memcpy(&me->write_icon[(size_t)ic->seq * KODE_APP_ICON_PIECE],
+                             ic->data, KODE_APP_ICON_PIECE);
                 me->write_face.icon_parts |= (uint8_t)(1U << ic->seq);
             }
             status = Q_HANDLED();
@@ -35509,7 +36714,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             else
             {
                 face->icon_ok = ((uint8_t)APPDATA_ICON_OK == face->icon_status)
-                                && (0x07U == face->icon_parts);
+                                && (GUI_ICON_PARTS_ALL == face->icon_parts);
                 face->settled = true;
                 me->keep_dirty   = true;
                 me->keep_save_ms = khal_time_ms();
@@ -35576,6 +36781,22 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             break;
         }
 #if CONFIG_KODE_LOWPOWER
+        case DISPLAY_PARK_SIG: {
+            /* The glass's own rest (`rest parts=1`, an app's sleep of the
+             * screen): parked as for a round. A write or the factory reset
+             * keeps the glass lit, and AO_Display's wait refuses the rest. */
+            if ( me->rs_busy || me->writing || me->sheet_locked )
+            {
+                KLOG_N(TAG, "screen: a write or the factory reset holds the glass; not parked");
+                status = Q_HANDLED();
+            }
+            else
+            {
+                me->park_seq = Q_EVT_CAST(DisplayParkEvt)->seq;
+                status = Q_TRAN(&Gui_asleep);
+            }
+            break;
+        }
         case LOWPOWER_ROUND_SIG: {
             LowPowerRoundEvt const * const r = Q_EVT_CAST(LowPowerRoundEvt);
 
@@ -35646,12 +36867,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
 }
 
 /**
- * @brief The first frame's wait: it goes when what it shows is whole.
+ * @brief The first frame's wait: it goes when what it shows may be seen.
  *
- * The face when Kody stands in his scene (the play draws its first frame when
- * it starts, gui_face_kody_wake()); Apps when its list has appeared; anything
- * else that takes the glass at once. A ceiling, so a pack or a card that never
- * answers cannot leave the glass black.
+ * The face at once: the glass comes up from black (gui_cover_tick()) with the
+ * time and the date, and Kody, if he does not stand in his scene yet, fades in
+ * when he wakes in it (gui_face_kody_fade_in()), never in the built-in one
+ * first. Apps when its list has appeared; anything else that takes the glass
+ * at once. A ceiling, so a list that never comes cannot leave the glass black.
  *
  * @param me The AO.
  */
@@ -35667,7 +36889,15 @@ static void gui_first_hold_tick(Gui * const me)
         {
             /* Awake with his files still being read is not standing: nothing
              * of him is in the box until KGUI_ASSETS_EV_SCENE plays him. */
-            go = go || ((GUI_KODY_AWAKE == me->kody_sight) && (!me->face_rouse_owed));
+            bool const standing = (GUI_KODY_AWAKE == me->kody_sight)
+                                  && (!me->face_rouse_owed);
+
+            if ( (!standing) && (NULL != me->face_kody) )
+            {
+                lv_obj_set_style_opa(me->face_kody, LV_OPA_TRANSP, LV_PART_MAIN);
+                me->face_fade_in = true;
+            }
+            go = true;
         }
         else if ( on == kgui_screen_launcher )
         {
@@ -35685,6 +36915,78 @@ static void gui_first_hold_tick(Gui * const me)
         {
             me->first_hold = false;
             KLOG_D(TAG, "first frame lets go %u ms after boot", (unsigned)khal_time_ms());
+        }
+    }
+}
+
+/**
+ * @brief At boot: cover the glass in black, for the first frame to come up
+ *        from.
+ *
+ * The glass is black while the board boots, and after an app the launch went
+ * down to that black. Lit at a stroke, the first frame is a flash; it comes up
+ * from the black instead, and the fade starts with the first frame that may be
+ * shown, while Kody is still being put in his scene. The cover stands on
+ * LVGL's system layer, over every screen and every card, and is in none of
+ * their pictures.
+ *
+ * @param me The AO; the display is up.
+ */
+static void gui_cover_put(Gui * const me)
+{
+    lv_obj_t * const cover = lv_obj_create(lv_layer_sys());
+
+    if ( NULL != cover )
+    {
+        lv_obj_remove_style_all(cover);
+        lv_obj_set_clickable(cover, false);
+        lv_obj_set_pos(cover, 0, 0);
+        lv_obj_set_size(cover, (int32_t)KBSP_LCD_H_RES, (int32_t)KBSP_LCD_V_RES);
+        lv_obj_set_style_bg_color(cover, KUI_COLOR_BG, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, LV_PART_MAIN);
+    }
+    me->cover    = cover;
+    me->cover_on = false;
+}
+
+/**
+ * @brief The cover's share of the tick: it fades from the first pass that
+ *        drew, and goes.
+ *
+ * Counted from the first drawn pass and not from the boot, so the wait for
+ * the installed list (Gui_returning) takes nothing off the fade.
+ *
+ * @param me   The AO.
+ * @param drew Whether this tick's pass ran.
+ */
+static void gui_cover_tick(Gui * const me, bool drew)
+{
+    if ( NULL != me->cover )
+    {
+        uint32_t const now = khal_time_ms();
+
+        if ( !me->cover_on )
+        {
+            if ( drew )
+            {
+                me->cover_on = true;
+                me->cover_ms = now;
+            }
+        }
+        else if ( (now - me->cover_ms) >= GUI_COVER_FADE_MS )
+        {
+            lv_obj_delete(me->cover);
+            me->cover = NULL;
+            KLOG_D(TAG, "the glass is up from black, %u ms after its first pass",
+                   (unsigned)(now - me->cover_ms));
+        }
+        else
+        {
+            uint32_t const left = GUI_COVER_FADE_MS - (now - me->cover_ms);
+
+            lv_obj_set_style_bg_opa(me->cover,
+                                    (lv_opa_t)((left * (uint32_t)LV_OPA_COVER) / GUI_COVER_FADE_MS),
+                                    LV_PART_MAIN);
         }
     }
 }
@@ -35795,9 +37097,11 @@ static QState Gui_returning(Gui * const me, QEvt const * const e)
  * list was off the glass, and a second round at once would only put two
  * manifest questions in flight.
  *
- * KODY LIVES HERE, in face_scene: he wakes the first time the face is seen,
- * and again in every scene chosen or brought by the hour; his scene then
- * loops for as long as the face is seen, and he looks at you when asked. He
+ * KODY LIVES HERE, in face_scene: he wakes up at a cold boot and out of Rest,
+ * and nowhere else - back from an app, or in a scene chosen or brought by the
+ * hour, he is found awake in his loop (face_wake_up). The hour's scene is
+ * changed only while the face is off the glass (gui_face_scene_hour()). His
+ * scene loops for as long as the face is seen, and he looks at you when asked. He
  * is drawn only while he can be seen: the exit and a card over the face
  * pause him, and the face landing again - or the card going - lets him go
  * on, in the scene chosen, or with none chosen in the scene the hour asks
@@ -35937,6 +37241,7 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
     {
         case Q_ENTRY_SIG: {
             s_gui_state = "face";
+            gui_card_full_due_say(me);
             /* The time without input counts from here: from the boot, from
              * the door that led to the face, from Rest and from a card that
              * has gone. */
@@ -35954,10 +37259,8 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
         }
         case GUI_TICK_SIG: {
             /* Side effects, then the parent's tick as ever: the time first,
-             * then Kody, whose scene - with none chosen - follows the hour
-             * the paint has just read, then the count to Rest. The held
-             * bottom button is the arc's (gui_off_arc_tick(), in the
-             * parent's tick). */
+             * then Kody, then the count to Rest. The held bottom button is
+             * the arc's (gui_off_arc_tick(), in the parent's tick). */
             gui_face_time_paint(me);
             if ( (0U != me->date_until_ms)
                 && ((int32_t)(khal_time_ms() - me->date_until_ms) >= 0) )
@@ -36124,6 +37427,11 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
             }
             break;
         }
+        case APP_CARD_FULL_SIG: {
+            gui_card_full_say(me);
+            status = Q_HANDLED();
+            break;
+        }
         default: {
             status = Q_SUPER(&Gui_face);
             break;
@@ -36158,7 +37466,7 @@ static QState gui_awake_events(Gui * const me, QEvt const * const e)
  * On the battery, once Kody has settled, Rest asks for ASLEEP and sleeps in
  * its child Gui_rest_asleep, the face on the glass and the hour in the panel's
  * memory; the wakes come back here as they were (gui_rest_unpark()), and the
- * 30 minutes before the count are a wake time of AO_LowPower's.
+ * time before the count is a wake time of AO_LowPower's.
  *
  * @param me The AO.
  * @param e  The event.
@@ -36473,7 +37781,10 @@ static QState Gui_rest_asleep(Gui * const me, QEvt const * const e)
  * Entered on a round (Gui_running), from wherever the board was: the exits of
  * the states it leaves end what they had under way. The entry draws the page,
  * hands AO_Display the figures of the time and answers the round
- * (gui_lp_park()). Left on the wake, for the face (gui_lp_resume()), when
+ * (gui_lp_park()). Entered too on DISPLAY_PARK_SIG, the glass's own rest,
+ * answered with the park's number and no figures. A guided test and the E5
+ * station's screens find the glass at rest and are not shown: their rows run
+ * out of time. Left only on the wake, for the face (gui_lp_resume()), when
  * AO_Display says the glass is back (DISPLAY_REPAINT_SIG). A button,
  * a touch or a home changes nothing here; the time is AO_Display's, written
  * into the panel's memory once a minute.
@@ -36493,19 +37804,53 @@ static QState Gui_asleep(Gui * const me, QEvt const * const e)
             status = Q_HANDLED();
             break;
         }
+        case Q_EXIT_SIG: {
+            /* The park's number belongs to this rest alone. */
+            me->park_seq = 0U;
+            status = Q_HANDLED();
+            break;
+        }
         case LOWPOWER_ROUND_SIG: {
-            /* A round for OFF from the rest: the glass is parked already
-             * (AO_Display takes the panel to sleep itself). */
+            /* A round from a rest: the glass is parked already (AO_Display
+             * takes the panel to sleep itself). Parked for the glass's own
+             * rest, the round may still find AO_Display waiting for a hand-over
+             * (the park's answer not read yet): it gets the black one, which
+             * AO_Display drops when it waits for none. */
             LowPowerRoundEvt const * const r = Q_EVT_CAST(LowPowerRoundEvt);
 
             me->lp_round  = r->round;
             me->lp_target = r->target;
+            if ( 0U != me->park_seq )
+            {
+                gui_lp_hand_dark(me);
+            }
             lowpower_ready(me->lp_who, r->round, false, NULL);
             status = Q_HANDLED();
             break;
         }
         case GUI_TICK_SIG: {
             /* A tick that was queued when the rest began: not re-armed. */
+            status = Q_HANDLED();
+            break;
+        }
+        case DISPLAY_PARK_SIG: {
+            /* Parked already: the new ask is answered with its own number. */
+            me->park_seq = Q_EVT_CAST(DisplayParkEvt)->seq;
+            gui_park_answer(me);
+            status = Q_HANDLED();
+            break;
+        }
+#if CONFIG_KODE_TEST_DOT
+        case TEST_DOT_SCREEN_REQ_SIG:
+#endif
+        case BTN_TEST_SIG:
+        case LED_TEST_SIG:
+        case DISPLAY_TEST_SIG:
+        case TOUCH_TEST_SIG: {
+            /* A test's screen on a glass at rest would be drawn into
+             * framebuffers that are gone: it is not shown, and its row runs
+             * out of time. */
+            KLOG_N(TAG, "the glass is at rest: a test's screen is not shown");
             status = Q_HANDLED();
             break;
         }
@@ -36580,6 +37925,7 @@ static QState gui_browsing_events(Gui * const me, QEvt const * const e)
         case Q_ENTRY_SIG: {
             me->screen = Q_STATE_CAST(&Gui_browsing);
             s_gui_state = "browsing";
+            gui_card_full_due_say(me);
             /* The state you are in IS the screen you see, and this is the
              * state that owns the launcher: loading it on the entry covers
              * every way in with one mechanism, and costs nothing on a path
@@ -36738,6 +38084,11 @@ static QState gui_browsing_events(Gui * const me, QEvt const * const e)
             status = Q_SUPER(&Gui_running);
             break;
         }
+        case APP_CARD_FULL_SIG: {
+            gui_card_full_say(me);
+            status = Q_HANDLED();
+            break;
+        }
         default: {
             status = Q_SUPER(&Gui_running);
             break;
@@ -36804,6 +38155,7 @@ static QState gui_settings_events(Gui * const me, QEvt const * const e)
         case Q_ENTRY_SIG: {
             me->screen = Q_STATE_CAST(&Gui_settings);
             s_gui_state = "settings";
+            gui_card_full_due_say(me);
             me->set_tick_ms = khal_time_ms();
             /* The drop from above that the opening swipe promises is the
              * curtain's, a picture of this screen that has already come
@@ -37009,7 +38361,8 @@ static QState gui_settings_events(Gui * const me, QEvt const * const e)
                  * meanwhile would take it for its answer. */
                 if ( GUI_SHEET_KEYPAD != me->sheet )
                 {
-                    wifi_rssi_request();
+                    /* Refused, this tick asks again GUI_SET_RSSI_MS later. */
+                    (void)wifi_rssi_request();
                 }
 #endif
             }
@@ -37022,6 +38375,11 @@ static QState gui_settings_events(Gui * const me, QEvt const * const e)
             /* And the auto-lock's count, which a sheet up holds. */
             gui_idle_check(me);
             status = Q_SUPER(&Gui_running);
+            break;
+        }
+        case APP_CARD_FULL_SIG: {
+            gui_card_full_say(me);
+            status = Q_HANDLED();
             break;
         }
         default: {
@@ -37206,8 +38564,7 @@ static QState gui_sheet_leave(Gui * const me, QStateHandler home)
          * bottom button, a drag down on its header and a pick all
          * close this way, and the card turns back into the page
          * where it stands, ringed on the row that opened the list -
-         * About's Time zone, Screen's Auto-lock - built from the
-         * choice that is on. */
+         * Screen's Auto-lock - built from the choice that is on. */
         uint16_t door = list->door;
         uint8_t  row;
 
@@ -37323,7 +38680,8 @@ static void gui_sheet_ask_first(Gui * const me)
         gui_os_ask(me, "About");
         storage_request(KDRV_MEDIUM_SD, STORAGE_OP_INFO);
 #if CONFIG_KODEOS_RADIO
-        radio_state_request();
+        /* Refused, About's next look asks again (gui_sheet_tick()). */
+        me->c5_state_owed = !radio_state_request();
 #endif
     }
 }
@@ -37478,6 +38836,13 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
             {
                 KLOG_D(TAG, "sheet closed: %s",
                        gui_sheet_kind_name(me->sheet));
+            }
+            if ( GUI_SHEET_UPDATE == me->sheet )
+            {
+                /* Left without Update (which takes the card over in place,
+                 * and passes no exit): BOT, HOME, or a door that took the
+                 * glass. The offer is spent for this boot. */
+                KLOG_N(TAG, "update: the card closed; offered again at the next boot");
             }
             if ( over_face )
             {
@@ -37711,8 +39076,22 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
              * here - a sheet answers its own release in gui_sheet_navigate()
              * - so the doors are simply the host's again once the card has
              * gone. Rest is one: the Lock does not go dim under a
-             * card. */
-            status = Q_HANDLED();
+             * card.
+             * The card at boot is the one exception: it rises with nobody
+             * asking, often with nobody there, so the auto-lock and Rest
+             * count under it (gui_idle_check(), gui_rest_check()) and their
+             * door takes it down with the glass, as a guided test does. */
+            bool const lock = ((QSignal)GUI_FACE_SIG == e->sig) && (!over_face);
+            bool const rest = ((QSignal)GUI_REST_SIG == e->sig) && over_face;
+
+            if ( (GUI_SHEET_UPDATE == me->sheet) && (lock || rest) )
+            {
+                status = gui_sheet_hand_up(me, e, home);
+            }
+            else
+            {
+                status = Q_HANDLED();
+            }
             break;
         }
         case BUTTON_EVT_SIG: {
@@ -38061,9 +39440,9 @@ static void gui_td_frame(Gui * const me, kgui_td_req_t const * const r)
  * too: AO_Buttons and AO_Touch judge the presses it asks for, and the screens
  * it publishes show them, so this state takes no input of its own and no
  * guided test takes the glass from it. Nothing counts towards the
- * auto-lock or Rest here, Kody does not play, and a round of AO_LowPower is
- * refused: a FAIL stays on the glass until the station or the operator ends
- * the test.
+ * auto-lock or Rest here, Kody does not play, and a round of AO_LowPower and
+ * the glass's own rest are refused: a FAIL stays on the glass until the
+ * station or the operator ends the test.
  *
  * @param me The AO.
  * @param e  The event.
@@ -38111,6 +39490,13 @@ static QState Gui_test_dot(Gui * const me, QEvt const * const e)
             me->lp_round  = r->round;
             me->lp_target = r->target;
             lowpower_ready(me->lp_who, r->round, true, GUI_LP_WHY_TEST_DOT);
+            status = Q_HANDLED();
+            break;
+        }
+        case DISPLAY_PARK_SIG: {
+            /* Nor is the glass parked for its own rest: AO_Display's wait
+             * runs out and the rest is refused. */
+            KLOG_N(TAG, "screen: the E5 test holds the glass; not parked");
             status = Q_HANDLED();
             break;
         }
@@ -38233,8 +39619,8 @@ static const char *gui_test_state_word(uint8_t state)
 /**
  * @brief Whether a row of the report is something to tell the owner about.
  *
- * Only a row that failed: one nobody answered was not judged, and the page
- * shows it in grey with the skipped ones rather than counting it.
+ * Only a row that failed is put first: one nobody judged shows in grey with
+ * the rest, and the verdict counts it as not checked.
  *
  * @param state AUTOTEST_ROW_*.
  * @return true for a row that failed.
@@ -38301,62 +39687,28 @@ static void gui_test_fill(Gui * const me)
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     };
-    GuiSetLook const look = gui_more_look((uint8_t)GUI_MORE_TEST);
-    char sub[40];
+    GuiSetLook const            look  = gui_more_look((uint8_t)GUI_MORE_TEST);
+    kgui_selftest_tally_t const tally = gui_test_tally(me);
+    char                        how[KGUI_SELFTEST_VERDICT_MAX];
+    char                        sub[40];
 
-    if ( 0U == me->test_rep_n )
+    /* All good only when every row passed; else what failed, or else how
+     * many rows nobody judged (kgui_selftest.h). */
+    kgui_selftest_verdict(&tally, how, sizeof(how));
+    (void)snprintf(sub, sizeof(sub), "%s", how);
+    if ( (0U < tally.rows) && (0U != me->test_rep_when) )
     {
-        (void)snprintf(sub, sizeof(sub), "%s", GUI_TEST_NEVER);
-    }
-    else
-    {
-        const char *how = "All good";
-        char        count[20];
-        uint8_t     failed = 0U;
+        /* The run is stamped in UTC and read in the zone the owner sees
+         * everywhere else. */
+        struct tm at = { 0 };
 
-        for ( uint8_t i = 0U; i < me->test_rep_n; ++i )
+        if ( gui_local_tm_of((uint64_t)me->test_rep_when, &at) )
         {
-            if ( gui_test_is_problem(me->test_rep_state[i]) )
-            {
-                failed += 1U;
-            }
-        }
-        if ( 1U == failed )
-        {
-            how = "1 problem";
-        }
-        else if ( 1U < failed )
-        {
-            (void)snprintf(count, sizeof(count), "%u problems",
-                           (unsigned)failed);
-            how = count;
-        }
-        else
-        {
-            /* None: all good. */
-        }
-        if ( 0U != me->test_rep_when )
-        {
-            /* The run is stamped in UTC and read in the zone the owner
-             * sees everywhere else. */
-            struct tm at = { 0 };
-
-            if ( gui_local_tm_of((uint64_t)me->test_rep_when, &at) )
-            {
-                /* The verdict first: a row too narrow for the whole
-                 * stamp dots the date, not the answer. */
-                (void)snprintf(sub, sizeof(sub), "%s - %d %s %02d:%02d", how,
-                               at.tm_mday, MONTHS[at.tm_mon % 12],
-                               gui_hour_shown(me, at.tm_hour), at.tm_min);
-            }
-            else
-            {
-                (void)snprintf(sub, sizeof(sub), "%s", how);
-            }
-        }
-        else
-        {
-            (void)snprintf(sub, sizeof(sub), "%s", how);
+            /* The verdict first: a row too narrow for the whole stamp dots
+             * the date, not the answer. */
+            (void)snprintf(sub, sizeof(sub), "%s - %d %s %02d:%02d", how,
+                           at.tm_mday, MONTHS[at.tm_mon % 12],
+                           gui_hour_shown(me, at.tm_hour), at.tm_min);
         }
     }
     gui_sheet_header(me, look.glyph, look.col, look.title, "");
@@ -38385,14 +39737,35 @@ static void gui_test_fill(Gui * const me)
             gui_test_row(me, i);
         }
     }
-    if ( 0U != me->test_rep_n )
+    gui_sheet_caption(me, kgui_selftest_footer(&tally));
+}
+
+/**
+ * @brief Count the rows of the kept report by how they ended.
+ *
+ * @param me The AO.
+ * @return The run's rows, those that passed and those that failed.
+ */
+static kgui_selftest_tally_t gui_test_tally(Gui const * const me)
+{
+    kgui_selftest_tally_t t = { .rows = me->test_rep_n, .passed = 0U, .failed = 0U };
+
+    for ( uint8_t i = 0U; i < me->test_rep_n; ++i )
     {
-        gui_sheet_caption(me, "Tap a row to test it again");
+        if ( AUTOTEST_ROW_PASS == me->test_rep_state[i] )
+        {
+            t.passed += 1U;
+        }
+        else if ( AUTOTEST_ROW_FAIL == me->test_rep_state[i] )
+        {
+            t.failed += 1U;
+        }
+        else
+        {
+            /* No answer, skipped, or a state a later build wrote: not judged. */
+        }
     }
-    else
-    {
-        gui_sheet_caption(me, "Takes a few minutes");
-    }
+    return t;
 }
 
 /**

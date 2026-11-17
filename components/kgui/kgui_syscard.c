@@ -79,9 +79,9 @@ void kgui_crit_taken(kgui_crit_t *c)
     }
 }
 
-bool kgui_crit_waits(bool locked, bool system, bool guided, bool parked)
+bool kgui_crit_waits(bool locked, bool system, bool offer, bool guided, bool parked)
 {
-    return locked || system || guided || parked;
+    return locked || (system && (!offer)) || guided || parked;
 }
 
 const char *kgui_reset_why(uint8_t step, uint32_t status)
@@ -119,6 +119,9 @@ const char *kgui_reset_why(uint8_t step, uint32_t status)
                 break;
             case (uint8_t)KBOOT_RESET_STEP_APPS:
                 why = KGUI_RESET_APPS_STAY;
+                break;
+            case (uint8_t)KBOOT_RESET_STEP_FILES:
+                why = KGUI_RESET_FILES_STAY;
                 break;
             case (uint8_t)KBOOT_RESET_STEP_NVS:
                 why = KGUI_RESET_SOME_STAY;
