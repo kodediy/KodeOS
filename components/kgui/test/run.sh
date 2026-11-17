@@ -93,6 +93,8 @@ run_suite kgui_osrel test_kgui_osrel.c ../kgui_osrel.c
 run_suite kgui_clock -I"$sdk/kdrv/clocks/include" test_kgui_clock.c ../kgui_clock.c
 # The spaces a typed name loses at both ends.
 run_suite kgui_trim test_kgui_trim.c ../kgui_trim.c
+# What the Self-test page says about a run: counts in, words out.
+run_suite kgui_selftest test_kgui_selftest.c ../kgui_selftest.c
 # Kody's line drawing at Rest is pure too.
 run_suite kgui_rest test_kgui_rest.c ../kgui_rest.c
 

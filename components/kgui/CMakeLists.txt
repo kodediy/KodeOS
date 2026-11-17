@@ -37,6 +37,7 @@ idf_component_register(
          "kgui_ring.c"
          "kgui_rise.c"
          "kgui_scene_label.c"
+         "kgui_selftest.c"
          "kgui_span_label.c"
          "kgui_shelf.c"
          "kgui_tilt.c"

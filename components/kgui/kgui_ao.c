@@ -76,6 +76,7 @@
 #include "kgui_welcome.h"  /* the landing on the face after Welcome */
 #include "kgui_wifi.h"     /* the radios' rows' words, and why a join failed */
 #include "kgui_trim.h"     /* a name without the spaces at its ends */
+#include "kgui_selftest.h" /* what the Self-test page says about the last run */
 #include "kgui_syscard.h"  /* the words of the stopped, critical and factory reset cards, and their decisions */
 #include "kgui_sysscreen.h" /* the frame of a system screen: protagonist, figure, words, pill */
 #if CONFIG_KODE_TEST_DOT
@@ -1446,7 +1447,6 @@ typedef enum {
 #define GUI_TIME_NOON         12    /* the hour a clock never told starts from */
 #define GUI_US_PER_S          1000000ULL /* microseconds in a second        */
 #define GUI_MORE_VALUE_MAX    48U   /* the words under a row of More        */
-#define GUI_TEST_NEVER        "Never run" /* no report kept: the Self-test row and its page say it alike */
 #define GUI_TAG_WIFI_SAVED   100U   /* +i into saved_ssid[]                 */
 #define GUI_TAG_WIFI_SCAN    200U   /* +i into scan_ssid[]                  */
 #define GUI_TAG_LOCK         400U   /* +i into s_locks[]                    */
@@ -3194,6 +3194,7 @@ static void gui_td_take(Gui * const me);
 static void gui_td_frame(Gui * const me, kgui_td_req_t const * const r);
 #endif
 static void gui_test_fill(Gui * const me);
+static kgui_selftest_tally_t gui_test_tally(Gui const * const me);
 static void gui_test_act(Gui * const me, uint16_t tag);
 static void gui_test_say(const char *line);
 static void gui_test_take(Gui * const me);
@@ -24867,18 +24868,22 @@ static void gui_more_value(Gui const * const me, uint8_t which, char *out,
             break;
         }
         case GUI_MORE_TEST: {
-            if ( 0U == me->test_rep_n )
+            /* A pass only when the page says All good: a row nobody judged
+             * is one to look at, as a failed one is. */
+            kgui_selftest_tally_t const t = gui_test_tally(me);
+
+            if ( 0U == t.rows )
             {
-                (void)snprintf(out, cap, "%s", GUI_TEST_NEVER);
+                (void)snprintf(out, cap, "%s", KGUI_SELFTEST_NEVER);
             }
-            else if ( 0U == me->test_rep_problems )
+            else if ( kgui_selftest_all_good(&t) )
             {
                 (void)snprintf(out, cap, "Last run: pass");
             }
             else
             {
                 (void)snprintf(out, cap, "Last run: %u to look at",
-                               (unsigned)me->test_rep_problems);
+                               (unsigned)t.failed + (unsigned)kgui_selftest_unchecked(&t));
             }
             break;
         }
@@ -38873,8 +38878,8 @@ static const char *gui_test_state_word(uint8_t state)
 /**
  * @brief Whether a row of the report is something to tell the owner about.
  *
- * Only a row that failed: one nobody answered was not judged, and the page
- * shows it in grey with the skipped ones rather than counting it.
+ * Only a row that failed is put first: one nobody judged shows in grey with
+ * the rest, and the verdict counts it as not checked.
  *
  * @param state AUTOTEST_ROW_*.
  * @return true for a row that failed.
@@ -38941,62 +38946,28 @@ static void gui_test_fill(Gui * const me)
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     };
-    GuiSetLook const look = gui_more_look((uint8_t)GUI_MORE_TEST);
-    char sub[40];
+    GuiSetLook const            look  = gui_more_look((uint8_t)GUI_MORE_TEST);
+    kgui_selftest_tally_t const tally = gui_test_tally(me);
+    char                        how[KGUI_SELFTEST_VERDICT_MAX];
+    char                        sub[40];
 
-    if ( 0U == me->test_rep_n )
+    /* All good only when every row passed; else what failed, or else how
+     * many rows nobody judged (kgui_selftest.h). */
+    kgui_selftest_verdict(&tally, how, sizeof(how));
+    (void)snprintf(sub, sizeof(sub), "%s", how);
+    if ( (0U < tally.rows) && (0U != me->test_rep_when) )
     {
-        (void)snprintf(sub, sizeof(sub), "%s", GUI_TEST_NEVER);
-    }
-    else
-    {
-        const char *how = "All good";
-        char        count[20];
-        uint8_t     failed = 0U;
+        /* The run is stamped in UTC and read in the zone the owner sees
+         * everywhere else. */
+        struct tm at = { 0 };
 
-        for ( uint8_t i = 0U; i < me->test_rep_n; ++i )
+        if ( gui_local_tm_of((uint64_t)me->test_rep_when, &at) )
         {
-            if ( gui_test_is_problem(me->test_rep_state[i]) )
-            {
-                failed += 1U;
-            }
-        }
-        if ( 1U == failed )
-        {
-            how = "1 problem";
-        }
-        else if ( 1U < failed )
-        {
-            (void)snprintf(count, sizeof(count), "%u problems",
-                           (unsigned)failed);
-            how = count;
-        }
-        else
-        {
-            /* None: all good. */
-        }
-        if ( 0U != me->test_rep_when )
-        {
-            /* The run is stamped in UTC and read in the zone the owner
-             * sees everywhere else. */
-            struct tm at = { 0 };
-
-            if ( gui_local_tm_of((uint64_t)me->test_rep_when, &at) )
-            {
-                /* The verdict first: a row too narrow for the whole
-                 * stamp dots the date, not the answer. */
-                (void)snprintf(sub, sizeof(sub), "%s - %d %s %02d:%02d", how,
-                               at.tm_mday, MONTHS[at.tm_mon % 12],
-                               gui_hour_shown(me, at.tm_hour), at.tm_min);
-            }
-            else
-            {
-                (void)snprintf(sub, sizeof(sub), "%s", how);
-            }
-        }
-        else
-        {
-            (void)snprintf(sub, sizeof(sub), "%s", how);
+            /* The verdict first: a row too narrow for the whole stamp dots
+             * the date, not the answer. */
+            (void)snprintf(sub, sizeof(sub), "%s - %d %s %02d:%02d", how,
+                           at.tm_mday, MONTHS[at.tm_mon % 12],
+                           gui_hour_shown(me, at.tm_hour), at.tm_min);
         }
     }
     gui_sheet_header(me, look.glyph, look.col, look.title, "");
@@ -39025,14 +38996,35 @@ static void gui_test_fill(Gui * const me)
             gui_test_row(me, i);
         }
     }
-    if ( 0U != me->test_rep_n )
+    gui_sheet_caption(me, kgui_selftest_footer(&tally));
+}
+
+/**
+ * @brief Count the rows of the kept report by how they ended.
+ *
+ * @param me The AO.
+ * @return The run's rows, those that passed and those that failed.
+ */
+static kgui_selftest_tally_t gui_test_tally(Gui const * const me)
+{
+    kgui_selftest_tally_t t = { .rows = me->test_rep_n, .passed = 0U, .failed = 0U };
+
+    for ( uint8_t i = 0U; i < me->test_rep_n; ++i )
     {
-        gui_sheet_caption(me, "Tap a row to test it again");
+        if ( AUTOTEST_ROW_PASS == me->test_rep_state[i] )
+        {
+            t.passed += 1U;
+        }
+        else if ( AUTOTEST_ROW_FAIL == me->test_rep_state[i] )
+        {
+            t.failed += 1U;
+        }
+        else
+        {
+            /* No answer, skipped, or a state a later build wrote: not judged. */
+        }
     }
-    else
-    {
-        gui_sheet_caption(me, "Takes a few minutes");
-    }
+    return t;
 }
 
 /**
