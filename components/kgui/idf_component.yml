@@ -25,16 +25,16 @@ dependencies:
   kodediy/kui:
     git: https://github.com/kodediy/kode-sdk.git
     path: components/kui
-    version: 1f9b95c352d34c316bf4546541bd0fda710bd39b
+    version: 7d2f876e1f953cfcd03f49820702e267569e3bb0
   kodediy/kode:
     git: https://github.com/kodediy/kode-sdk.git
     path: components/kode
-    version: 1f9b95c352d34c316bf4546541bd0fda710bd39b
+    version: 7d2f876e1f953cfcd03f49820702e267569e3bb0
   kodediy/kbsp:
     git: https://github.com/kodediy/kode-sdk.git
     path: components/kbsp
-    version: 1f9b95c352d34c316bf4546541bd0fda710bd39b
+    version: 7d2f876e1f953cfcd03f49820702e267569e3bb0
   kodediy/kdrv:
     git: https://github.com/kodediy/kode-sdk.git
     path: components/kdrv
-    version: 1f9b95c352d34c316bf4546541bd0fda710bd39b
+    version: 7d2f876e1f953cfcd03f49820702e267569e3bb0
