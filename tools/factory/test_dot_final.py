@@ -484,7 +484,17 @@ def load_config(path):
 
 
 def save_config(path, cfg):
+    """The settings back, with the extra limits as the file had them: the defaults
+    filled in by load_config stay in the program, not in each station's copy."""
     path = Path(path).expanduser()
+    try:
+        before = json.loads(path.read_text())
+    except (OSError, ValueError):
+        before = {}
+    cfg = {k: v for k, v in cfg.items() if k not in ("extra_limits", "judge_extra")}
+    for k in ("extra_limits", "judge_extra"):
+        if k in before:
+            cfg[k] = before[k]
     tmp = path.with_suffix(".part")
     tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
     os.replace(tmp, path)
