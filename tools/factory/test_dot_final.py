@@ -230,6 +230,8 @@ NFC_OTHER_TEXT = "KODE E5"
 # sixteen is not read back by the Kode on the bench, the misses come in bursts
 # now and then, and two IDs are written per run.
 RFID_WRITE_TRIES = 3
+# The Kode's line for a chunk of an image it reads again off the microSD, with the card mounted again.
+SD_REREAD_RX = re.compile(r"'([^']+)': the chunk at (\d+) did not read; it is read again with the card mounted again")
 # A clone answered past its deadline keeps the Kode's reader until its worker
 # reports, and every rfid verb meanwhile is refused at once with this code and
 # word. That refusal is not a try: it is asked again RFID_BUSY_PAUSE_S apart,
@@ -550,6 +552,7 @@ class Link:
 
     def __init__(self, port):
         self.board = kcli.Board(port)
+        self.on_log = None                      # called with every `!` line, whichever answer it came inside
         raw = os.environ.get("E5_RAW")          # the bench's timed copy of the wire, both ways
         if raw:
             self._tee(open(raw, "a", buffering=1))
@@ -576,7 +579,10 @@ class Link:
         self.board.close()
 
     def read_line(self, deadline):
-        return self.board.read_line(deadline)
+        x = self.board.read_line(deadline)
+        if x is not None and x.startswith("!") and self.on_log:
+            self.on_log(x)
+        return x
 
     def exchange(self, line, timeout=10.0, on_line=None):
         """Send `line`; return (records, `!` lines) at `>ok`, raise
@@ -585,7 +591,7 @@ class Link:
         deadline = CLOCK.monotonic() + timeout
         recs, logs = [], []
         while True:
-            x = self.board.read_line(deadline)
+            x = self.read_line(deadline)
             if x is None:
                 raise CommandError(line, None, recs, logs)
             if x.startswith(">|"):
@@ -748,6 +754,7 @@ class Station:
             return EXIT_NO_REPORT
         t0 = CLOCK.monotonic()
         self.link = Link(a.port)
+        self.link.on_log = self.note_log
         for _ in range(PING_TRIES):
             try:
                 self.link.cmd("ping", PING_TIMEOUT_S)
@@ -1162,7 +1169,7 @@ class Station:
             if key == "welcome" and got.get("ms") == "0":
                 welcome_absent = True            # nothing to hash: no Welcome at all
             self.installs[key] = dict(file=name, t_arm=CLOCK.monotonic(), t0=None, t_end=None, end=None, record="",
-                                      judged=False)
+                                      judged=False, rereads=[])
         bad = []
         for key in list(self.installs):
             name = self.installs[key]["file"]
@@ -1198,6 +1205,17 @@ class Station:
                 self.log(f"{key}: the Kode did not take the disarm ({e.term or 'no answer'}); "
                          "it stays armed until the next arm or restart", "warn")
         self.installs = {}
+
+    def note_log(self, x):
+        """A `!` line of the Kode, inside whichever answer: a chunk of an image the
+        install read again off the microSD is counted on that install's row."""
+        m = SD_REREAD_RX.search(x)
+        if not m:
+            return
+        name = m.group(1).rpartition("/")[2]
+        for job in self.installs.values():
+            if job["file"].rpartition("/")[2] == name:
+                job["rereads"].append(int(m.group(2)))
 
     def install_record(self, f, r):
         """A `welcome=` or `storage=` record: started, then installed, failed or refused."""
@@ -1254,19 +1272,27 @@ class Station:
         job["judged"] = True
         secs = self.blocks.get(key + "_install", CLOCK.monotonic() - job["t_arm"])
         rng = f"{key}=installed"
+        again = job["rereads"]
+        note = ""
+        if again:
+            at = ", ".join(str(o) for o in again)
+            note = f"; microSD read again {times(len(again))} (chunk at {at})"
+        vals = [value("sd_rereads", len(again))]
         if job["end"] == "installed":
-            self.add(key, PASS, f"installed from {job['file']} in {secs:.1f} s", rng, secs, values=[],
+            self.add(key, PASS, f"installed from {job['file']} in {secs:.1f} s" + note, rng, secs, values=vals,
                      detail=job["record"])
         elif job["end"] is None and job["t0"] is None:
             s = getattr(self, "state", None)
             why = (f"within {INSTALL_LIMIT_S:.0f} s" if s is not None and s.cam_done
                    else "(the run stopped before the camera's end, where the Kode starts it)")
-            self.add(key, TIMEOUT, f"the Kode never started the install of {job['file']} {why}", rng, secs, values=[])
+            self.add(key, TIMEOUT, f"the Kode never started the install of {job['file']} {why}", rng, secs,
+                     values=vals)
         elif job["end"] is None:
-            self.add(key, TIMEOUT, f"no last record {INSTALL_LIMIT_S:.0f} s after the install of {job['file']} began",
-                     rng, secs, values=[])
+            self.add(key, TIMEOUT, f"no last record {INSTALL_LIMIT_S:.0f} s after the install of {job['file']} began"
+                     + note, rng, secs, values=vals)
         else:
-            self.add(key, FAIL, f"{job['end']}: {job['record']}", rng, secs, values=[], detail=job["record"])
+            self.add(key, FAIL, f"{job['end']}: {job['record']}" + note, rng, secs, values=vals,
+                     detail=job["record"])
 
     def finish_installs(self):
         """Before the exit record and the verdict: every install ended, and well. The
@@ -1584,6 +1610,7 @@ class Station:
         want = rfid_id_of(self.info["mac"])
         tag, tw, tr, wrote = None, None, None, False
         busy = dict(t0=None, n=0, last=False)
+        w_tries, r_tries = [], 0             # the writes sent for each ID, and the reads
         if write and want:
             t1 = CLOCK.monotonic()
             # The tag may already hold this Kode's ID (the same Kode, back at the
@@ -1593,7 +1620,9 @@ class Station:
             both = []
             for ident in (rfid_other(want), want):
                 done = False
+                w_tries.append(0)
                 for _ in range(RFID_WRITE_TRIES):          # a clone the Kode could not read back is written again
+                    w_tries[-1] += 1
                     try:
                         wr, _ = self.rfid_ask(f"rfid_write id={quote(ident)}", 60.0, busy)
                         det.append(" ".join(wr))
@@ -1607,6 +1636,7 @@ class Station:
             tw = CLOCK.monotonic() - t1
         for _ in range(3):
             t2 = CLOCK.monotonic()
+            r_tries += 1
             try:
                 recs = self.rfid_ask("rfid_read ms=3000", 15.0, busy)[0]
             except CommandError as e:
@@ -1623,8 +1653,15 @@ class Station:
             nothing = f"nothing: the Kode's reader stayed busy for {RFID_BUSY_S:.0f} s"
         if write and want:
             info = f"written {want}; read {read or nothing}"
-            if tw is not None and tr is not None:
-                info += f"; write {tw:.1f} s (checked by the Kode: {'yes' if wrote else 'no'}), read {tr:.1f} s"
+            # How many times each verb went out, whatever the outcome: a pass after
+            # retries reads differently from a clean one.
+            info += f"; write {tw:.1f} s, {each_try(w_tries, ('other ID', 'own ID'))}"
+            info += f" (checked by the Kode: {'yes' if wrote else 'no'}), read"
+            if tr is not None:
+                info += f" {tr:.1f} s,"
+            info += f" {tries(r_tries)}"
+            if busy["n"]:
+                info += f"; reader busy {times(busy['n'])}"
             # The Kode's own check of its writes counts too: without it the tag
             # may only be showing what it already held.
             valid = bool(tag) and read == want and wrote
@@ -1637,7 +1674,9 @@ class Station:
         status = PASS if valid else (TIMEOUT if st == TIMEOUT and not tag else FAIL)
         vals = [value("protocol", "EM4100"), value("id_written", want or ""), value("id_read", read),
                 value("t_write", round(tw, 2) if tw is not None else 0, "s"),
-                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("busy_refusals", busy["n"])]
+                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("busy_refusals", busy["n"]),
+                value("write_tries", sum(w_tries)), value("write_tries_each", "+".join(map(str, w_tries))),
+                value("read_tries", r_tries)]
         self.add("rfid", status, (info or "no ID") + f"; kodeOS row test=rfid: {st}",
                  "read = written (a 5-byte ID from the Kode's MAC)", CLOCK.monotonic() - t0,
                  detail="\n".join(det)[-REPORT_DETAIL_CHARS:], values=vals)
@@ -1656,6 +1695,8 @@ class Station:
         skip_read = False
         wrote = True
         retries = 0
+        w_tries, r_tries = [], 0             # the writes sent for each text, and the reads
+        again = None                         # the read back that had the serial written and read once more
         try:
             if write:
                 t1 = CLOCK.monotonic()
@@ -1668,8 +1709,10 @@ class Station:
                     # transient read inside the write ("carries no NDEF message")
                     # goes right the next time. No tag in the field is not tried
                     # again, and the read back below still decides.
-                    for again in (True, False):
+                    w_tries.append(0)
+                    for more in (True, False):
                         self.operator_sim_pump()           # the bench operator's release must not wait for this step
+                        w_tries[-1] += 1
                         try:
                             wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
                             det.append(" ".join(wr))
@@ -1680,7 +1723,7 @@ class Station:
                             det.append(" ".join(wr) + f" {e.term}")
                             wrote = False
                             skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
-                            if skip_read or not again:
+                            if skip_read or not more:
                                 break
                             retries += 1
                     if not wrote:
@@ -1692,6 +1735,7 @@ class Station:
             else:
                 self.operator_sim_pump()
                 t2 = CLOCK.monotonic()
+                r_tries += 1
                 try:
                     rd = self.link.cmd("nfc_read ms=3000", 30.0)
                 except CommandError as e:
@@ -1711,11 +1755,14 @@ class Station:
                 # before) or a read that failed once. Once more, and the read back
                 # still decides.
                 retries += 1
+                again = read
                 self.operator_sim_pump()
+                w_tries[-1] += 1
                 try:
                     wr2, _ = self.link.exchange(f"nfc_write text={quote(serial)}", 30.0)
                     det.append(" ".join(wr2))
                     self.operator_sim_pump()
+                    r_tries += 1
                     rd = self.link.cmd("nfc_read ms=3000", 30.0)
                 except CommandError as e:
                     rd = e.records
@@ -1726,14 +1773,28 @@ class Station:
             det.append(f"{type(e).__name__}: {e}")
         ok = (read == serial and wrote) if write else bool(uid)
         info = (f"written {serial}; " if write else "") + f"read {read or 'nothing'}" + (f"; tag {uid}" if uid else "")
-        if tw is not None and tr is not None:
-            info += f"; write {tw:.1f} s, read {tr:.1f} s"
+        if w_tries:
+            # How many times each verb went out, whatever the outcome: a pass after
+            # retries reads differently from a clean one.
+            info += "; write"
+            if tw is not None:
+                info += f" {tw:.1f} s,"
+            info += f" {each_try(w_tries, ('other text', 'serial'))}"
+        if r_tries:
+            info += "; read"
+            if tr is not None:
+                info += f" {tr:.1f} s,"
+            info += f" {tries(r_tries)}"
+        if again is not None:
+            info += f"; first read back \"{again or 'nothing'}\": the serial written and read once more"
         if skip_read:
             info += "; the write found no tag"     # the station's tag, not the Kode (ui/reports.py)
         status = PASS if (ok and st == PASS) else (TIMEOUT if st == TIMEOUT and not read else FAIL)
         vals = [value("text_written", serial if write else ""), value("text_read", read), value("uid", uid),
                 value("t_write", round(tw, 2) if tw is not None else 0, "s"),
-                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("write_retries", retries)]
+                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("write_retries", retries),
+                value("write_tries", sum(w_tries)), value("write_tries_each", "+".join(map(str, w_tries))),
+                value("read_tries", r_tries)]
         self.add("nfc", status, info + f"; kodeOS row test=nfc: {st}",
                  "read = written (an NDEF text with the Kode's serial)", CLOCK.monotonic() - t0,
                  detail="\n".join(det)[-REPORT_DETAIL_CHARS:], values=vals)
@@ -2510,6 +2571,25 @@ class Pads:
                 fn()
             except (PadsError, CommandError) as e:
                 log(f"pads: could not put the station at rest ({what}): {e}")
+
+
+def tries(n):
+    """`1 try`, `2 tries`."""
+    if n == 1:
+        return "1 try"
+    return f"{n} tries"
+
+
+def each_try(counts, names):
+    """The writes sent for each value, in order: `tries 1+2 (other ID, own ID)`."""
+    return f"tries {'+'.join(map(str, counts))} ({', '.join(names[:len(counts)])})"
+
+
+def times(n):
+    """`once`, `2 times`."""
+    if n == 1:
+        return "once"
+    return f"{n} times"
 
 
 def _int(v):

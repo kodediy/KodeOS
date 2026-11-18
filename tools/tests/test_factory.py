@@ -304,11 +304,20 @@ class TestNfc(Base):
     def nfc_value(self, step, name):
         return next(v["value"] for v in step["values"] if v["name"] == name)
 
+    def test_a_clean_nfc_says_one_try_each(self):
+        nfc = self.run_case(sim.Scenario()).results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertRegex(nfc["measured"], r"write \d+\.\d s, tries 1\+1 \(other text, serial\); read \d+\.\d s, 1 try")
+        self.assertNotIn("once more", nfc["measured"])
+        self.assertEqual((self.nfc_value(nfc, "write_tries"), self.nfc_value(nfc, "read_tries")), (2, 1))
+
     def test_a_write_that_fails_once_on_the_tag_is_written_again(self):
         r = self.run_case(sim.Scenario(nfc_write_fails=1))
         nfc = r.results()["steps"]["nfc"]
         self.assertEqual(nfc["status"], "PASS", nfc)
         self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        self.assertIn("tries 2+1 (other text, serial)", nfc["measured"])
+        self.assertEqual(self.nfc_value(nfc, "write_tries"), 3)
         texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
         self.assertEqual(texts, [final.NFC_OTHER_TEXT, final.NFC_OTHER_TEXT, r.results()["serial"]])
 
@@ -323,7 +332,12 @@ class TestNfc(Base):
         nfc = r.results()["steps"]["nfc"]
         self.assertEqual(nfc["status"], "PASS", nfc)
         self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        self.assertIn("tries 1+2 (other text, serial)", nfc["measured"])
+        self.assertIn("2 tries", nfc["measured"].partition("; read")[2])
         serial = r.results()["serial"]
+        self.assertIn(f'first read back "{serial[:len(final.NFC_OTHER_TEXT)]}": the serial written and read once more',
+                      nfc["measured"])
+        self.assertEqual((self.nfc_value(nfc, "write_tries"), self.nfc_value(nfc, "read_tries")), (3, 2))
         texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
         self.assertEqual(texts, [final.NFC_OTHER_TEXT, serial, serial])
         self.assertEqual(len(r.sent("nfc_read")), 2)
@@ -344,6 +358,7 @@ class TestNfc(Base):
         self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
         self.assertEqual(len(r.sent("nfc_write")), 3)
         self.assertEqual(len(r.sent("nfc_read")), 2)
+        self.assertIn('first read back "nothing": the serial written and read once more', nfc["measured"])
 
     def test_a_read_back_that_fails_twice_fails_the_kode_after_one_more_write(self):
         r = self.run_case(sim.Scenario(nfc_read_fails=2))
@@ -385,6 +400,8 @@ class TestRfidWrite(Base):
         rfid = r.results()["steps"]["rfid"]
         self.assertEqual(rfid["status"], "PASS", rfid)
         busy = next(v["value"] for v in rfid["values"] if v["name"] == "busy_refusals")
+        self.assertIn(f"reader busy {busy} times", rfid["measured"])
+        self.assertIn("tries 2+1 (other ID, own ID)", rfid["measured"])
         self.assertGreater(busy, 0)
         ids = [fields(ln.partition(" ")[2])["id"] for ln in r.sent("rfid_write")]
         self.assertEqual(ids[-1], final.rfid_id_of(r.results()["info"]["mac"]))
@@ -396,9 +413,21 @@ class TestRfidWrite(Base):
         self.assertIn("stayed busy", rfid["measured"])
         self.assertLess(rfid["secs"], 3.1 + final.RFID_BUSY_S + 2.0, rfid["secs"])
 
+    def test_a_clean_rfid_says_one_try_each(self):
+        rfid = self.run_case(sim.Scenario()).results()["steps"]["rfid"]
+        self.assertEqual(rfid["status"], "PASS", rfid)
+        self.assertRegex(rfid["measured"], r"write \d+\.\d s, tries 1\+1 \(other ID, own ID\) \(checked by the Kode: yes\), "
+                                           r"read \d+\.\d s, 1 try")
+        self.assertNotIn("busy", rfid["measured"])
+        vals = {v["name"]: v["value"] for v in rfid["values"]}
+        self.assertEqual((vals["write_tries"], vals["read_tries"], vals["busy_refusals"]), (2, 1, 0))
+
     def test_a_clone_not_read_back_is_written_up_to_three_times(self):
         r = self.run_case(sim.Scenario(rfid_dead_write=True))
         self.assertEqual(len(r.sent("rfid_write")), 2 * final.RFID_WRITE_TRIES)
+        rfid = r.results()["steps"]["rfid"]
+        n = final.RFID_WRITE_TRIES
+        self.assertIn(f"tries {n}+{n} (other ID, own ID) (checked by the Kode: no)", rfid["measured"])
         self.assertEqual(final.RFID_WRITE_TRIES, 3)
 
 
@@ -692,11 +721,12 @@ class TestSdImages(Base):
     SHA_S = "b" * 64
 
     def run_images(self, files=None, install="installed", install_s=3.0, args=(), case="pass",
-                   install_gap_s=0.0, run_refused=False, have=(), sha_refused=False, disarm_refused=False):
+                   install_gap_s=0.0, run_refused=False, have=(), sha_refused=False, disarm_refused=False,
+                   sd_rereads=None):
         sc = sim.Scenario(case, sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
                           if files is None else files, install=install, install_s=install_s,
                           install_gap_s=install_gap_s, run_refused=run_refused, have=have,
-                          sha_refused=sha_refused, disarm_refused=disarm_refused)
+                          sha_refused=sha_refused, disarm_refused=disarm_refused, sd_rereads=sd_rereads)
         r = Run(sc, args)
         self.addCleanup(r.cleanup)
         cfg = json.loads(r.cfg.read_text())
@@ -772,6 +802,25 @@ class TestSdImages(Base):
                          [f'test_dot_welcome name="onboarding.bin" sha="{self.SHA_W}" project="onboarding"',
                           'test_dot_welcome name="onboarding.bin"'])
         self.assertIn("welcome: the Kode did not take sha=", r.stdout)
+
+    @staticmethod
+    def value(step, name):
+        return next(v["value"] for v in step["values"] if v["name"] == name)
+
+    def test_a_chunk_read_again_off_the_microsd_is_on_the_install_row(self):
+        r = self.run_images(install_s={"welcome": 8.0, "storage": 3.0}, sd_rereads={"welcome": 2})
+        res = r.results()
+        w, st = res["steps"]["welcome"], res["steps"]["storage"]
+        self.assertEqual((w["status"], st["status"]), ("PASS", "PASS"), w)
+        self.assertIn("microSD read again 2 times (chunk at 32768, 65536)", w["measured"])
+        self.assertEqual(self.value(w, "sd_rereads"), 2)
+        self.assertNotIn("read again", st["measured"])
+        self.assertEqual(self.value(st, "sd_rereads"), 0)
+
+    def test_an_install_without_rereads_says_nothing_of_them(self):
+        w = self.run_images().results()["steps"]["welcome"]
+        self.assertNotIn("read again", w["measured"])
+        self.assertEqual(self.value(w, "sd_rereads"), 0)
 
     def test_matching_images_are_installed_and_the_pass_waits_for_them(self):
         r = self.run_images()

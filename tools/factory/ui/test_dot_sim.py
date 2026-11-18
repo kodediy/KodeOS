@@ -259,6 +259,9 @@ class Scenario:
     @param boost_late      True: `test_dot_boost state=on` answers on=0 with
                            the boost on, as a record taken before the
                            charger's next poll does.
+    @param sd_rereads      {kind: n}: the install of that image reads n chunks
+                           again off the microSD, each said on the wire as
+                           kodeOS's appmgr says it, halfway through the install.
     @param boost_falls_s   Seconds after `test_dot_boost state=on` at which the
                            boost stops under the load (None: it holds): A0
                            and the gauge's current then read as with it off.
@@ -271,7 +274,7 @@ class Scenario:
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
                  rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
                  sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False,
-                 boost_falls_s=None):
+                 boost_falls_s=None, sd_rereads=None):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -284,6 +287,7 @@ class Scenario:
         self.pads_charger = pads_charger
         self.boost_late = boost_late
         self.boost_falls_s = boost_falls_s
+        self.sd_rereads = dict(sd_rereads or {})
         self.sd_files = dict(SD_FILES if sd_files is None else sd_files)
         self.apps = list(apps if apps is not None else [("onboarding", WELCOME_VERSION)])
         self.install = install
@@ -716,6 +720,12 @@ class FakeKode:
         if isinstance(secs, dict):
             secs = secs[kind]
         self.ring_add(start, f"{kind}=started file={a.get('name')}")
+        for k in range(self.sc.sd_rereads.get(kind, 0)):
+            self.at(start + secs / 2, f"!W 2026-11-03T16:30:00.000Z kaos.appmgr '{a.get('name')}': the chunk at "
+                                      f"{32768 * (k + 1)} did not read; it is read again with the card mounted "
+                                      f"again ({k + 1} of 2)")
+            self.at(start + secs / 2, f"!W 2026-11-03T16:30:00.000Z kaos.storage '/sdcard/{a.get('name')}': a chunk "
+                                      f"did not read; the card is mounted again to read from {32768 * (k + 1)} once more")
         if self.sc.install == "silent":
             self.install_free = float("inf")
             return
