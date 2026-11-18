@@ -1116,14 +1116,56 @@ class Station:
         return out
 
     def arm_installs(self):
-        """Before the run: each configured image is checked on the Kode's microSD
-        against its SHA-256 and, when it matches, the Kode is told to install it.
-        An image that is not there or does not match is the station's fault, not
-        the Kode's: the row says so, nothing is installed and the run stops."""
-        bad = []
-        for key, (name, want) in self.sd_images().items():
+        """Before the run: the Kode is asked first whether it already holds each
+        configured image (its SHA-256 over the installed bytes) and, when it does
+        not, it is armed to install it, and the file on its microSD is checked
+        against the same SHA-256. An image that is not there or does not match is
+        the station's fault, not the Kode's: the row says so and the run stops
+        before it starts, so nothing armed is ever written. A Kode that holds
+        both reads nothing off the microSD (0.53 s of `file_sha` saved)."""
+        want = {k: sha for k, (_, sha) in self.sd_images().items()}
+        welcome_absent = False
+        for key, (name, sha) in self.sd_images().items():
             t0 = CLOCK.monotonic()
             self.begin(key)
+            # The Kode hashes what it already holds (the Welcome app by name, the whole
+            # storage partition) and skips the write only when the bytes are the
+            # approved image's. With no Welcome at all (hashed in 0 ms) the Kode is new
+            # or its install was cut:
+            # its storage is written without hashing the 2 MB first (0.175 s), at
+            # worst a pack written again that was already right.
+            have = ""
+            if not (key == "storage" and welcome_absent):
+                have = f" sha={quote(sha)}" + (f" project={quote(WELCOME_PROJECT)}" if key == "welcome" else "")
+            try:
+                try:
+                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(name)}{have}", 10.0)
+                except CommandError as e:
+                    if not have:
+                        raise
+                    # A kodeOS without sha= refuses the key: the order of before. Said in
+                    # the log, so a skip that never fires does not go unseen.
+                    self.log(f"{key}: the Kode did not take sha= ({e.term or 'no answer'}); installing as before", "warn")
+                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(name)}")
+            except CommandError as e:
+                self.add(key, FAIL, f"the Kode did not take the install of {name}: {e.term or 'no answer'}",
+                         f"{key}=installed", 0.0, values=[])
+                continue
+            got = next((fields(r) for r in recs if r.startswith(key + " ")), {})
+            if got.get("present") == "yes":
+                self.blocks[key + "_install"] = 0.0
+                self.add(key, PASS, f"already on the Kode: its bytes have the SHA-256 of {name}; "
+                         f"not written (hash {got.get('ms', '?')} ms)", f"{key}=installed", CLOCK.monotonic() - t0,
+                         values=[value("present", 1)])
+                continue
+            if key == "welcome" and got.get("ms") == "0":
+                welcome_absent = True            # nothing to hash: no Welcome at all
+            self.installs[key] = dict(file=name, t_arm=CLOCK.monotonic(), t0=None, t_end=None, end=None, record="",
+                                      judged=False)
+        bad = []
+        for key in list(self.installs):
+            name = self.installs[key]["file"]
+            t0 = CLOCK.monotonic()
             got = ""
             why = ""
             try:
@@ -1133,49 +1175,16 @@ class Station:
                         got = m.group(1)
             except CommandError as e:
                 why = e.term or "no answer"
-            if got != want:
+            if got != want[key]:
                 if not why:
-                    why = f"SHA-256 {got[:12] or 'unread'} instead of {want[:12]}"
+                    why = f"SHA-256 {got[:12] or 'unread'} instead of {want[key][:12]}"
                 self.add(key, NOVERDICT, STATION_FAULT + f"the station's microSD does not hold the right image ({name}): {why}",
-                         f"SHA-256 {want}", CLOCK.monotonic() - t0, values=[])
+                         f"SHA-256 {want[key]}", CLOCK.monotonic() - t0, values=[])
                 self.log(f"{key}: the station's microSD does not hold the right image ({name}): {why}", "error")
                 bad.append(key)
-                continue
-            self.installs[key] = dict(file=name, t_arm=CLOCK.monotonic(), t0=None, t_end=None, end=None, record="",
-                                      judged=False)
         if bad:
             self.installs = {}
             raise Abort("the station's microSD does not hold the right image: " + ", ".join(bad))
-        want = {k: sha for k, (_, sha) in self.sd_images().items()}
-        for key in list(self.installs):
-            job = self.installs[key]
-            t0 = CLOCK.monotonic()
-            # The Kode hashes what it already holds (the Welcome app by name, the whole
-            # storage partition) and skips the write only when the bytes are the
-            # microSD's, the file whose SHA-256 was checked above. A repeated Kode then
-            # writes no flash: no 150 ms block erases under the microSD, NFC and RFID.
-            have = f" sha={quote(want[key])}" + (f" project={quote(WELCOME_PROJECT)}" if key == "welcome" else "")
-            try:
-                try:
-                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(job['file'])}{have}", 10.0)
-                except CommandError as e:
-                    # A kodeOS without sha= refuses the key: the order of before. Said in
-                    # the log, so a skip that never fires does not go unseen.
-                    self.log(f"{key}: the Kode did not take sha= ({e.term or 'no answer'}); installing as before", "warn")
-                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(job['file'])}")
-            except CommandError as e:
-                del self.installs[key]
-                self.add(key, FAIL, f"the Kode did not take the install of {job['file']}: {e.term or 'no answer'}",
-                         f"{key}=installed", 0.0, values=[])
-                continue
-            got = next((fields(r) for r in recs if r.startswith(key + " ")), {})
-            if got.get("present") == "yes":
-                del self.installs[key]
-                secs = CLOCK.monotonic() - t0
-                self.blocks[key + "_install"] = 0.0
-                self.add(key, PASS, f"already on the Kode: its bytes have the SHA-256 of {job['file']}; "
-                         f"not written (hash {got.get('ms', '?')} ms)", f"{key}=installed", secs,
-                         values=[value("present", 1)])
 
     def install_record(self, f, r):
         """A `welcome=` or `storage=` record: started, then installed, failed or refused."""

@@ -791,14 +791,21 @@ class TestSdImages(Base):
         self.assertEqual(res["verdict"], "NO VERDICT")
         self.assertEqual(res["steps"]["welcome"]["status"], "NO VERDICT")
         self.assertIn("station: the station's microSD does not hold the right image", res["steps"]["welcome"]["measured"])
-        self.assertEqual(r.sent("test_dot_welcome") + r.sent("test_dot_storage"), [])
+        # The Kode is asked what it holds first, so it may be armed; the run that
+        # would start the installs never begins.
+        self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
         self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
 
     def test_a_missing_image_is_the_stations_fault_too(self):
         r = self.run_images(files={"storage.bin": self.SHA_S})
         res = r.results()
         self.assertEqual((res["verdict"], res["steps"]["welcome"]["status"]), ("NO VERDICT", "NO VERDICT"))
-        self.assertEqual(r.sent("test_dot_welcome"), [])
+        self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
+
+    def test_a_kode_that_holds_both_images_reads_nothing_off_the_microsd(self):
+        r = self.run_images(have=("welcome", "storage"))
+        self.assertEqual(r.sent("file_sha"), [])
+        self.assertEqual(r.results()["verdict"], "PASS")
 
     def test_a_failed_or_refused_install_fails_the_kode(self):
         for word in ("failed", "refused"):
