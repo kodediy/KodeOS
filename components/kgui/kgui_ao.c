@@ -33909,8 +33909,10 @@ static void gui_rest_park(Gui * const me)
  * lands on Rest as it was, and the tick decides from there: the count once the
  * time is gone, or another sleep once Kody has settled again. A round
  * that was given up, with the board never asleep, holds the next sleep back
- * until Rest asks again, so a busy owner does not take the glass down and up
- * on every retry of AO_LowPower's; one a person ended with a button does not.
+ * until Rest asks again, so an owner that says nothing does not take the
+ * glass down and up on every round AO_LowPower begins again; a busy owner is
+ * waited for with the round open and the glass at rest. One a person ended
+ * with a button does not.
  *
  * @param me The AO, parked at Rest.
  * @return The transition back to Gui_rest, which is neither left nor entered.
