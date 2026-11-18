@@ -18,7 +18,7 @@ verdict screen up and erases nothing.
 | File | What it does |
 |---|---|
 | `test_dot_final.py` | The program. One run per Kode: wait for the USB, check the Kode, place it under the camera, run every row, judge, write the report, save the photos, lock or leave. |
-| `test_dot_station.json` | The template of the station's settings: its name, the two Wi-Fi networks and their channels, the BLE beacon, the RSSI thresholds, the placement limits. |
+| `test_dot_station.json` | The template of the station's settings: its name, the two Wi-Fi networks and their channels, the BLE beacon, the RSSI thresholds, the images the Kode installs from the microSD, the placement limits. |
 | `test_dot_ble.py` | The BLE beacon the Kode must hear, advertised from the computer (macOS). |
 | `test_dot_pads.py` | Tests of the rear pads block against a fake station, no board. |
 | `test_dot_parallel.py` | Tests of what the computer does while the operator presses and touches, no board. |
@@ -41,6 +41,32 @@ verdict screen up and erases nothing.
    the Kode hears and writes the channels of the two named ones.
 4. Set `expect.kodeos` to the version the Kodes of this lot must run, as `info`
    prints it. A Kode with another one fails its first step. `null` accepts any.
+
+5. Set `sd_images` when the Kodes of this lot get their Welcome and Kody's
+   pack from the station's microSD (the card in the Kode's slot):
+
+   ```json
+   "sd_images": {
+     "welcome": {"file": "onboarding.bin", "sha256": "<64 hex digits>"},
+     "storage": {"file": "storage.bin", "sha256": "<64 hex digits>"}
+   }
+   ```
+
+   Before the run the station asks the Kode for the SHA-256 of
+   `/sdcard/<file>` (`file_sha`) and, when it is the one set here, tells the
+   Kode to install it (`test_dot_welcome`, `test_dot_storage`). A file that is
+   missing or has another hash is the station's fault, not the Kode's: the
+   row is NO VERDICT (`station: the station's microSD does not hold the right
+   image`), nothing is installed and the run stops. Each key is optional;
+   with no `sd_images` (or `null`) nothing is installed. The Kode's
+   `welcome=` and `storage=` records (`started`, then `installed`, `failed` or
+   `refused`) decide one row each, `Welcome from the microSD` and `Kody's pack
+   from the microSD`: a failed or refused install, or one with no last record,
+   fails the Kode. The RFID write waits for the installs; the NFC step, the
+   pads and the radio do not. The factory reset of a PASS runs only after
+   both rows passed. Their times are the `welcome_install` and
+   `storage_install` blocks. A Kode that gets its images this way must leave
+   the programming station (E1) without the apps and storage images.
 
 ## Running the test
 
@@ -67,6 +93,11 @@ These three make a bench run: its verdict is a `BENCH` one, never recorded in
 the CSV, and the Kode is never reset nor locked. A production run uses none of
 them.
 - `--discover` fills the station's Wi-Fi channels and exits.
+
+The station's relay R4 is the operator's light: on (bit 0x08 of the PCF8574
+low) while the operator presses the buttons and touches the glass, off when
+that ends and always when the program closes. The pads' relays keep the light
+as it is when they change.
 
 Every step decides the verdict, NFC included (`OPTIONAL` in
 `test_dot_final.py` is empty). The NFC and RFID steps write the station's tag

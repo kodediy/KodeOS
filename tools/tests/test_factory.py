@@ -55,7 +55,8 @@ PADS_BYTES = [0xFF, 0xFB, 0xFF, 0xFE, 0xFC, 0xFE, 0xFF]
 # The string keys among everything the station sends; every other key is bare.
 QUOTED = {("test_dot_place", "win"), ("test_dot_radio", "ssid24"), ("test_dot_radio", "ssid5"),
           ("test_dot_radio", "ble"), ("test_dot_blob", "name"), ("nfc_write", "text"),
-          ("rfid_write", "id")}
+          ("rfid_write", "id"), ("file_sha", "name"), ("test_dot_welcome", "name"),
+          ("test_dot_storage", "name")}
 
 
 # Every bound the station program copies from kqp_config.h, by its name there.
@@ -338,9 +339,15 @@ class TestRelays(Base):
         r = self.run_case(sim.Scenario("pass"))
         self.assertEqual(r.rc, 0, r.stdout[-2000:])
         sent = [int(fields(ln.split(" ", 1)[1])["state"], 16) for ln in r.sent("test_dot_relays")]
-        self.assertEqual(sent, PADS_BYTES)
+        # The operator light (R4) rides on the pads' byte and is written on its own
+        # when it goes on and off: leave its bit out and a repeat is not a change.
+        pads = [sent[0] | 0x08]
+        for b in sent[1:]:
+            if b | 0x08 != pads[-1]:
+                pads.append(b | 0x08)
+        self.assertEqual(pads, PADS_BYTES)
         self.assertEqual([b for b in sent if (b & 0x03) == FORBIDDEN], [])
-        self.assertEqual(r.fake.relays_sent, PADS_BYTES)
+        self.assertEqual([b for b in r.fake.relays_sent if (b & 0x03) == FORBIDDEN], [])
         steps = r.results()["steps"]
         for s in ("pads_gnd", "pads_loop", "pads_charge", "pads_delivery"):
             self.assertEqual(steps[s]["status"], "PASS", (s, steps[s]))
@@ -445,7 +452,7 @@ class TestOperatorSim(Base):
         self.assertEqual([e["type"] for e in ev][0], "start")
         self.assertIn("end", [e["type"] for e in ev])
         # A bench run never runs the factory reset, never locks, never joins the CSV.
-        self.assertEqual(r.sent("test_dot_result"), [])
+        self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
         self.assertEqual(r.sent("test_dot_lock"), [])
         self.assertIn("test_dot_end", r.fake.lines)
         self.assertFalse((r.out / "record_E5-01.csv").exists())
@@ -475,6 +482,100 @@ class TestLock(Base):
         self.assertLess(r.fake.lines.index("test_dot_photos"), r.fake.lines.index("test_dot_lock confirm=on"))
 
 
+class TestOperatorLight(Base):
+
+    def test_the_light_is_on_for_the_buttons_and_touch_and_off_after(self):
+        r = self.run_case(sim.Scenario("pass"))
+        self.assertEqual(r.rc, 0, r.stdout[-2000:])
+        # On while the operator works, off at the end, and every byte on the wire
+        # says so in its bit.
+        self.assertTrue(any(r.fake.light))
+        self.assertFalse(r.fake.light[-1])
+        sent = [int(fields(ln.split(" ", 1)[1])["state"], 16) for ln in r.sent("test_dot_relays")]
+        for b, lit in zip(sent, r.fake.light):
+            self.assertEqual((b & 0x08) == 0, lit)
+
+    def test_the_light_is_off_when_the_run_stops(self):
+        r = self.run_case(sim.Scenario("buttons"))
+        self.assertFalse(r.fake.light[-1])
+
+
+class TestSdImages(Base):
+    """The Welcome and Kody's pack the Kode installs from the station's microSD."""
+
+    SHA_W = "a" * 64
+    SHA_S = "b" * 64
+
+    def run_images(self, files=None, install="installed", only=None, install_s=3.0, args=()):
+        sc = sim.Scenario("pass", sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
+                          if files is None else files, install=install, install_s=install_s)
+        r = Run(sc, args)
+        self.addCleanup(r.cleanup)
+        cfg = json.loads(r.cfg.read_text())
+        images = {"welcome": {"file": "onboarding.bin", "sha256": self.SHA_W},
+                  "storage": {"file": "storage.bin", "sha256": self.SHA_S}}
+        cfg["sd_images"] = {k: v for k, v in images.items() if only is None or k in only}
+        r.cfg.write_text(json.dumps(cfg))
+        return r.go()
+
+    def test_no_sd_images_key_installs_nothing(self):
+        r = self.run_case(sim.Scenario("pass"))
+        self.assertEqual(r.sent("file_sha") + r.sent("test_dot_welcome") + r.sent("test_dot_storage"), [])
+        self.assertNotIn("welcome", r.results()["steps"])
+
+    def test_matching_images_are_installed_and_the_pass_waits_for_them(self):
+        r = self.run_images()
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertEqual(res["steps"]["welcome"]["status"], "PASS")
+        self.assertEqual(res["steps"]["storage"]["status"], "PASS")
+        self.assertEqual(r.sent("test_dot_welcome"), ['test_dot_welcome name="onboarding.bin"'])
+        self.assertEqual(r.sent("test_dot_storage"), ['test_dot_storage name="storage.bin"'])
+        self.assertEqual(r.sent("file_sha"), ['file_sha name="/sdcard/onboarding.bin"',
+                                              'file_sha name="/sdcard/storage.bin"'])
+        self.assertLess(r.fake.lines.index('test_dot_storage name="storage.bin"'), r.fake.lines.index("test component=all"))
+        self.assertIn("welcome_install", res["blocks"])
+        self.assertIn("storage_install", res["blocks"])
+        self.assert_grammar(r)
+
+    def test_a_slow_install_holds_the_rfid_write_and_not_the_nfc_one(self):
+        r = self.run_images(install_s=30.0, args=["--events"])
+        self.assertEqual(r.results()["verdict"], "PASS", r.stdout[-2000:])
+        order = [e["id"] for e in r.events() if e["type"] == "result" and e["id"] in ("nfc", "rfid", "welcome", "storage")]
+        self.assertLess(order.index("nfc"), order.index("welcome"))
+        self.assertLess(order.index("welcome"), order.index("rfid"))
+
+    def test_a_wrong_image_is_the_stations_fault_and_installs_nothing(self):
+        r = self.run_images(files={"onboarding.bin": "c" * 64, "storage.bin": self.SHA_S})
+        res = r.results()
+        self.assertEqual(res["verdict"], "NO VERDICT")
+        self.assertEqual(res["steps"]["welcome"]["status"], "NO VERDICT")
+        self.assertIn("station: the station's microSD does not hold the right image", res["steps"]["welcome"]["measured"])
+        self.assertEqual(r.sent("test_dot_welcome") + r.sent("test_dot_storage"), [])
+        self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
+
+    def test_a_missing_image_is_the_stations_fault_too(self):
+        r = self.run_images(files={"storage.bin": self.SHA_S}, only=["welcome"])
+        res = r.results()
+        self.assertEqual((res["verdict"], res["steps"]["welcome"]["status"]), ("NO VERDICT", "NO VERDICT"))
+        self.assertEqual(r.sent("test_dot_welcome"), [])
+
+    def test_a_failed_or_refused_install_fails_the_kode(self):
+        for word in ("failed", "refused"):
+            with self.subTest(word=word):
+                r = self.run_images(install=word, only=["welcome"])
+                res = r.results()
+                self.assertEqual(res["verdict"], "FAIL")
+                self.assertEqual(res["steps"]["welcome"]["status"], "FAIL")
+                self.assertIn(word, res["steps"]["welcome"]["measured"])
+                self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
+
+    def test_an_install_with_no_last_record_does_not_pass(self):
+        r = self.run_images(install="silent", only=["storage"])
+        res = r.results()
+        self.assertEqual((res["verdict"], res["steps"]["storage"]["status"]), ("FAIL", "TIMEOUT"))
+
+
 class TestBenchFlags(Base):
 
     def test_no_write_and_no_place_never_reset_or_lock(self):
@@ -488,7 +589,7 @@ class TestBenchFlags(Base):
                 if flag == "--no-place":
                     self.assertEqual((r.rc, res["verdict"]), (final.EXIT_PASS, "BENCH PASS"))
                 self.assertEqual(res["lock"], "not_sent")
-                self.assertEqual(r.sent("test_dot_result"), [])
+                self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
                 self.assertEqual(r.sent("test_dot_lock"), [])
                 self.assertIn("test_dot_end", r.fake.lines)
                 self.assertFalse((r.out / "record_E5-01.csv").exists())

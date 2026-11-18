@@ -188,8 +188,16 @@ STEPS = {
     "buttons": ("Buttons", "operator"),
     "tp": ("Touch", "operator"),
     "mem": ("Internal memory", "memory"),
+    "welcome": ("Welcome from the microSD", "install"),
+    "storage": ("Kody's pack from the microSD", "install"),
     "exit_record": ("The Kode's exit record", "record"),
 }
+# What the Kode installs from the station's microSD, by the name of its verb and its
+# records: the key under `sd_images` in the station's settings -> the verb.
+SD_IMAGES = {"welcome": "test_dot_welcome", "storage": "test_dot_storage"}
+INSTALL_ENDS = ("installed", "failed", "refused")   # the last record of an install
+INSTALL_WAIT_S = 40.0          # how long after the run the RFID write waits for an install's last record
+INSTALL_LIMIT_S = 120.0        # how long after its start an install may go on before it has failed
 FACTORY_RESET = ("factory_reset", "Factory reset", "record")   # a step only once a PASS is sent
 CERTIFICATE = ("certificate", "Certificate", "record")        # a step only before a PASS, where one is issued
 CERTIFICATE_RANGE = "factory-link issues it and the C5 keeps it"
@@ -250,6 +258,8 @@ RELAY_DELIVERY = 0xFC      # the Kode's boost into the station's load
 RELAY_FORBIDDEN_MASK = 0x03
 RELAY_FORBIDDEN = 0x01     # R2 closed with R1 at rest: the PC's 5 V into the load through the Kode
 RELAY_SETTLE_S = 0.02
+RELAY_LIGHT = 0x08         # R4: the operator light ("the station needs you"), on while its bit is low
+OPERATOR_LIGHT = {"on": False, "byte": RELAY_REST}   # the light and the last pads byte, shared by every writer
 GND_SETTLE_S = 0.1
 CHARGE_SETTLE_S = 1.5
 CHARGE_CURRENT_WAIT_S = 5.0    # how long the charging current is waited for after the settle
@@ -299,6 +309,13 @@ def make_beacon(name):
     """The Mac's BLE beacon (test_dot_ble.py, macOS only)."""
     import test_dot_ble
     return test_dot_ble.Beacon(name)
+
+
+def relay_byte(b):
+    """The pads byte with the operator light added when it is on."""
+    if OPERATOR_LIGHT["on"]:
+        return b & ~RELAY_LIGHT & 0xFF
+    return b | RELAY_LIGHT
 
 
 class Abort(Exception):
@@ -574,6 +591,8 @@ class Station:
         self.sim_missed = set()
         self.sim_wrong = False
         self.pending = {}                    # rows finished later by the PC: nfc and rfid
+        OPERATOR_LIGHT.update(on=False, byte=RELAY_REST)
+        self.installs = {}                   # the images the Kode installs from the microSD: key -> job
         self.done_bg = set()
         self.extra = {}
         self.exit = dict(values={}, reasons={})
@@ -638,6 +657,7 @@ class Station:
                 raise Abort("the placement did not complete")
             self.run_all()
             self.finish_pending()
+            self.finish_installs()
             self.exit_record()
         except Abort as e:
             stop_why = f"not run: {e}"
@@ -761,7 +781,14 @@ class Station:
                   steps=[dict(id=i, name=STEPS[i][0], block=STEPS[i][1]) for i in self.planned()], **extra)
 
     def planned(self):
-        return [i for i in ORDER if not (i == "place" and self.a.no_place)]
+        out = []
+        for i in ORDER:
+            if i == "place" and self.a.no_place:
+                continue
+            if i in SD_IMAGES and i not in self.sd_images():
+                continue
+            out.append(i)
+        return out
 
     def wait_usb(self, port, seconds):
         t = CLOCK.monotonic()
@@ -911,6 +938,9 @@ class Station:
                     s.poll_done = f["state"] == "done"
                     s.lane_idle = f.get("lane") == "idle"
                 return
+            if r.startswith("welcome=") or r.startswith("storage="):
+                self.install_record(f, r)
+                return
             if r.startswith("step="):
                 s.op_steps[s.cur_op].append(r)
                 self.operator_event(f)
@@ -926,6 +956,8 @@ class Station:
                 s.cam_detail.append(r)
                 return
             name = f.get("test")
+            if name == "haptic_pat":                     # the vibration row, with the pattern
+                name = "haptic"
             if name is None:
                 return
             if name in CAM_IDS or name == "led":
@@ -952,6 +984,7 @@ class Station:
                 else:
                     self.op_end_t = CLOCK.monotonic()
                     self.phase("rest")
+                    self.operator_light(False)
                 return
             if name in ROW_SEQ:
                 st = ROW_WORD.get(f.get("result", ""), TIMEOUT)
@@ -969,6 +1002,7 @@ class Station:
                 next_row()
 
         self.handle = handle
+        self.arm_installs()
         self.link.board.send_line("test component=all")
         while True:
             x = self.link.read_line(deadline)
@@ -997,6 +1031,112 @@ class Station:
             if not self.has(sid) and sid not in self.pending:
                 self.begin(sid)
                 self.add(sid, TIMEOUT, why, values=[], detail="\n".join(s.logs)[-REPORT_DETAIL_CHARS:])
+
+    def sd_images(self):
+        """The images the station's settings give the Kode to install from its microSD:
+        {key: (file, sha256)}. No `sd_images` key, nothing is installed."""
+        out = {}
+        cfg = self.cfg.get("sd_images")
+        if not isinstance(cfg, dict):
+            return out
+        for key in SD_IMAGES:
+            item = cfg.get(key)
+            if isinstance(item, dict) and item.get("file") and item.get("sha256"):
+                out[key] = (str(item["file"]), str(item["sha256"]).lower())
+        return out
+
+    def arm_installs(self):
+        """Before the run: each configured image is checked on the Kode's microSD
+        against its SHA-256 and, when it matches, the Kode is told to install it.
+        An image that is not there or does not match is the station's fault, not
+        the Kode's: the row says so, nothing is installed and the run stops."""
+        bad = []
+        for key, (name, want) in self.sd_images().items():
+            t0 = CLOCK.monotonic()
+            self.begin(key)
+            got = ""
+            why = ""
+            try:
+                for r in self.link.cmd(f"file_sha name={quote('/sdcard/' + name)}", 10.0):
+                    m = re.search(r"sha256=([0-9a-f]{64})", r)
+                    if m:
+                        got = m.group(1)
+            except CommandError as e:
+                why = e.term or "no answer"
+            if got != want:
+                if not why:
+                    why = f"SHA-256 {got[:12] or 'unread'} instead of {want[:12]}"
+                self.add(key, NOVERDICT, STATION_FAULT + f"the station's microSD does not hold the right image ({name}): {why}",
+                         f"SHA-256 {want}", CLOCK.monotonic() - t0, values=[])
+                self.log(f"{key}: the station's microSD does not hold the right image ({name}): {why}", "error")
+                bad.append(key)
+                continue
+            self.installs[key] = dict(file=name, t_arm=CLOCK.monotonic(), t0=None, end=None, record="", judged=False)
+        if bad:
+            self.installs = {}
+            raise Abort("the station's microSD does not hold the right image: " + ", ".join(bad))
+        for key in list(self.installs):
+            job = self.installs[key]
+            try:
+                self.link.cmd(f"{SD_IMAGES[key]} name={quote(job['file'])}")
+            except CommandError as e:
+                del self.installs[key]
+                self.add(key, FAIL, f"the Kode did not take the install of {job['file']}: {e.term or 'no answer'}",
+                         f"{key}=installed", 0.0, values=[])
+
+    def install_record(self, f, r):
+        """A `welcome=` or `storage=` record: started, then installed, failed or refused."""
+        key = "storage"
+        if "welcome" in f:
+            key = "welcome"
+        job = self.installs.get(key)
+        if job is None:
+            return
+        now = CLOCK.monotonic()
+        if f[key] == "started":
+            job["t0"] = now
+        elif f[key] in INSTALL_ENDS:
+            job["end"] = f[key]
+            job["record"] = r
+            start = job["t_arm"]
+            if job["t0"] is not None:
+                start = job["t0"]
+            self.blocks[key + "_install"] = round(now - start, 2)
+            self.judge_install(key)
+
+    def installing(self):
+        """True while an install has no last record. Once the run is over the wait
+        has a bound: the install's judgment then comes from finish_installs."""
+        s = self.state
+        for job in self.installs.values():
+            if job["end"] is None and not (s.poll_done and CLOCK.monotonic() - job["t_arm"] > INSTALL_WAIT_S):
+                return True
+        return False
+
+    def judge_install(self, key):
+        """The row of an install, when its last record is in or the wait for it is over."""
+        job = self.installs[key]
+        if job["judged"]:
+            return
+        job["judged"] = True
+        secs = self.blocks.get(key + "_install", CLOCK.monotonic() - job["t_arm"])
+        rng = f"{key}=installed"
+        if job["end"] == "installed":
+            self.add(key, PASS, f"installed from {job['file']} in {secs:.1f} s", rng, secs, values=[],
+                     detail=job["record"])
+        elif job["end"] is None:
+            self.add(key, TIMEOUT, f"no last record {INSTALL_LIMIT_S:.0f} s after the install of {job['file']} began",
+                     rng, secs, values=[])
+        else:
+            self.add(key, FAIL, f"{job['end']}: {job['record']}", rng, secs, values=[], detail=job["record"])
+
+    def finish_installs(self):
+        """Before the exit record and the verdict: every install ended, and well. The
+        factory reset of a PASS needs the Welcome the Kode installed."""
+        for key, job in self.installs.items():
+            while job["end"] is None and CLOCK.monotonic() - job["t_arm"] < INSTALL_LIMIT_S:
+                self.sleep_pump(0.5)
+            self.judge_install(key)
 
     def camera_done(self):
         """The camera's tests and its LED, at the run line's end."""
@@ -1062,6 +1202,7 @@ class Station:
             s.begun.add("buttons")
             self.begin("buttons")
             self.phase("buttons")
+            self.operator_light(True)
 
     def retry_blobs(self):
         """A camera picture that arrived broken is asked for again, three
@@ -1103,7 +1244,11 @@ class Station:
             # 125 kHz carrier of that row was still on failed three runs in eleven.
             rows_in = all(r in self.pending or r in self.done_bg or self.has(r) for r in ("nfc", "rfid"))
             ready = [w for w in todo if w not in ("nfc", "rfid") or (w in self.pending and rows_in)]
-            if s.poll_done and not ready:
+            # The RFID write waits for the images the Kode installs from the microSD;
+            # the NFC, the pads and the radio do not.
+            wait = self.installing()
+            ready = [w for w in ready if w != "rfid" or not wait]
+            if s.poll_done and not ready and not wait:
                 break
             if ready and s.cam_done and s.lane_idle:
                 todo.remove(ready[0])
@@ -1167,6 +1312,14 @@ class Station:
             self.pads_block(CLOCK.sleep)
 
     # ---- the operator --------------------------------------------------------
+    def operator_light(self, on):
+        """R4, the light that tells the operator to press and touch, kept with the pads' relays as they are."""
+        OPERATOR_LIGHT["on"] = on
+        try:
+            self.link.cmd(f"test_dot_relays state=0x{relay_byte(OPERATOR_LIGHT['byte']):02X}")
+        except CommandError as e:
+            self.log(f"operator light: {e}", "error")
+
     def operator_event(self, f):
         """A button or touch step, to the page as it happens."""
         if "step" not in f:
@@ -1177,6 +1330,7 @@ class Station:
             if kind == "press" and not self.state.buttons_phase:
                 self.state.buttons_phase = True
                 self.phase("buttons")
+                self.operator_light(True)
             self.emit(type="operator", step=k, of=int(f["of"]), kind=kind, what=f.get(kind),
                       limit_s=OPERATOR_LIMIT_S, t=CLOCK.time())
             return
@@ -1757,6 +1911,8 @@ class Station:
             if sid not in done:
                 self.add(sid, NOTRUN, stop_why, values=[])
         verdict = self.verdict()
+        if self.link is not None and OPERATOR_LIGHT["on"]:
+            self.operator_light(False)                 # never left on past the operator, whatever stopped it
         if self.link is not None:
             verdict = self.tell_kode(verdict)
             try:
@@ -2049,7 +2205,8 @@ class Pads:
     def relays(self, b):
         relay_guard(self.byte, b)
         self.byte = b
-        f = record(self.link.cmd(f"test_dot_relays state=0x{b:02X}"), "relays")
+        OPERATOR_LIGHT["byte"] = b
+        f = record(self.link.cmd(f"test_dot_relays state=0x{relay_byte(b):02X}"), "relays")
         if not f or not truthy(f.get("ok")):
             raise PadsError(f"relays 0x{b:02X}: {f or 'no record'}")
         self.sleep(RELAY_SETTLE_S)

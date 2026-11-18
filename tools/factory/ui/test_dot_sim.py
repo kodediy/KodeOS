@@ -215,6 +215,13 @@ class Scenario:
                            "charging" (current at once), "slow" (current from
                            the fourth `bat_info`), "full" (no current, charge
                            done) or "idle" (no current, not charging).
+    @param sd_files        {file name: SHA-256}: what the Kode's microSD holds
+                           for `file_sha`.
+    @param install         What `test_dot_welcome` and `test_dot_storage` end
+                           with: "installed", "failed", "refused" or "silent"
+                           (no last record).
+    @param install_s       Seconds from `started` to the last record.
+    @param haptic_name     The name the Kode gives its vibration row.
     @param boost_late      True: `test_dot_boost state=on` answers on=0 with
                            the boost on, as a record taken before the
                            charger's next poll does.
@@ -223,7 +230,8 @@ class Scenario:
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
                  photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
                  rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
-                 boost_late=False):
+                 boost_late=False, sd_files=None, install="installed", install_s=3.0,
+                 haptic_name="haptic_pat"):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -235,6 +243,10 @@ class Scenario:
         self.rfid_dead_write = rfid_dead_write
         self.pads_charger = pads_charger
         self.boost_late = boost_late
+        self.sd_files = dict(sd_files or {})
+        self.install = install
+        self.install_s = install_s
+        self.haptic_name = haptic_name
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -300,7 +312,7 @@ class Scenario:
     def run_ring(self):
         """The records after the `>ok`, which `test_dot_poll` hands over; the
         operator's are added by the operator model."""
-        return [(12.4, self.row("audio", 208)), (12.5, self.row("haptic", 600)),
+        return [(12.4, self.row("audio", 208)), (12.5, self.row(self.haptic_name, 600)),
                 (12.6, self.row("mag", 13)), (12.7, self.row("pmic", 3)), (12.8, self.row("gauge", 2)),
                 (12.9, self.row("ioexp", 0)), (13.0, self.row("clocks", 133)), (13.2, self.row("ir", 132)),
                 (17.7, self.row("nfc", 4508)), (20.3, self.row("rfid", 2565)), (20.4, self.row("mem", 0))]
@@ -478,6 +490,7 @@ class FakeKode:
         self.is_open = False
         self.lines = []
         self.relays_sent = []
+        self.light = []                      # R4 as each `test_dot_relays` set it: True is on
         self.out = []                 # [(due, seq, bytes)], sorted
         self.seq = itertools.count()
         self.rx = b""
@@ -594,6 +607,28 @@ class FakeKode:
         recs[0] = recs[0].replace(SERIAL, self.sc.serial)
         self.answer(recs)
 
+    def v_file_sha(self, a):
+        name = a.get("name", "")
+        sha = self.sc.sd_files.get(name.rpartition("/")[2]) if name.startswith("/sdcard/") else None
+        if sha is None:
+            self.answer([], ">err code=2 msg=nofile")
+            return
+        self.answer([f"file_sha name={name} sha256={sha} size=1048576"], delay=0.2)
+
+    def install_image(self, kind, a):
+        self.answer([f"{kind} ok=1"])
+        self.ring_add(0.5, f"{kind}=started file={a.get('name')}")
+        if self.sc.install == "silent":
+            return
+        word = self.sc.install
+        self.ring_add(0.5 + self.sc.install_s, f"{kind}={word} file={a.get('name')}")
+
+    def v_test_dot_welcome(self, a):
+        self.install_image("welcome", a)
+
+    def v_test_dot_storage(self, a):
+        self.install_image("storage", a)
+
     def v_test_dot_info(self, a):
         self.answer([f"test_dot state={self.mode} locked={int(self.locked_now)} run={self.run_state} "
                      "psram_free=27853504 j3=free"])
@@ -691,8 +726,9 @@ class FakeKode:
         if (b & 0x03) == 0x01:
             self.answer([], ">err code=5 msg=forbidden")
             return
-        self.relays_sent.append(b)
-        self.relays = b
+        self.light.append((b & 0x08) == 0)       # R4, the operator light, is apart from the pads' relays
+        self.relays_sent.append(b | 0x08)
+        self.relays = b | 0x08
         self.answer([f"relays state=0x{b:02X} ok=1"])
 
     def volts(self, ch):
