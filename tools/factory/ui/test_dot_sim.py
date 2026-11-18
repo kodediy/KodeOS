@@ -26,6 +26,10 @@ Cases (`--case`, or the environment variable TEST_DOT_CASE that
   noverdict   everything passes but the pixel check, which cannot judge
   timeouts    the operator does nothing: every button and touch step times out
   misplaced   the placement never completes (the Kode sits badly)
+  off_centre  everything passes, with the Kode 3 mm off the camera window's
+              centre: the station centres the window and places it again
+  camera_off  the fixture's camera too close: the screen's band fits no
+              window, and the framing is the station's NO VERDICT
   no_camera   the camera on J3 never answers
   no_usb      the Kode never appears on USB
 
@@ -40,6 +44,7 @@ import base64
 import bisect
 import io
 import itertools
+import math
 import os
 import random
 import sys
@@ -67,6 +72,13 @@ TOUCH_PX = 64              # how far from the target a touch may land, per axis
 SERIAL = "KODE1TEST00001D"
 MAC_P4 = "38:44:be:07:e6:54"
 WINDOW = "704,628"
+# Where the fake's screen sits: its centre's offset from the camera array's centre, mm,
+# and the camera's scale, sensor px per panel px. This offset is the one the template's
+# window is centred on; the framing is worked out from it and the window in use.
+OFFSET_MM = (-2.40, 1.50)
+SCALE = 2.15
+ANGLE_DEG = -1.0           # the screen's turn, as the placement and cam_straight say it
+BAND_CORNERS = ((-205, -126), (205, -126), (205, 129), (-205, 129))   # panel px from the centre
 
 # What the fake's microSD holds and the station's settings name, so a factory
 # run (which needs both images and the expected kodeOS) goes through.
@@ -273,6 +285,10 @@ class Scenario:
     @param kode_logs       False: the audio and vibration rows log nothing (a
                            kodeOS that logs less).
     @param has_bright      False: a kodeOS without `test_dot_bright` (before r5).
+    @param offset_mm       (dx, dy): the screen's centre from the camera array's,
+                           mm, as the placement and the framing say it.
+    @param scale           The fixture camera's sensor px per panel px: above ~2.38
+                           the judged band fits no window.
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
@@ -284,7 +300,7 @@ class Scenario:
                  sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False,
                  boost_falls_s=None, sd_rereads=None, tones=((1535, -7), (1957, -28)),
                  haptic_on=(284.0, 282.9, 277.3), expratio="1.00", led_flux=(25259, 73720, 104989),
-                 kode_logs=True, has_bright=True):
+                 kode_logs=True, has_bright=True, offset_mm=None, scale=None):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -319,6 +335,33 @@ class Scenario:
         self.led_flux = tuple(led_flux)
         self.kode_logs = kode_logs
         self.has_bright = has_bright
+        if offset_mm is None:
+            offset_mm = (OFFSET_MM[0], OFFSET_MM[1] + 3.0) if case in ("off_centre", "camera_off") else OFFSET_MM
+        self.offset_mm = tuple(offset_mm)
+        self.scale = scale if scale is not None else (2.45 if case == "camera_off" else SCALE)
+        self.win = WINDOW              # the camera window the last placement asked for
+        self.sensor_win = WINDOW       # the one the camera opened with, as it woke
+
+    @staticmethod
+    def _xy(win):
+        return [int(v) for v in win.split(",")]
+
+    def offset_said(self):
+        """The offset the Kode says: worked out with the window asked for, on a photo
+        taken in the window the camera opened with."""
+        w, o = self._xy(self.win), self._xy(self.sensor_win)
+        return tuple(self.offset_mm[k] + (w[k] - o[k]) / self.scale * 0.0807 for k in (0, 1))
+
+    def framing(self):
+        """Whether the judged band (panel rows 125 to 380, the whole width, turned
+        ANGLE_DEG) sits 40 px inside the camera's window, as tdan_judge_frame decides it."""
+        wx, wy = self._xy(self.sensor_win)
+        sx = 1296 + self.offset_mm[0] / 0.0807 * self.scale - wx
+        sy = 972 + self.offset_mm[1] / 0.0807 * self.scale - wy
+        ca, sa = math.cos(math.radians(ANGLE_DEG)), math.sin(math.radians(ANGLE_DEG))
+        us = [sx + (x * ca - y * sa) * self.scale for x, y in BAND_CORNERS]
+        vs = [sy + (x * sa + y * ca) * self.scale for x, y in BAND_CORNERS]
+        return min(us) >= 40 and max(us) <= 1056 - 40 and min(vs) >= 40 and max(vs) <= 768 - 40
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -341,10 +384,11 @@ class Scenario:
                 (18.0, "place state=misplaced"),
                 (18.0, "place result=misplaced marks=2 dx_mm=18.20 dy_mm=-6.40 ang_deg=12.30 "
                        "limit_mm=15.0 limit_deg=5.0"), (18.0, ">ok")]
+        dx, dy = (f"{v:.2f}" for v in self.offset_said())
         return head + [(3.4, "place state=searching"),
-                       (3.5, f'place check n=1 marks=4 dx=-1.78 dy=1.09 ang=-1.00 win="{WINDOW}"'),
-                       (5.4, f'place result=ok dx_mm=-1.78 dy_mm=1.09 ang_deg=-1.00 marks=4 tries=1 '
-                             f'win="{WINDOW}" ms=1966'),
+                       (3.5, f'place check n=1 marks=4 dx={dx} dy={dy} ang=-1.00 win="{self.win}"'),
+                       (5.4, f'place result=ok dx_mm={dx} dy_mm={dy} ang_deg=-1.00 marks=4 tries=1 '
+                             f'win="{self.win}" ms=1966'),
                        (5.4, ">ok")]
 
     # ---- the run -----------------------------------------------------------
@@ -362,9 +406,11 @@ class Scenario:
             extra = blob_lines("dead_97_275", make_jpeg("dead 97,275", (64, 64), (190, 186, 196)))
         elif self.case == "noverdict":
             pixels = "test=cam_pixels result=noverdict why=noise sat=0.000,0.000 sigma=0.040,0.066"
+        inside = self.framing()
+        dx, dy = (f"{v:.2f}" for v in self.offset_said())
         return [
-            "test=cam_framing result=pass marks=4 inside=1 dx_mm=-1.78 dy_mm=1.10 scale=2.234 nominal=1 "
-            f'min_marks=4 rescued=0 recentred=0 win="{WINDOW}"',
+            f"test=cam_framing result={'pass' if inside else 'fail'} marks=4 inside={int(inside)} dx_mm={dx} "
+            f'dy_mm={dy} scale={self.scale:.3f} nominal=1 min_marks=4 rescued=0 recentred=0 win="{self.win}"',
             "test=cam_straight result=pass angle_deg=-1.00 persp_pct=0.2 max_angle=7 max_persp_pct=8",
         ] + [x[2:] for x in extra] + [
             pixels,
@@ -697,6 +743,7 @@ class FakeKode:
                 self.answer([], ">err code=5 msg=locked")
                 return
             if verb in WAKING_VERBS:
+                self.waking = self.mode == "dormant"
                 self.mode = "awake"
         fn = getattr(self, "v_" + verb, None)
         if fn is None:
@@ -792,6 +839,10 @@ class FakeKode:
         self.answer([f"screen phase={a.get('phase', '-')} ok=1"])
 
     def v_test_dot_place(self, a):
+        if a.get("win"):
+            self.sc.win = a["win"]
+        if getattr(self, "waking", True):  # the camera opens its window only as it wakes
+            self.sc.sensor_win = self.sc.win
         for d, r in self.sc.place():
             self.at(d, r)
 
@@ -1107,7 +1158,8 @@ class NullBeacon:
 def main(argv=None):
     ap = argparse.ArgumentParser(description="The station program against a fake Kode.")
     ap.add_argument("--case", default=os.environ.get("TEST_DOT_CASE", "pass"),
-                    choices=["pass", "fail", "nfc", "buttons", "noverdict", "timeouts", "misplaced", "no_camera", "no_usb"])
+                    choices=["pass", "fail", "nfc", "buttons", "noverdict", "timeouts", "misplaced", "no_camera", "no_usb",
+                             "off_centre", "camera_off"])
     ap.add_argument("--speed", type=float, default=float(os.environ.get("TEST_DOT_SPEED", "1")),
                     help="how much faster than the recorded board the fake answers")
     ap.add_argument("--events", action="store_true")

@@ -50,6 +50,7 @@ import csv
 import html
 import io
 import json
+import math
 import os
 import random
 import re
@@ -266,6 +267,45 @@ INJECT_ID = {"pad-left": "left", "bottom": "bot", "pad-down": "down", "top": "to
              "pad-right": "right", "pad-up": "up"}
 
 PLACE_DEFAULTS = dict(usb_s=30, camera_s=10, marks_s=15, dx_mm=15, turn_deg=5, window=[704, 628])
+
+# The camera's window on the fixture (test_dot_priv.h, tdan.h). The Kode photographs a
+# WIN_W x WIN_H window of the OV5640's array; the judged band of the glass (panel rows
+# 125 to 380, the whole width) must sit INSIDE_MARGIN_PX inside it. The placement says
+# where the screen's centre is, in mm from the array's centre; the window that centres
+# the band on it is worked out here and, when it is more than RECENTRE_MIN_PX away from
+# the one in use, the placement is taken again with it and the station keeps it.
+SENSOR_W, SENSOR_H = 2592, 1944
+SENSOR_CX, SENSOR_CY = 1296, 972
+WIN_W, WIN_H = 1056, 768
+MM_PER_PANEL_PX = 0.0807
+NOMINAL_SCALE = 2.15               # sensor px per panel px on the fixture
+BAND_X = (-205.0, 205.0)           # the band's edges, panel px from the screen's centre
+BAND_Y = (-126.0, 129.0)
+INSIDE_MARGIN_PX = 40
+RECENTRE_MIN_PX = 16
+
+
+def centred_window(dx_mm, dy_mm):
+    """The window whose centre is the screen's: [column, row], even, inside the array."""
+    def axis(centre, d_mm, half, room):
+        v = centre + d_mm / MM_PER_PANEL_PX * NOMINAL_SCALE - half
+        return min(max(2 * round(v / 2), 0), room)
+    return [axis(SENSOR_CX, dx_mm, WIN_W // 2, SENSOR_W - WIN_W),
+            axis(SENSOR_CY, dy_mm, WIN_H // 2, SENSOR_H - WIN_H)]
+
+
+def band_margins(dx_mm, dy_mm, scale, win, angle_deg=0.0):
+    """How far inside its limit each edge of the judged band sits, px of the window:
+    worked out from the offset, the scale and the turn, not measured. On 608 bench
+    records its sign is the Kode's `inside` in every one."""
+    sx = SENSOR_CX + dx_mm / MM_PER_PANEL_PX * scale - win[0]
+    sy = SENSOR_CY + dy_mm / MM_PER_PANEL_PX * scale - win[1]
+    ca, sa = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
+    corners = [(x, y) for x in BAND_X for y in BAND_Y]
+    us = [sx + (x * ca - y * sa) * scale for x, y in corners]
+    vs = [sy + (x * sa + y * ca) * scale for x, y in corners]
+    m = INSIDE_MARGIN_PX
+    return dict(left=min(us) - m, right=WIN_W - m - max(us), top=min(vs) - m, bottom=WIN_H - m - max(vs))
 
 # Limits the Kode does not judge itself, worked out on the PC from what it sends: each is
 # written on its row with its margin, and moves the verdict only when `judge_extra` says so.
@@ -666,6 +706,7 @@ class Station:
         self.results = []
         self.blocks = {}
         self.place_again = False       # a placement the camera lost was tried again
+        self.recentred = None          # the camera window centred on the screen, once per run
         self.t0 = CLOCK.monotonic()
         # A bench run never resets or locks a Kode: an injected operator, an
         # NFC tag left unwritten or a placement skipped is not a factory test.
@@ -987,15 +1028,10 @@ class Station:
             self.log(f"{line}: {e.term or 'no answer'}")
 
     # ---- placement ---------------------------------------------------------
-    def place(self):
-        """The Kode in the fixture: the camera on J3, the four marks, the
-        offset and the turn inside their limits. True: the test starts."""
+    def place_look(self, win):
+        """One `test_dot_place` with the camera window `win`: (result record, records,
+        location picture as a list, last line)."""
         c = self.cfg["place"]
-        self.begin("place")
-        t1 = CLOCK.monotonic()
-        self.emit(type="place", state="waiting", text="Put the Kode in the nest", t=CLOCK.time())
-        self.phase("place")
-        win = c.get("window") or PLACE_DEFAULTS["window"]
         line = (f"test_dot_place win={quote(f'{int(win[0])},{int(win[1])}')} "
                 f"cam_ms={int(float(c['camera_s']) * 1000)} mark_ms={int(float(c['marks_s']) * 1000)} "
                 f"dx_mm={num_text(c['dx_mm'])} deg={num_text(c['turn_deg'])}")
@@ -1022,13 +1058,70 @@ class Station:
             term = e.term
         blobs.flush()
         img = self.save_cam_blobs(blobs)
-        img = [img["location"]] if "location" in img else []
-        dt = CLOCK.monotonic() - t1
+        return res, recs, ([img["location"]] if "location" in img else []), term
+
+    def place_fresh(self, win):
+        """The station verbs ended and J3 off and on: the camera opens its window
+        only when it wakes, so a placement with another window starts here."""
+        try:
+            self.link.cmd("test_dot_end", END_TIMEOUT_S)
+        except CommandError as e:
+            self.log(f"test_dot_end before the next placement: {e.term or 'no answer'}")
+        CLOCK.sleep(J3_OFF_S)
+        self.screen("connecting")
+        return self.place_look(win)
+
+    def recentre(self, res, win):
+        """A good placement whose screen sits off the window's centre: the placement
+        again with the centred window, once per run. (result, records, picture, last
+        line) of the placement that counts, or None when the window stays."""
+        try:
+            new = centred_window(float(res["dx_mm"]), float(res["dy_mm"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        if max(abs(new[0] - win[0]), abs(new[1] - win[1])) <= RECENTRE_MIN_PX:
+            return None
+        t = CLOCK.monotonic()
+        self.recentred = dict(before=list(win), after=new, ok=False, secs=0.0)
+        self.log(f"placement: the screen sits off the camera window's centre; window {win[0]},{win[1]} "
+                 f"-> {new[0]},{new[1]}, placed again")
+        self.emit(type="place", state="searching", text="Centring the camera on the Kode", t=CLOCK.time())
+        got = self.place_fresh(new)
+        if (got[0] or {}).get("result") == "ok":
+            self.recentred["ok"] = True
+        else:
+            # The window that saw the marks, back: the framing row says the rest.
+            self.log("placement with the centred window: no good; the window in use stays")
+            got = self.place_fresh(win)
+        self.recentred["secs"] = round(CLOCK.monotonic() - t, 2)
+        self.blocks["placement_recentre"] = self.recentred["secs"]
+        return got
+
+    def place(self):
+        """The Kode in the fixture: the camera on J3, the four marks, the
+        offset and the turn inside their limits. True: the test starts."""
+        c = self.cfg["place"]
+        self.begin("place")
+        t1 = CLOCK.monotonic()
+        self.emit(type="place", state="waiting", text="Put the Kode in the nest", t=CLOCK.time())
+        self.phase("place")
+        win = [int(v) for v in (c.get("window") or PLACE_DEFAULTS["window"])]
+        res, recs, img, term = self.place_look(win)
         r = (res or {}).get("result")
+        if r == "ok" and self.recentred is None:
+            got = self.recentre(res, win)
+            if got is not None:
+                res, more, img, term = got
+                recs = recs + more
+                r = (res or {}).get("result")
+        dt = CLOCK.monotonic() - t1
         self.blocks["placement"] = round(dt, 2)
         if r == "ok":
             msg = (f"placed: offset {res.get('dx_mm')} / {res.get('dy_mm')} mm, turn {res.get('ang_deg')} degrees, "
                    f"{res.get('tries')} checks")
+            if self.recentred and self.recentred["ok"]:
+                b, a = self.recentred["before"], self.recentred["after"]
+                msg += f"; camera window centred on it: {b[0]},{b[1]} -> {a[0]},{a[1]}"
             self.add("place", PASS, msg, f"offset <= {c['dx_mm']} mm, turn <= {c['turn_deg']} degrees", dt, img,
                      values=values_from(" ".join(recs[-1:])))
             self.emit(type="place", state="ok", text="Kode placed: the test starts", t=CLOCK.time())
@@ -1474,6 +1567,8 @@ class Station:
                     rng.append(f"{k}={v}")
                 unit = "mm" if k.endswith("_mm") else ("degrees" if k.endswith("_deg") else "")
                 vals.append(value(k, val, unit))
+            if i == "cam_framing":
+                st, meas = self.framing(f, st, meas, vals)
             pics = []
             if i == "cam_pixels":
                 pics = [b for k, b in imgs.items() if k.startswith(("dead_", "on_"))]
@@ -1506,6 +1601,29 @@ class Station:
             self.begin("buttons")
             self.phase("buttons")
             self.operator_light(True)
+
+    def framing(self, f, st, meas, vals):
+        """cam_framing is the fixture's, not the Kode's: written with the band's margin,
+        never a FAIL. A band outside the window (centred when the placement needed it)
+        is the station's camera off centre: NO VERDICT, the station to recalibrate."""
+        try:
+            win = [int(v) for v in f["win"].strip('"').split(",")]
+            turn = float((self.state.cam_tests.get("cam_straight") or {}).get("angle_deg", 0))
+            m = band_margins(float(f["dx_mm"]), float(f["dy_mm"]), float(f["scale"]), win, turn)
+        except (KeyError, ValueError, IndexError):
+            m = None
+        if m:
+            worst = min(m, key=m.get)
+            vals.append(value("band_margin", round(m[worst]), "px"))
+            meas = (f"band margin {m[worst]:+.0f} px at the {worst} (left {m['left']:.0f}, right {m['right']:.0f}, "
+                    f"top {m['top']:.0f}, bottom {m['bottom']:.0f}; worked out from the offset, scale and turn); "
+                    + meas)
+        if st == FAIL:
+            how = " even centred on the Kode" if self.recentred and self.recentred["ok"] else ""
+            meas = (STATION_FAULT + "the fixture's camera is off centre, recalibrate the station: the screen's "
+                    f"judged band is not inside the camera window{how}; " + meas)
+            st = NOVERDICT
+        return st, meas
 
     def retry_blobs(self):
         """A camera picture that arrived broken is asked for again, three
@@ -2549,7 +2667,7 @@ class Station:
     def write_results(self, shown, total):
         doc = dict(verdict=shown, serial=self.info["serial"], repeat_of=self.repeat_of, lock=self.lock, info=self.info,
                    total_s=round(total, 1), blocks=self.blocks, exit_record=self.exit, photos=self.photos,
-                   place_again=self.place_again, extra_limits=self.extra_limits, bench_bright=self.bench_bright,
+                   place_again=self.place_again, recentred=self.recentred, extra_limits=self.extra_limits, bench_bright=self.bench_bright,
                    steps={r["id"]: r for r in self.results})
         write_atomic(self.outdir / "results.json", json.dumps(doc, indent=1, ensure_ascii=False).encode())
 

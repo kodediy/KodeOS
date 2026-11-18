@@ -111,7 +111,10 @@ A `timeout` answer has no `ms` and no `got`: the Kode gives none.
 `j3_failed` or `panel_failed` (these two carry a `reason` too;
 `badly_seated` carries the placement picture as `image`). The run's
 clock starts at `ok`. The camera window of a good placement is kept in the
-station's configuration (`place.window`).
+station's configuration (`place.window`). When the screen sits more than
+16 px off that window's centre, the placement is taken again, once, with the
+window centred on it (`searching` with "Centring the camera on the Kode"), and
+that window is the one kept.
 
 ## `camera`
 

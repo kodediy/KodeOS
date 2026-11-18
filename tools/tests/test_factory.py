@@ -457,6 +457,113 @@ class TestCameraLost(Base):
         self.assertNotIn("badly seated", place["measured"])
 
 
+class TestFraming(Base):
+    """The camera window follows the screen; the framing is the fixture's, never the Kode's."""
+
+    def test_the_window_is_worked_out_as_the_bench_found_it(self):
+        # The bench's answers: an offset of -0.67 / -0.74 mm centres at 750,568, one of -0.82 / -2.94 mm at 746,510.
+        self.assertEqual(final.centred_window(-0.67, -0.74), [750, 568])
+        self.assertEqual(final.centred_window(-0.82, -2.94), [746, 510])
+        self.assertEqual(final.centred_window(*sim.OFFSET_MM), [int(v) for v in sim.WINDOW.split(",")])
+        # Never outside the array, always even.
+        self.assertEqual(final.centred_window(-40, 40), [0, 1176])
+
+    def test_the_margin_has_the_sign_the_kode_judged_on_the_bench(self):
+        # Two bench records at the old window 774,600: just in (inside=1) and just out (inside=0).
+        m_in = final.band_margins(-0.91, -1.68, 2.147, [774, 600], 1.43)
+        m_out = final.band_margins(-0.80, -2.02, 2.149, [774, 600], 1.37)
+        self.assertGreater(min(m_in.values()), 0)
+        self.assertLess(min(m_out.values()), 0)
+        self.assertEqual(min(m_out, key=m_out.get), "top")
+        # Centred on the second one, the band is well inside.
+        self.assertGreater(min(final.band_margins(-0.80, -2.02, 2.149, final.centred_window(-0.80, -2.02),
+                                                  1.37).values()), 30)
+
+    def test_a_centred_kode_is_placed_once_and_costs_nothing(self):
+        r = self.run_case(sim.Scenario())
+        self.assertEqual(r.rc, 0, r.stdout[-2000:])
+        res = r.results()
+        self.assertEqual(r.sent("test_dot_place"), [f'test_dot_place win="{sim.WINDOW}" cam_ms=10000 mark_ms=15000 '
+                                                    'dx_mm=15 deg=5'])
+        ln = r.fake.lines
+        self.assertNotIn("test_dot_end", ln[:ln.index("test component=all")])
+        self.assertIsNone(res["recentred"])
+        self.assertNotIn("placement_recentre", res["blocks"])
+        framing = res["steps"]["cam_framing"]
+        self.assertEqual(framing["status"], "PASS")
+        self.assertRegex(framing["measured"], r"^band margin \+\d+ px at the ")
+        self.assertIn("band_margin", [v["name"] for v in framing["values"]])
+
+    def test_a_kode_3_mm_off_centre_gets_the_window_centred_and_passes(self):
+        r = self.run_case(sim.Scenario(case="off_centre"))
+        self.assertEqual(r.rc, 0, r.stdout[-2000:])
+        res = r.results()
+        self.assertEqual(res["verdict"], "PASS")
+        new = final.centred_window(*r.fake.sc.offset_mm)
+        self.assertEqual([ln.split(" ")[1] for ln in r.sent("test_dot_place")],
+                         [f'win="{sim.WINDOW}"', f'win="{new[0]},{new[1]}"'])
+        # The camera opens its window when it wakes: the verbs end in between.
+        ln = r.fake.lines
+        first, second = [i for i, x in enumerate(ln) if x.startswith("test_dot_place")]
+        self.assertIn("test_dot_end", ln[first:second])
+        self.assertEqual(res["recentred"]["before"], [int(v) for v in sim.WINDOW.split(",")])
+        self.assertEqual(res["recentred"]["after"], new)
+        self.assertTrue(res["recentred"]["ok"])
+        self.assertGreater(res["blocks"]["placement_recentre"], 0)
+        self.assertIn(f"-> {new[0]},{new[1]}", res["steps"]["place"]["measured"])
+        self.assertEqual(res["steps"]["cam_framing"]["status"], "PASS")
+        self.assertEqual(json.loads(r.cfg.read_text())["place"]["window"], new)
+        # The station keeps the window: the next Kode in the same spot is placed once.
+        again = Run(sim.Scenario(case="off_centre"), home=r.home).go()
+        self.assertEqual(again.rc, 0, again.stdout[-2000:])
+        self.assertEqual(again.sent("test_dot_place")[0].split(" ")[1], f'win="{new[0]},{new[1]}"')
+        self.assertEqual(len(again.sent("test_dot_place")), 1)
+        self.assertIsNone(again.results()["recentred"])
+
+    def test_without_the_recentre_the_same_kode_would_not_fit(self):
+        # The simulator's framing is worked out, not canned: the old window leaves the band out.
+        sc = sim.Scenario(case="off_centre")
+        self.assertFalse(sc.framing())
+        sc.win = sc.sensor_win = ",".join(str(v) for v in final.centred_window(*sc.offset_mm))
+        self.assertTrue(sc.framing())
+
+    def test_a_new_window_without_waking_the_camera_again_changes_nothing(self):
+        # The camera opens its window as it wakes: a second placement without the end
+        # keeps the old window, and the band stays out.
+        with mock.patch.object(final.Station, "place_fresh",
+                               lambda self, win: self.place_look(win)):
+            r = self.run_case(sim.Scenario(case="off_centre"))
+        self.assertEqual(len(r.sent("test_dot_place")), 2)
+        self.assertNotEqual(r.results()["steps"]["cam_framing"]["status"], "PASS")
+
+    def test_a_band_that_fits_no_window_is_the_station_never_a_fail(self):
+        r = self.run_case(sim.Scenario(case="camera_off"))
+        res = r.results()
+        self.assertEqual(res["verdict"], "NO VERDICT", res["steps"]["cam_framing"])
+        self.assertEqual(len(r.sent("test_dot_place")), 2, "one recentre, no more")
+        self.assertTrue(res["recentred"]["ok"])
+        framing = res["steps"]["cam_framing"]
+        self.assertEqual(framing["status"], "NO VERDICT")
+        self.assertTrue(framing["measured"].startswith("station: the fixture's camera is off centre, recalibrate"),
+                        framing["measured"])
+        self.assertNotIn("FAIL", [s["status"] for s in res["steps"].values()])
+        # The other camera rows judge as ever.
+        for i in ("cam_pixels", "cam_lines", "cam_zones", "cam_colour"):
+            self.assertEqual(res["steps"][i]["status"], "PASS", i)
+        # The operator reads it as the station's.
+        words, kind = reports.phrases(dict(framing, id="cam_framing"))
+        self.assertEqual(kind, "station")
+        self.assertIn("recalibrate", words[0])
+
+    def test_a_framing_fail_from_the_kode_is_never_a_fail(self):
+        # A Kode whose window was already centred and the band still out: no recentre, NO VERDICT.
+        r = self.run_case(sim.Scenario(case="camera_off", offset_mm=sim.OFFSET_MM))
+        res = r.results()
+        self.assertEqual(len(r.sent("test_dot_place")), 1)
+        self.assertEqual(res["steps"]["cam_framing"]["status"], "NO VERDICT")
+        self.assertEqual(res["verdict"], "NO VERDICT")
+
+
 class TestPhotos(Base):
 
     def test_missing_photo_is_asked_again_up_to_three_times(self):
