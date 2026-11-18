@@ -112,9 +112,9 @@ A `timeout` answer has no `ms` and no `got`: the Kode gives none.
 `badly_seated` carries the placement picture as `image`). The run's
 clock starts at `ok`. The camera window of a good placement is kept in the
 station's configuration (`place.window`). When the screen sits more than
-16 px off that window's centre, the placement is taken again, once, with the
-window centred on it (`searching` with "Centring the camera on the Kode"), and
-that window is the one kept.
+16 px off that window's centre, the window centred on it is kept instead and the
+run ends at once with `recalibrated` (the station's NO VERDICT): the Kode's next
+run uses the new window.
 
 ## `camera`
 

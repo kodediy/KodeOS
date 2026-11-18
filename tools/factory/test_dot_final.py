@@ -276,7 +276,8 @@ PLACE_DEFAULTS = dict(usb_s=30, camera_s=10, marks_s=15, dx_mm=15, turn_deg=5, w
 # 125 to 380, the whole width) must sit INSIDE_MARGIN_PX inside it. The placement says
 # where the screen's centre is, in mm from the array's centre; the window that centres
 # the band on it is worked out here and, when it is more than RECENTRE_MIN_PX away from
-# the one in use, the placement is taken again with it and the station keeps it.
+# the one in use, the station keeps it and ends the run as its own NO VERDICT: the
+# Kode's next run uses it.
 SENSOR_W, SENSOR_H = 2592, 1944
 SENSOR_CX, SENSOR_CY = 1296, 972
 WIN_W, WIN_H = 1056, 768
@@ -709,7 +710,7 @@ class Station:
         self.results = []
         self.blocks = {}
         self.place_again = False       # a placement the camera lost was tried again
-        self.recentred = None          # the camera window centred on the screen, once per run
+        self.recentred = None          # the camera window this run centred and kept for the next
         self.t0 = CLOCK.monotonic()
         # A bench run never resets or locks a Kode: an injected operator, an
         # NFC tag left unwritten or a placement skipped is not a factory test.
@@ -1063,42 +1064,16 @@ class Station:
         img = self.save_cam_blobs(blobs)
         return res, recs, ([img["location"]] if "location" in img else []), term
 
-    def place_fresh(self, win):
-        """The station verbs ended and J3 off and on: the camera opens its window
-        only when it wakes, so a placement with another window starts here."""
-        try:
-            self.link.cmd("test_dot_end", END_TIMEOUT_S)
-        except CommandError as e:
-            self.log(f"test_dot_end before the next placement: {e.term or 'no answer'}")
-        CLOCK.sleep(J3_OFF_S)
-        self.screen("connecting")
-        return self.place_look(win)
-
-    def recentre(self, res, win):
-        """A good placement whose screen sits off the window's centre: the placement
-        again with the centred window, once per run. (result, records, picture, last
-        line) of the placement that counts, or None when the window stays."""
+    def off_centre(self, res, win):
+        """The window centred on a good placement's screen, when it is more than
+        RECENTRE_MIN_PX away from `win`; else None."""
         try:
             new = centred_window(float(res["dx_mm"]), float(res["dy_mm"]))
         except (KeyError, TypeError, ValueError):
             return None
         if max(abs(new[0] - win[0]), abs(new[1] - win[1])) <= RECENTRE_MIN_PX:
             return None
-        t = CLOCK.monotonic()
-        self.recentred = dict(before=list(win), after=new, ok=False, secs=0.0)
-        self.log(f"placement: the screen sits off the camera window's centre; window {win[0]},{win[1]} "
-                 f"-> {new[0]},{new[1]}, placed again")
-        self.emit(type="place", state="searching", text="Centring the camera on the Kode", t=CLOCK.time())
-        got = self.place_fresh(new)
-        if (got[0] or {}).get("result") == "ok":
-            self.recentred["ok"] = True
-        else:
-            # The window that saw the marks, back: the framing row says the rest.
-            self.log("placement with the centred window: no good; the window in use stays")
-            got = self.place_fresh(win)
-        self.recentred["secs"] = round(CLOCK.monotonic() - t, 2)
-        self.blocks["placement_recentre"] = self.recentred["secs"]
-        return got
+        return new
 
     def place(self):
         """The Kode in the fixture: the camera on J3, the four marks, the
@@ -1111,20 +1086,29 @@ class Station:
         win = [int(v) for v in (c.get("window") or PLACE_DEFAULTS["window"])]
         res, recs, img, term = self.place_look(win)
         r = (res or {}).get("result")
-        if r == "ok" and self.recentred is None:
-            got = self.recentre(res, win)
-            if got is not None:
-                res, more, img, term = got
-                recs = recs + more
-                r = (res or {}).get("result")
         dt = CLOCK.monotonic() - t1
         self.blocks["placement"] = round(dt, 2)
+        new = self.off_centre(res, win) if r == "ok" else None
+        if new:
+            # The camera opens its window only as it wakes, and a second wake in
+            # one run finds no room for the photos: the station keeps the
+            # centred window and the next run of the Kode uses it.
+            self.recentred = dict(before=win, after=new)
+            self.cfg["place"]["window"] = new
+            try:
+                save_config(self.config_path, self.cfg)
+            except OSError as e:
+                self.log(f"the centred camera window could not be kept: {e}", "error")
+            msg = (STATION_FAULT + "the fixture's camera was off centre and is recalibrated: run the Kode again "
+                   f"(camera window {win[0]},{win[1]} -> {new[0]},{new[1]}; offset {res.get('dx_mm')} / "
+                   f"{res.get('dy_mm')} mm)")
+            self.add("place", NOVERDICT, msg, f"camera window within {RECENTRE_MIN_PX} px of the screen's centre",
+                     dt, img, values=values_from(" ".join(recs[-1:])))
+            self.emit(type="place", state="recalibrated", text=msg, t=CLOCK.time())
+            return False
         if r == "ok":
             msg = (f"placed: offset {res.get('dx_mm')} / {res.get('dy_mm')} mm, turn {res.get('ang_deg')} degrees, "
                    f"{res.get('tries')} checks")
-            if self.recentred and self.recentred["ok"]:
-                b, a = self.recentred["before"], self.recentred["after"]
-                msg += f"; camera window centred on it: {b[0]},{b[1]} -> {a[0]},{a[1]}"
             self.add("place", PASS, msg, f"offset <= {c['dx_mm']} mm, turn <= {c['turn_deg']} degrees", dt, img,
                      values=values_from(" ".join(recs[-1:])))
             self.emit(type="place", state="ok", text="Kode placed: the test starts", t=CLOCK.time())
@@ -1613,7 +1597,7 @@ class Station:
 
     def framing(self, f, st, meas, vals):
         """cam_framing is the fixture's, not the Kode's: written with the band's margin,
-        never a FAIL. A band outside the window (centred when the placement needed it)
+        never a FAIL. A band outside the window (centred on the Kode by the placement)
         is the station's camera off centre: NO VERDICT, the station to recalibrate."""
         try:
             win = [int(v) for v in f["win"].strip('"').split(",")]
@@ -1628,9 +1612,8 @@ class Station:
                     f"top {m['top']:.0f}, bottom {m['bottom']:.0f}; worked out from the offset, scale and turn); "
                     + meas)
         if st == FAIL:
-            how = " even centred on the Kode" if self.recentred and self.recentred["ok"] else ""
             meas = (STATION_FAULT + "the fixture's camera is off centre, recalibrate the station: the screen's "
-                    f"judged band is not inside the camera window{how}; " + meas)
+                    "judged band is not inside the camera window centred on the Kode; " + meas)
             st = NOVERDICT
         return st, meas
 

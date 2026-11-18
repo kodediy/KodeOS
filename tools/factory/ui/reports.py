@@ -51,6 +51,7 @@ BUTTON = {"left": "LEFT", "right": "RIGHT", "up": "UP", "down": "DOWN", "top": "
 STATION = [
     (re.compile(r"^pads_"), re.compile(r"^station: "), "Rear pads: the station's relays or its 5 V"),
     (re.compile(r"^nfc$"), re.compile(r"the write found no tag"), "NFC: the station's test tag was not read"),
+    (re.compile(r"^place$"), re.compile(r"is recalibrated"), "Camera recentred on the Kode: run the Kode again"),
     (re.compile(r"^cam_"), re.compile(r"^station: "), "Camera: the station's camera is off centre (recalibrate)"),
 ]
 NOT_JUDGED = {"exit_record"}          # the exit record never moves the verdict

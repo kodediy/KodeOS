@@ -199,7 +199,7 @@ const OP_NAME={info:"Identification",place:"Placement",pmic:"Charger",gauge:"Bat
  pads_charge:"Rear pads: charging",pads_delivery:"Rear pads: delivery",pads_gnd:"Rear pads: GND",pads_loop:"Rear pads: data",
  buttons:"Buttons",tp:"Touch",mem:"Memory",exit_record:"Exit record",certificate:"Certificate",factory_reset:"Factory reset",
  lock:"Not locked: do not ship this Kode"};
-const STATION=[[/^pads_/,/^station: /,"Rear pads: the station's relays or its 5 V"],[/^nfc$/,/the write found no tag/,"NFC: the station's test tag was not read"],[/^cam_/,/^station: /,"Camera: the station's camera is off centre (recalibrate)"]];
+const STATION=[[/^pads_/,/^station: /,"Rear pads: the station's relays or its 5 V"],[/^nfc$/,/the write found no tag/,"NFC: the station's test tag was not read"],[/^place$/,/is recalibrated/,"Camera recentred on the Kode: run the Kode again"],[/^cam_/,/^station: /,"Camera: the station's camera is off centre (recalibrate)"]];
 const NOT_JUDGED=["exit_record"];
 const BNAME={"pad-left":"LEFT","pad-right":"RIGHT","pad-up":"UP","pad-down":"DOWN",top:"BLUE",bottom:"RED"};
 function buttonPhrases(){const by={};for(const b in btnHist){const r=btnHist[b];(by[r]=by[r]||[]).push(BNAME[b]||b)}

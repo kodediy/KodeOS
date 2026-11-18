@@ -26,10 +26,10 @@ Cases (`--case`, or the environment variable TEST_DOT_CASE that
   noverdict   everything passes but the pixel check, which cannot judge
   timeouts    the operator does nothing: every button and touch step times out
   misplaced   the placement never completes (the Kode sits badly)
-  off_centre  everything passes, with the Kode 3 mm off the camera window's
-              centre: the station centres the window and places it again
+  off_centre  the Kode 3 mm off the camera window's centre: the station keeps
+              the centred window and stops (NO VERDICT); run it again to pass
   camera_off  the fixture's camera too close: the screen's band fits no
-              window, and the framing is the station's NO VERDICT
+              window, even centred, and the framing is the station's NO VERDICT
   no_camera   the camera on J3 never answers
   no_usb      the Kode never appears on USB
 
@@ -339,7 +339,7 @@ class Scenario:
         self.kode_logs = kode_logs
         self.has_bright = has_bright
         if offset_mm is None:
-            offset_mm = (OFFSET_MM[0], OFFSET_MM[1] + 3.0) if case in ("off_centre", "camera_off") else OFFSET_MM
+            offset_mm = (OFFSET_MM[0], OFFSET_MM[1] + 3.0) if case == "off_centre" else OFFSET_MM
         self.offset_mm = tuple(offset_mm)
         self.scale = scale if scale is not None else (2.45 if case == "camera_off" else SCALE)
         self.led_result = led_result
