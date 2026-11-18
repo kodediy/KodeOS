@@ -1683,6 +1683,23 @@ class Station:
                     read = f.get("text", "")
                 if r.startswith("nfc=tag") and not uid:
                     uid = f.get("uid", "")
+            if write and wrote and read != serial:
+                # The read back is not the serial after a write the Kode took: a write
+                # cut short by the flash (d3_p3: "KODE1R8", the length of the text
+                # before) or a read that failed once. Once more, and the read back
+                # still decides.
+                retries += 1
+                self.operator_sim_pump()
+                try:
+                    wr2, _ = self.link.exchange(f"nfc_write text={quote(serial)}", 30.0)
+                    det.append(" ".join(wr2))
+                    self.operator_sim_pump()
+                    rd = self.link.cmd("nfc_read ms=3000", 30.0)
+                except CommandError as e:
+                    rd = e.records
+                    det.append(str(e))
+                det.append(" ".join(rd))
+                read = next((fields(r).get("text", "") for r in rd if r.startswith("nfc=ndef")), "")
         except Exception as e:
             det.append(f"{type(e).__name__}: {e}")
         ok = (read == serial and wrote) if write else bool(uid)

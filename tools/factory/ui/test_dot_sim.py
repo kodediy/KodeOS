@@ -245,6 +245,9 @@ class Scenario:
                            and are written.
     @param sha_refused     True: a kodeOS without sha= (before r3): the key is
                            refused with `>err code=3 msg=sha`.
+    @param nfc_truncated   How many `nfc_write`s, the first ones longer than the
+                           tag's text, leave it cut to that text's length and
+                           say ok (d3_p3 on the bench, 17-nov: "KODE1R8").
     @param haptic_name     The name the Kode gives its vibration row.
     @param run_refused     True: `test component=all` answers `>err` at once
                            (the run never reaches the camera's end).
@@ -259,7 +262,7 @@ class Scenario:
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
                  rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
-                 sha_refused=False):
+                 sha_refused=False, nfc_truncated=0):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -278,6 +281,7 @@ class Scenario:
         self.install_gap_s = install_gap_s
         self.have = set(have)
         self.sha_refused = sha_refused
+        self.nfc_truncated = nfc_truncated
         self.haptic_name = haptic_name
         self.run_refused = run_refused
         self.rfid_late_clone = rfid_late_clone
@@ -555,6 +559,7 @@ class FakeKode:
         self.install_free = None      # when the install armed last ends: the next one starts then
         self.rfid_clones = 0
         self.nfc_writes = 0
+        self.nfc_cuts = 0
         self.rfid_busy_until = None
 
     # ---- the pyserial surface --------------------------------------------
@@ -864,7 +869,12 @@ class FakeKode:
                         '>err code=1 msg="opened, but carries no NDEF message - write one with nfc_write first"',
                         delay=1.1)
             return
-        self.tag_text = a.get("text")
+        text = a.get("text")
+        if (self.tag_text is not None and len(text) > len(self.tag_text)
+                and self.nfc_cuts < self.sc.nfc_truncated):
+            self.nfc_cuts += 1
+            text = text[:len(self.tag_text)]
+        self.tag_text = text
         self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=2 model="NTAG213"'], delay=0.8)
 
     def v_nfc_read(self, a):

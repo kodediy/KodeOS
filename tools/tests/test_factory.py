@@ -318,6 +318,25 @@ class TestNfc(Base):
         self.assertEqual(nfc["status"], "FAIL", nfc)
         self.assertEqual(len(r.sent("nfc_write")), 2)
 
+    def test_a_serial_cut_short_on_the_tag_is_written_once_more(self):
+        r = self.run_case(sim.Scenario(nfc_truncated=1))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        serial = r.results()["serial"]
+        texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
+        self.assertEqual(texts, [final.NFC_OTHER_TEXT, serial, serial])
+        self.assertEqual(len(r.sent("nfc_read")), 2)
+        self.assertIn(serial[:len(final.NFC_OTHER_TEXT)], nfc["detail"])
+
+    def test_a_serial_cut_short_twice_fails_the_kode_after_one_more_write(self):
+        r = self.run_case(sim.Scenario(nfc_truncated=2))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "FAIL", nfc)
+        self.assertEqual(r.results()["verdict"], "FAIL")
+        self.assertEqual(len(r.sent("nfc_write")), 3)
+        self.assertEqual(len(r.sent("nfc_read")), 2)
+
     def test_the_serial_is_written_after_another_text(self):
         r = self.run_case(sim.Scenario())
         texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
