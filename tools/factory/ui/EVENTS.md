@@ -19,7 +19,8 @@ bench run never resets nor locks the Kode.
 `step`/`result` for each row -> `phase camera` -> `operator` prompts and
 answers within `phase buttons` and `phase touch` -> `phase rest` ->
 `phase result` -> `photos` -> (`lock`, when the lock failed) -> `end` ->
-`removed`. On a PASS the Kode is locked before `end`, so `end` is the run's
+`removed`. `photos` usually comes earlier, beside the operator; it comes
+again after `phase result` only when that read failed or left a photo out. On a PASS the Kode is locked before `end`, so `end` is the run's
 last word.
 
 Every row of `start.steps` gets a `result`; rows the run never reached
@@ -153,8 +154,10 @@ status 3: the Kode must not leave the station.
 
 ## `photos`
 
-The run's photos read off the Kode after the verdict is told to it and
-before the lock.
+The run's photos read off the Kode, beside the operator once the Kode's lane
+is free, and in any case before the lock. A read that failed or left a photo
+out is done again after the verdict is told to the Kode, and says so in a
+second `photos`.
 
 ```json
 {"type":"photos","n":12,"bytes":186000,"secs":4.1,"folder":"/.../20261103-114646_KODE1TEST00001D","retries":1,"missing":[]}

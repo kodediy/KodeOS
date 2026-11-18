@@ -1317,7 +1317,9 @@ class Station:
         s = self.state
         want = self.cfg.get("parallel_with_operator")
         want = want if isinstance(want, list) else BACKGROUND
-        todo = [w for w in BACKGROUND if w in want]
+        # The photos are read beside the operator too, last: they are kept on the
+        # Kode from the camera on, and the read no longer waits for the verdict.
+        todo = [w for w in BACKGROUND if w in want] + ["photos"]
         while CLOCK.monotonic() < deadline:
             self.pump()
             if s.poll_done and not s.lane_idle:
@@ -1364,7 +1366,8 @@ class Station:
 
     def background(self, what):
         t = CLOCK.monotonic()
-        self.done_bg.add(what)
+        if what != "photos":
+            self.done_bg.add(what)
         try:
             if what == "radio":
                 self.radio_block()
@@ -1374,6 +1377,8 @@ class Station:
                 self.rfid_step()
             elif what == "pads":
                 self.pads_block(self.sleep_pump)
+            elif what == "photos":
+                self.save_photos()
         except Exception as e:
             self.log(f"beside the operator, {what}: {type(e).__name__}: {e}", "error")
         self.blocks["parallel/" + what] = round(CLOCK.monotonic() - t, 2)
@@ -2036,7 +2041,11 @@ class Station:
         if self.link is not None:
             verdict = self.tell_kode(verdict)
             try:
-                self.save_photos()                     # read before the lock, which closes every verb
+                # Read before the lock, which closes every verb, unless they were read
+                # whole beside the operator: a read that failed or left one out is
+                # done again here.
+                if not self.photos or self.photos.get("missing") or not self.photos.get("of"):
+                    self.save_photos()
             except KeyboardInterrupt:
                 self.interrupted = True
                 self.log("interrupted while the photos were read", "error")

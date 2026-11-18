@@ -374,7 +374,9 @@ class TestPhotos(Base):
         self.assertEqual(r.rc, 0, r.stdout[-2000:])
         folder = r.folders()[0]
         self.assertEqual(r.sent("test_dot_photos").count("test_dot_photos only=5"), 2)
-        self.assertEqual(r.sent("test_dot_photos").count("test_dot_photos only=7"), 3)
+        # Three rounds beside the operator, and the read done again at the end
+        # because one is still missing: three more for that one.
+        self.assertEqual(r.sent("test_dot_photos").count("test_dot_photos only=7"), 6)
         self.assertTrue((folder / f"photo_05_{sim.PHOTOS[4]}.jpg").is_file())
         self.assertFalse((folder / f"photo_07_{sim.PHOTOS[6]}.jpg").exists())
         photos = r.results()["photos"]
@@ -382,6 +384,14 @@ class TestPhotos(Base):
         self.assertEqual(photos["saved"], len(sim.PHOTOS) - 1)
         # A photo is evidence, not a test: the verdict does not move.
         self.assertEqual(r.results()["verdict"], "PASS")
+
+    def test_the_photos_are_read_beside_the_operator_once(self):
+        r = self.run_case(sim.Scenario("pass"))
+        self.assertEqual(r.sent("test_dot_photos"), ["test_dot_photos"])
+        lines = r.fake.lines
+        self.assertLess(lines.index("test_dot_photos"), lines.index("test_dot_result verdict=pass"))
+        self.assertIn("parallel/photos", r.results()["blocks"])
+        self.assertEqual(r.results()["photos"]["saved"], len(sim.PHOTOS))
 
     def test_bad_crc_photo_is_asked_again(self):
         r = self.run_case(sim.Scenario("pass", photo_bad_crc={3: 1}))
