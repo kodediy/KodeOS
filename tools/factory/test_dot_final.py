@@ -534,6 +534,27 @@ class Link:
 
     def __init__(self, port):
         self.board = kcli.Board(port)
+        raw = os.environ.get("E5_RAW")          # the bench's timed copy of the wire, both ways
+        if raw:
+            self._tee(open(raw, "a", buffering=1))
+
+    def _tee(self, f):
+        send, read = self.board.send_line, self.board.read_line
+
+        def stamp():
+            now = time.time()
+            return time.strftime("%H:%M:%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}"
+
+        def send_line(line):
+            f.write(f"{stamp()} >>> {line}\n")
+            send(line)
+
+        def read_line(deadline):
+            x = read(deadline)
+            if x is not None:
+                f.write(f"{stamp()} {x}\n")
+            return x
+        self.board.send_line, self.board.read_line = send_line, read_line
 
     def close(self):
         self.board.close()
