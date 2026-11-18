@@ -266,6 +266,25 @@ class TestNfc(Base):
         bad = {k: v["status"] for k, v in res["steps"].items() if v["status"] != "PASS"}
         self.assertEqual(bad, {"nfc": "FAIL"})
         self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=fail"])
+        # No tag in the field is not written again.
+        self.assertEqual(len(r.sent("nfc_write")), 1)
+
+    def nfc_value(self, step, name):
+        return next(v["value"] for v in step["values"] if v["name"] == name)
+
+    def test_a_write_that_fails_once_on_the_tag_is_written_again(self):
+        r = self.run_case(sim.Scenario(nfc_write_fails=1))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
+        self.assertEqual(texts, [final.NFC_OTHER_TEXT, final.NFC_OTHER_TEXT, r.results()["serial"]])
+
+    def test_a_write_that_fails_twice_fails_the_kode(self):
+        r = self.run_case(sim.Scenario(nfc_write_fails=2))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "FAIL", nfc)
+        self.assertEqual(len(r.sent("nfc_write")), 2)
 
     def test_the_serial_is_written_after_another_text(self):
         r = self.run_case(sim.Scenario())

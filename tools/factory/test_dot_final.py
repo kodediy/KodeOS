@@ -1566,6 +1566,7 @@ class Station:
         read, uid, rd = "", "", []
         skip_read = False
         wrote = True
+        retries = 0
         try:
             if write:
                 t1 = CLOCK.monotonic()
@@ -1574,15 +1575,26 @@ class Station:
                 # another text first, and both writes must be taken.
                 wr = []
                 for text in (NFC_OTHER_TEXT, serial):
-                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
-                    try:
-                        wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
-                        det.append(" ".join(wr))
-                    except CommandError as e:
-                        wr = e.records
-                        det.append(" ".join(wr) + f" {e.term}")
-                        wrote = False
-                        skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                    # One more write when the tag answered and the write failed: a
+                    # transient read inside the write ("carries no NDEF message")
+                    # goes right the next time. No tag in the field is not tried
+                    # again, and the read back below still decides.
+                    for again in (True, False):
+                        self.operator_sim_pump()           # the bench operator's release must not wait for this step
+                        try:
+                            wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
+                            det.append(" ".join(wr))
+                            wrote = True
+                            break
+                        except CommandError as e:
+                            wr = e.records
+                            det.append(" ".join(wr) + f" {e.term}")
+                            wrote = False
+                            skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                            if skip_read or not again:
+                                break
+                            retries += 1
+                    if not wrote:
                         break
                 tw = CLOCK.monotonic() - t1
                 uid = next((fields(r).get("uid", "") for r in wr if r.startswith("nfc=tag")), "")
@@ -1615,7 +1627,7 @@ class Station:
         status = PASS if (ok and st == PASS) else (TIMEOUT if st == TIMEOUT and not read else FAIL)
         vals = [value("text_written", serial if write else ""), value("text_read", read), value("uid", uid),
                 value("t_write", round(tw, 2) if tw is not None else 0, "s"),
-                value("t_read", round(tr, 2) if tr is not None else 0, "s")]
+                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("write_retries", retries)]
         self.add("nfc", status, info + f"; kodeOS row test=nfc: {st}",
                  "read = written (an NDEF text with the Kode's serial)", CLOCK.monotonic() - t0,
                  detail="\n".join(det)[-REPORT_DETAIL_CHARS:], values=vals)

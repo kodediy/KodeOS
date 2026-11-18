@@ -216,6 +216,8 @@ class Scenario:
                            leaves the reader busy for rfid_busy_s more: every
                            rfid verb meanwhile is refused at once.
     @param rfid_busy_s     How long the reader stays busy after that clone.
+    @param nfc_write_fails How many `nfc_write`s, the first ones, find the tag
+                           and fail on a transient read inside the write.
     @param pads_charger    What the charger says with the 5 V on the pads:
                            "charging" (current at once), "slow" (current from
                            the fourth `bat_info`), "full" (no current, charge
@@ -243,7 +245,7 @@ class Scenario:
                  rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
-                 rfid_late_clone=False, rfid_busy_s=1.0):
+                 rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -263,6 +265,7 @@ class Scenario:
         self.run_refused = run_refused
         self.rfid_late_clone = rfid_late_clone
         self.rfid_busy_s = rfid_busy_s
+        self.nfc_write_fails = nfc_write_fails
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -527,6 +530,7 @@ class FakeKode:
         self.photo_sends = {}
         self.install_free = None      # when the install armed last ends: the next one starts then
         self.rfid_clones = 0
+        self.nfc_writes = 0
         self.rfid_busy_until = None
 
     # ---- the pyserial surface --------------------------------------------
@@ -819,6 +823,12 @@ class FakeKode:
     def v_nfc_write(self, a):
         if self.sc.case in ("fail", "nfc"):
             self.answer(["nfc=tag state=none"], '>err code=4 msg="no tag in the window"', delay=3.0)
+            return
+        self.nfc_writes += 1
+        if self.nfc_writes <= self.sc.nfc_write_fails:    # ajeno_1 on the bench, 17-nov
+            self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=1 model="Ultralight / NTAG (Type-2)"'],
+                        '>err code=1 msg="opened, but carries no NDEF message - write one with nfc_write first"',
+                        delay=1.1)
             return
         self.tag_text = a.get("text")
         self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=2 model="NTAG213"'], delay=0.8)
