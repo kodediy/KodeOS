@@ -506,9 +506,11 @@ class TestSdImages(Base):
     SHA_W = "a" * 64
     SHA_S = "b" * 64
 
-    def run_images(self, files=None, install="installed", only=None, install_s=3.0, args=()):
-        sc = sim.Scenario("pass", sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
-                          if files is None else files, install=install, install_s=install_s)
+    def run_images(self, files=None, install="installed", only=None, install_s=3.0, args=(), case="pass",
+                   install_gap_s=0.0, run_refused=False):
+        sc = sim.Scenario(case, sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
+                          if files is None else files, install=install, install_s=install_s,
+                          install_gap_s=install_gap_s, run_refused=run_refused)
         r = Run(sc, args)
         self.addCleanup(r.cleanup)
         cfg = json.loads(r.cfg.read_text())
@@ -544,6 +546,34 @@ class TestSdImages(Base):
         order = [e["id"] for e in r.events() if e["type"] == "result" and e["id"] in ("nfc", "rfid", "welcome", "storage")]
         self.assertLess(order.index("nfc"), order.index("welcome"))
         self.assertLess(order.index("welcome"), order.index("rfid"))
+
+    def results_order(self, r):
+        return [e["id"] for e in r.events() if e["type"] == "result" and e["id"] in ("rfid", "welcome", "storage")]
+
+    def test_an_install_that_goes_on_past_forty_seconds_holds_the_rfid_write_until_it_ends(self):
+        # Over a written apps region the Welcome takes ~23 s and Kody's pack starts
+        # only then: the pack is still being written 40 s after the arming.
+        r = self.run_images(install_s={"welcome": 39.0, "storage": 15.0}, args=["--events"])
+        res = r.results()
+        self.assertEqual(res["verdict"], "PASS", r.stdout[-2000:])
+        order = self.results_order(r)
+        self.assertLess(order.index("storage"), order.index("rfid"), order)
+        self.assertGreater(res["blocks"]["storage_install"], 14.0)
+
+    def test_the_next_install_started_in_a_later_poll_is_waited_for_too(self):
+        r = self.run_images(install_s={"welcome": 39.8, "storage": 3.0}, install_gap_s=8.0, args=["--events"])
+        self.assertEqual(r.results()["verdict"], "PASS", r.stdout[-2000:])
+        order = self.results_order(r)
+        self.assertLess(order.index("storage"), order.index("rfid"), order)
+
+    def test_an_install_the_run_never_reached_is_not_waited_for(self):
+        # The run stops before the camera's end, where the Kode starts the installs.
+        r = self.run_images(run_refused=True)
+        res = r.results()
+        self.assertEqual(res["steps"]["welcome"]["status"], "TIMEOUT", res["steps"]["welcome"])
+        self.assertIn("never started", res["steps"]["welcome"]["measured"])
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertLess(res["total_s"], 60.0, res["total_s"])
 
     def test_a_wrong_image_is_the_stations_fault_and_installs_nothing(self):
         r = self.run_images(files={"onboarding.bin": "c" * 64, "storage.bin": self.SHA_S})

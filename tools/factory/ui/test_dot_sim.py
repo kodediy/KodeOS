@@ -220,8 +220,14 @@ class Scenario:
     @param install         What `test_dot_welcome` and `test_dot_storage` end
                            with: "installed", "failed", "refused" or "silent"
                            (no last record).
-    @param install_s       Seconds from `started` to the last record.
+    @param install_s       Seconds from `started` to the last record, or
+                           {"welcome": s, "storage": s}. The Kode runs the
+                           installs one after the other, in the order armed.
+    @param install_gap_s   Seconds between one install's last record and the
+                           next one's `started` (0 on the bench: same instant).
     @param haptic_name     The name the Kode gives its vibration row.
+    @param run_refused     True: `test component=all` answers `>err` at once
+                           (the run never reaches the camera's end).
     @param boost_late      True: `test_dot_boost state=on` answers on=0 with
                            the boost on, as a record taken before the
                            charger's next poll does.
@@ -231,7 +237,7 @@ class Scenario:
                  photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
                  rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
-                 haptic_name="haptic_pat"):
+                 install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -246,7 +252,9 @@ class Scenario:
         self.sd_files = dict(sd_files or {})
         self.install = install
         self.install_s = install_s
+        self.install_gap_s = install_gap_s
         self.haptic_name = haptic_name
+        self.run_refused = run_refused
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -509,6 +517,7 @@ class FakeKode:
         self.operator = None
         self.photo_asks = {}
         self.photo_sends = {}
+        self.install_free = None      # when the install armed last ends: the next one starts then
 
     # ---- the pyserial surface --------------------------------------------
     def open(self):
@@ -516,6 +525,7 @@ class FakeKode:
         self.out.clear()
         self.rx = b""
         self.ring.clear()
+        self.install_free = None
         self.run_state = "none"
         self.mode = "dormant"
         self.locked = self.locked or self.locked_now   # the reboot reads the stored lock
@@ -617,11 +627,21 @@ class FakeKode:
 
     def install_image(self, kind, a):
         self.answer([f"{kind} ok=1"])
-        self.ring_add(0.5, f"{kind}=started file={a.get('name')}")
+        now = self.now()
+        start = 0.5
+        if self.install_free is not None:
+            if self.install_free == float("inf"):
+                return                    # the one before never ends: this one never starts
+            start = max(start, (self.install_free - now) * self.speed + self.sc.install_gap_s)
+        secs = self.sc.install_s
+        if isinstance(secs, dict):
+            secs = secs[kind]
+        self.ring_add(start, f"{kind}=started file={a.get('name')}")
         if self.sc.install == "silent":
+            self.install_free = float("inf")
             return
-        word = self.sc.install
-        self.ring_add(0.5 + self.sc.install_s, f"{kind}={word} file={a.get('name')}")
+        self.ring_add(start + secs, f"{kind}={self.sc.install} file={a.get('name')}")
+        self.install_free = now + (start + secs) / self.speed
 
     def v_test_dot_welcome(self, a):
         self.install_image("welcome", a)
@@ -643,6 +663,9 @@ class FakeKode:
     def v_test(self, a):
         comp = a.get("component")
         if comp == "all":
+            if self.sc.run_refused:
+                self.answer(["test=all result=aborted why=sd_missing"], ">err code=4 msg=aborted", delay=0.3)
+                return
             self.start_run()
             return
         if comp == "pmic":
@@ -688,7 +711,9 @@ class FakeKode:
         for x in take:
             self.ring.remove(x)
         due = [x[2] for x in take]
-        done = (not self.ring) and self.run_end_at is not None and now >= self.run_end_at
+        # The run is done with its rows: the installs go on after it, as on the board.
+        rows_left = [x for x in self.ring if not x[2].startswith(("welcome=", "storage="))]
+        done = (not rows_left) and self.run_end_at is not None and now >= self.run_end_at
         if done:
             self.run_state = "done"
         lane = "idle" if (self.lane_idle_at is not None and now >= self.lane_idle_at) else "busy"

@@ -196,7 +196,7 @@ STEPS = {
 # records: the key under `sd_images` in the station's settings -> the verb.
 SD_IMAGES = {"welcome": "test_dot_welcome", "storage": "test_dot_storage"}
 INSTALL_ENDS = ("installed", "failed", "refused")   # the last record of an install
-INSTALL_WAIT_S = 40.0          # how long after the run the RFID write waits for an install's last record
+INSTALL_WAIT_S = 40.0          # how long after the run the RFID write waits for an install the Kode has not started
 INSTALL_LIMIT_S = 120.0        # how long after its start an install may go on before it has failed
 FACTORY_RESET = ("factory_reset", "Factory reset", "record")   # a step only once a PASS is sent
 CERTIFICATE = ("certificate", "Certificate", "record")        # a step only before a PASS, where one is issued
@@ -1092,7 +1092,8 @@ class Station:
                 self.log(f"{key}: the station's microSD does not hold the right image ({name}): {why}", "error")
                 bad.append(key)
                 continue
-            self.installs[key] = dict(file=name, t_arm=CLOCK.monotonic(), t0=None, end=None, record="", judged=False)
+            self.installs[key] = dict(file=name, t_arm=CLOCK.monotonic(), t0=None, t_end=None, end=None, record="",
+                                      judged=False)
         if bad:
             self.installs = {}
             raise Abort("the station's microSD does not hold the right image: " + ", ".join(bad))
@@ -1118,6 +1119,7 @@ class Station:
             job["t0"] = now
         elif f[key] in INSTALL_ENDS:
             job["end"] = f[key]
+            job["t_end"] = now
             job["record"] = r
             start = job["t_arm"]
             if job["t0"] is not None:
@@ -1125,12 +1127,29 @@ class Station:
             self.blocks[key + "_install"] = round(now - start, 2)
             self.judge_install(key)
 
+    def install_quiet_since(self, job):
+        """When the wait for an install the Kode has not started counts from: its
+        arming, or the end of the install before it. The Kode runs them one after
+        the other, and the next one's `started` may come in a later poll."""
+        ends = [j["t_end"] for j in self.installs.values() if j is not job and j["t_end"] is not None]
+        return max([job["t_arm"]] + ends)
+
     def installing(self):
-        """True while an install has no last record. Once the run is over the wait
-        has a bound: the install's judgment then comes from finish_installs."""
+        """True while an install has no last record. An install the Kode started is
+        waited for until it ends or its limit passes: over a written apps region
+        the Welcome takes ~23 s, and an RFID write sent while Kody's pack and the
+        microSD remount after it are still going is not read back. Only an install
+        the Kode has not started has a shorter bound once the run is over; its
+        judgment then comes from finish_installs."""
         s = self.state
+        now = CLOCK.monotonic()
         for job in self.installs.values():
-            if job["end"] is None and not (s.poll_done and CLOCK.monotonic() - job["t_arm"] > INSTALL_WAIT_S):
+            if job["end"] is not None:
+                continue
+            if job["t0"] is not None:
+                if now - job["t0"] < INSTALL_LIMIT_S:
+                    return True
+            elif not (s.poll_done and now - self.install_quiet_since(job) > INSTALL_WAIT_S):
                 return True
         return False
 
@@ -1145,6 +1164,11 @@ class Station:
         if job["end"] == "installed":
             self.add(key, PASS, f"installed from {job['file']} in {secs:.1f} s", rng, secs, values=[],
                      detail=job["record"])
+        elif job["end"] is None and job["t0"] is None:
+            s = getattr(self, "state", None)
+            why = (f"within {INSTALL_LIMIT_S:.0f} s" if s is not None and s.cam_done
+                   else "(the run stopped before the camera's end, where the Kode starts it)")
+            self.add(key, TIMEOUT, f"the Kode never started the install of {job['file']} {why}", rng, secs, values=[])
         elif job["end"] is None:
             self.add(key, TIMEOUT, f"no last record {INSTALL_LIMIT_S:.0f} s after the install of {job['file']} began",
                      rng, secs, values=[])
@@ -1154,8 +1178,18 @@ class Station:
     def finish_installs(self):
         """Before the exit record and the verdict: every install ended, and well. The
         factory reset of a PASS needs the Welcome the Kode installed."""
+        s = getattr(self, "state", None)
         for key, job in self.installs.items():
-            while job["end"] is None and CLOCK.monotonic() - job["t_arm"] < INSTALL_LIMIT_S:
+            # The Kode starts the installs at the camera's end: a run that never got
+            # there never starts them, and waiting their whole limit only keeps the
+            # operator waiting. A started install has its limit from its start.
+            never = job["t0"] is None and (s is None or not s.cam_done)
+            while job["end"] is None and not never:
+                start = job["t_arm"]
+                if job["t0"] is not None:
+                    start = job["t0"]
+                if CLOCK.monotonic() - start >= INSTALL_LIMIT_S:
+                    break
                 self.sleep_pump(0.5)
             self.judge_install(key)
 
