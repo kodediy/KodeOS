@@ -29419,8 +29419,8 @@ static void gui_veil_tick(Gui * const me)
  * @brief <scene>_duerme has ended: colour to outline, one movement.
  *
  * The apocrifa's half_dip(): the veil fades out over his outline while the
- * brightness comes down. He stands still from here. The clock's scene has no
- * outline in the apocrifa: he stays on the frame he fell asleep on.
+ * brightness comes down. He stands still from here. A scene with no outline,
+ * one the table does not have, stays on the frame he fell asleep on.
  *
  * @param me The AO; the Lock rests.
  */
