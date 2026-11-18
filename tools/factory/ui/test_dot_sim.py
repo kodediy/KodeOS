@@ -245,6 +245,9 @@ class Scenario:
                            and are written.
     @param sha_refused     True: a kodeOS without sha= (before r3): the key is
                            refused with `>err code=3 msg=sha`.
+    @param disarm_refused  True: a kodeOS without the empty name (before r4):
+                           `name=""` is refused with `>err code=3 msg=name`
+                           and what was armed stays armed.
     @param nfc_truncated   How many `nfc_write`s, the first ones longer than the
                            tag's text, leave it cut to that text's length and
                            say ok (d3_p3 on the bench, 17-nov: "KODE1R8").
@@ -264,7 +267,7 @@ class Scenario:
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
                  rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
-                 sha_refused=False, nfc_truncated=0, nfc_read_fails=0):
+                 sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -283,6 +286,7 @@ class Scenario:
         self.install_gap_s = install_gap_s
         self.have = set(have)
         self.sha_refused = sha_refused
+        self.disarm_refused = disarm_refused or sha_refused
         self.nfc_truncated = nfc_truncated
         self.nfc_read_fails = nfc_read_fails
         self.haptic_name = haptic_name
@@ -560,6 +564,7 @@ class FakeKode:
         self.photo_asks = {}
         self.photo_sends = {}
         self.install_free = None      # when the install armed last ends: the next one starts then
+        self.armed = {}               # {kind: file} armed and not taken back
         self.rfid_clones = 0
         self.nfc_writes = 0
         self.nfc_cuts = 0
@@ -676,9 +681,22 @@ class FakeKode:
         if "sha" in a and self.sc.sha_refused:
             self.answer([], ">err code=3 msg=sha")
             return
+        if a.get("name") == "":
+            if self.sc.disarm_refused:
+                self.answer([], ">err code=3 msg=name")
+                return
+            # Taken back: its records never come (the sim lays them out at the arm).
+            self.armed.pop(kind, None)
+            self.ring = [x for x in self.ring if not x[2].startswith(kind + "=")]
+            if not any(x[2].startswith(("welcome=", "storage=")) for x in self.ring):
+                self.install_free = None
+            self.answer([f"{kind} armed=none"])
+            return
         if a.get("sha") and kind in self.sc.have:
+            self.armed.pop(kind, None)
             self.answer([f"{kind} armed=none present=yes ms=310"])
             return
+        self.armed[kind] = a.get("name")
         self.answer([f"{kind} armed={a.get('name')}" + (" present=no ms=4" if "sha" in a else "")])
         now = self.now()
         start = 0.5

@@ -652,11 +652,11 @@ class TestSdImages(Base):
     SHA_S = "b" * 64
 
     def run_images(self, files=None, install="installed", install_s=3.0, args=(), case="pass",
-                   install_gap_s=0.0, run_refused=False, have=(), sha_refused=False):
+                   install_gap_s=0.0, run_refused=False, have=(), sha_refused=False, disarm_refused=False):
         sc = sim.Scenario(case, sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
                           if files is None else files, install=install, install_s=install_s,
                           install_gap_s=install_gap_s, run_refused=run_refused, have=have,
-                          sha_refused=sha_refused)
+                          sha_refused=sha_refused, disarm_refused=disarm_refused)
         r = Run(sc, args)
         self.addCleanup(r.cleanup)
         cfg = json.loads(r.cfg.read_text())
@@ -791,16 +791,37 @@ class TestSdImages(Base):
         self.assertEqual(res["verdict"], "NO VERDICT")
         self.assertEqual(res["steps"]["welcome"]["status"], "NO VERDICT")
         self.assertIn("station: the station's microSD does not hold the right image", res["steps"]["welcome"]["measured"])
-        # The Kode is asked what it holds first, so it may be armed; the run that
-        # would start the installs never begins.
+        # The Kode is asked what it holds first, so it is armed; the station takes
+        # both arms back and the run that would start the installs never begins.
         self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
         self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
+        self.assertEqual(r.sent("test_dot_welcome")[-1], 'test_dot_welcome name=""')
+        self.assertEqual(r.sent("test_dot_storage")[-1], 'test_dot_storage name=""')
+        self.assertEqual(r.fake.armed, {})
+        self.assert_grammar(r)
+
+    def test_only_what_was_armed_is_taken_back(self):
+        r = self.run_images(files={"onboarding.bin": self.SHA_W, "storage.bin": "c" * 64}, have=("welcome",))
+        self.assertEqual(r.results()["verdict"], "NO VERDICT")
+        self.assertEqual(r.sent("test_dot_welcome"),
+                         [f'test_dot_welcome name="onboarding.bin" sha="{self.SHA_W}" project="onboarding"'])
+        self.assertEqual(r.sent("test_dot_storage"),
+                         [f'test_dot_storage name="storage.bin" sha="{self.SHA_S}"', 'test_dot_storage name=""'])
+        self.assertEqual(r.fake.armed, {})
+
+    def test_a_kodeos_without_the_empty_name_stays_armed_and_says_so(self):
+        r = self.run_images(files={"onboarding.bin": "c" * 64, "storage.bin": self.SHA_S}, disarm_refused=True)
+        self.assertEqual(r.results()["verdict"], "NO VERDICT")
+        self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
+        self.assertIn("welcome: the Kode did not take the disarm", r.stdout)
+        self.assertEqual(r.fake.armed, {"welcome": "onboarding.bin", "storage": "storage.bin"})
 
     def test_a_missing_image_is_the_stations_fault_too(self):
         r = self.run_images(files={"storage.bin": self.SHA_S})
         res = r.results()
         self.assertEqual((res["verdict"], res["steps"]["welcome"]["status"]), ("NO VERDICT", "NO VERDICT"))
         self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
+        self.assertEqual(r.fake.armed, {})
 
     def test_a_kode_that_holds_both_images_reads_nothing_off_the_microsd(self):
         r = self.run_images(have=("welcome", "storage"))

@@ -1120,8 +1120,8 @@ class Station:
         configured image (its SHA-256 over the installed bytes) and, when it does
         not, it is armed to install it, and the file on its microSD is checked
         against the same SHA-256. An image that is not there or does not match is
-        the station's fault, not the Kode's: the row says so and the run stops
-        before it starts, so nothing armed is ever written. A Kode that holds
+        the station's fault, not the Kode's: the row says so, what was armed is
+        disarmed and the run stops before it starts, so nothing armed is written. A Kode that holds
         both reads nothing off the microSD (0.53 s of `file_sha` saved)."""
         want = {k: sha for k, (_, sha) in self.sd_images().items()}
         welcome_absent = False
@@ -1183,8 +1183,20 @@ class Station:
                 self.log(f"{key}: the station's microSD does not hold the right image ({name}): {why}", "error")
                 bad.append(key)
         if bad:
-            self.installs = {}
+            self.disarm_installs()
             raise Abort("the station's microSD does not hold the right image: " + ", ".join(bad))
+
+    def disarm_installs(self):
+        """Take back what arm_installs armed, for a run that does not start: an
+        empty name disarms. A kodeOS without the empty name refuses it; its arm
+        then lasts until the next arm or restart, and the log says so."""
+        for key in list(self.installs):
+            try:
+                self.link.cmd(f'{SD_IMAGES[key]} name=""', 10.0)
+            except CommandError as e:
+                self.log(f"{key}: the Kode did not take the disarm ({e.term or 'no answer'}); "
+                         "it stays armed until the next arm or restart", "warn")
+        self.installs = {}
 
     def install_record(self, f, r):
         """A `welcome=` or `storage=` record: started, then installed, failed or refused."""
