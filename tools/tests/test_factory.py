@@ -960,6 +960,114 @@ class TestBenchFlags(Base):
                     self.assertEqual(r.sent("test_dot_place"), [])
 
 
+class TestExtraLimits(Base):
+    """The limits the Kode does not judge (rondas/r5-qa-escapes.md): worked out on
+    the PC, written on the row with their margin, and judged only when the
+    station's settings say so in judge_extra."""
+
+    # Per limit: the row, a Kode under it, and the word it gets.
+    UNDER = {
+        "panel": ("cam_colour", dict(expratio="1.80"), "OVER LIMIT"),
+        "audio": ("audio", dict(tones=((1535, -7), (1957, -300))), "UNDER LIMIT"),
+        "led": ("led", dict(led_flux=(5000, 73720, 104989)), "UNDER LIMIT"),
+        "haptic": ("haptic", dict(haptic_on=(30.0, 35.0, 300.0)), "UNDER LIMIT"),
+    }
+
+    def run_judging(self, scenario, judge=()):
+        r = Run(scenario)
+        self.addCleanup(r.cleanup)
+        cfg = json.loads(r.cfg.read_text())
+        cfg["judge_extra"] = {k: True for k in judge}
+        r.cfg.write_text(json.dumps(cfg))
+        return r.go()
+
+    def test_a_good_kode_is_recorded_with_its_margins_and_passes(self):
+        res = self.run_case(sim.Scenario()).results()
+        self.assertEqual(res["verdict"], "PASS")
+        self.assertEqual(sorted(res["extra_limits"]), ["audio", "haptic", "led", "panel"])
+        for key, (row, _, _) in self.UNDER.items():
+            lim = res["extra_limits"][key]
+            self.assertIs(lim["ok"], True, lim)
+            self.assertFalse(lim["judged"])
+            self.assertIn(lim["text"], res["steps"][row]["measured"])
+            self.assertTrue(lim["text"].endswith(": margin ok"), lim["text"])
+        self.assertEqual(res["extra_limits"]["audio"]["value"], -2.8, "the Kode logs tenths of a dB")
+        self.assertEqual(res["extra_limits"]["haptic"]["value"], 282.9, "the middle of the three on windows")
+        self.assertEqual(res["extra_limits"]["panel"]["value"], 1.0)
+
+    def test_under_a_limit_is_recorded_only_by_default(self):
+        for key, (row, knobs, word) in self.UNDER.items():
+            with self.subTest(limit=key):
+                res = self.run_case(sim.Scenario(**knobs)).results()
+                self.assertEqual(res["verdict"], "PASS", "recorded only: the verdict does not move")
+                self.assertEqual(res["steps"][row]["status"], "PASS")
+                self.assertIs(res["extra_limits"][key]["ok"], False)
+                self.assertIn(f"{word}, recorded only", res["steps"][row]["measured"])
+
+    def test_under_a_judged_limit_fails_the_kode(self):
+        for key, (row, knobs, word) in self.UNDER.items():
+            with self.subTest(limit=key):
+                res = self.run_judging(sim.Scenario(**knobs), [key]).results()
+                self.assertEqual(res["steps"][row]["status"], "FAIL", res["steps"][row]["measured"])
+                self.assertIn(f"{word}, judged: FAIL", res["steps"][row]["measured"])
+                self.assertEqual(res["verdict"], "FAIL")
+                self.assertTrue(res["extra_limits"][key]["judged"])
+
+    def test_a_judged_limit_passes_a_good_kode(self):
+        res = self.run_judging(sim.Scenario(), list(self.UNDER)).results()
+        self.assertEqual(res["verdict"], "PASS")
+
+    def test_one_weak_on_window_of_three_does_not_fail_the_motor(self):
+        res = self.run_judging(sim.Scenario(haptic_on=(5.0, 280.0, 281.0)), ["haptic"]).results()
+        self.assertEqual(res["steps"]["haptic"]["status"], "PASS")
+        self.assertEqual(res["extra_limits"]["haptic"]["value"], 280.0)
+
+    def test_a_value_that_never_came_is_said_and_no_verdict_when_judged(self):
+        res = self.run_case(sim.Scenario(kode_logs=False)).results()
+        self.assertEqual(res["verdict"], "PASS")
+        self.assertIn("not received, recorded only", res["steps"]["audio"]["measured"])
+        self.assertIsNone(res["extra_limits"]["haptic"]["ok"])
+        res = self.run_judging(sim.Scenario(kode_logs=False), ["audio"]).results()
+        self.assertEqual(res["steps"]["audio"]["status"], "NO VERDICT")
+        self.assertEqual(res["verdict"], "NO VERDICT")
+
+
+class TestBenchBright(Base):
+    """E5_BRIGHT: the bench's dim panel, told to the Kode after the port is open
+    (opening it reboots the Kode), before the placement wakes the glass."""
+
+    def run_bright(self, pct, scenario=None, args=("--no-write",)):
+        with mock.patch.dict(os.environ, {final.BRIGHT_ENV: pct}):
+            return self.run_case(scenario or sim.Scenario(), args)
+
+    def test_the_glass_level_is_told_after_the_info_and_before_the_placement(self):
+        r = self.run_bright("40")
+        self.assertEqual(r.sent("test_dot_bright"), ["test_dot_bright pct=40"])
+        ln = r.fake.lines
+        self.assertLess(ln.index("test_dot_info"), ln.index("test_dot_bright pct=40"))
+        self.assertLess(ln.index("test_dot_bright pct=40"), ln.index(r.sent("test_dot_place")[0]))
+        self.assertEqual(r.fake.bright, 40)
+        self.assertEqual(r.results()["bench_bright"], {"pct": 40, "ok": True})
+
+    def test_without_it_nothing_is_told(self):
+        r = self.run_case(sim.Scenario(), ["--no-write"])
+        self.assertEqual(r.sent("test_dot_bright"), [])
+        self.assertIsNone(r.results()["bench_bright"])
+
+    def test_a_factory_run_refuses_it(self):
+        r = self.run_bright("40", args=())
+        self.assertEqual(r.rc, final.EXIT_NO_REPORT)
+        self.assertEqual(r.sent("test_dot_bright"), [])
+        self.assertEqual(r.sent("test_dot_place"), [])
+
+    def test_a_kodeos_without_the_verb_or_a_level_out_of_range_runs_nothing(self):
+        for pct, sc in (("40", sim.Scenario(has_bright=False)), ("5", sim.Scenario()), ("dim", sim.Scenario())):
+            with self.subTest(pct=pct):
+                r = self.run_bright(pct, sc)
+                self.assertEqual(r.rc, final.EXIT_NO_REPORT)
+                self.assertEqual(r.sent("test_dot_place"), [])
+
+
 class TestContract(Base):
     """What the Kode's records say and what the station reads, field by field
     (spec section 7; the contract fixes of 2026-11-03)."""

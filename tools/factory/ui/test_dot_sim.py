@@ -265,6 +265,14 @@ class Scenario:
     @param boost_falls_s   Seconds after `test_dot_boost state=on` at which the
                            boost stops under the load (None: it holds): A0
                            and the gauge's current then read as with it off.
+    @param tones           [(Hz, level in tenths of dBFS)]: the tones the audio
+                           row logs as come back (bench 17-nov: -0.7 and -2.8).
+    @param haptic_on       The "on" windows' levels the vibration row logs, mg.
+    @param expratio        cam_colour's expratio, as the record writes it.
+    @param led_flux        (red, green, blue) on the LED's record.
+    @param kode_logs       False: the audio and vibration rows log nothing (a
+                           kodeOS that logs less).
+    @param has_bright      False: a kodeOS without `test_dot_bright` (before r5).
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
@@ -274,7 +282,9 @@ class Scenario:
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
                  rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
                  sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False,
-                 boost_falls_s=None, sd_rereads=None):
+                 boost_falls_s=None, sd_rereads=None, tones=((1535, -7), (1957, -28)),
+                 haptic_on=(284.0, 282.9, 277.3), expratio="1.00", led_flux=(25259, 73720, 104989),
+                 kode_logs=True, has_bright=True):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -303,6 +313,12 @@ class Scenario:
         self.rfid_late_clone = rfid_late_clone
         self.rfid_busy_s = rfid_busy_s
         self.nfc_write_fails = nfc_write_fails
+        self.tones = list(tones)
+        self.haptic_on = list(haptic_on)
+        self.expratio = expratio
+        self.led_flux = tuple(led_flux)
+        self.kode_logs = kode_logs
+        self.has_bright = has_bright
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -365,10 +381,11 @@ class Scenario:
         t += [(11.0, "colour_info dark=0.0,1.6,0.0 white=143.0,152.1,146.5 grey=0.3598,0.3140,0.3262 "
                      "red=0.9478,0.0000,0.0522 green=0.0000,1.0000,0.0000 blue=0.0006,0.1053,0.8941"),
               (11.0, "test=cam_colour result=pass dist_grey=0.0528 dist_red=0.0240 dist_green=0.0000 "
-                     "dist_blue=0.0112 wchroma=0.022 ripple=0.023 expratio=1.00 tol=0.250 retakes=0")]
+                     f"dist_blue=0.0112 wchroma=0.022 ripple=0.023 expratio={self.expratio} tol=0.250 retakes=0")]
         t += [(11.1, x[2:]) for x in blob_lines("colours", make_colours())]
-        t += [(11.9, "test=led result=pass flux_red=25259 dist_red=0.41 flux_green=73720 dist_green=0.63 "
-                     "flux_blue=104989 dist_blue=0.52 at=556,108 min_flux=4000 max_dist=0.8"),
+        r, g, b = self.led_flux
+        t += [(11.9, f"test=led result=pass flux_red={r} dist_red=0.41 flux_green={g} dist_green=0.63 "
+                     f"flux_blue={b} dist_blue=0.52 at=556,108 min_flux=4000 max_dist=0.8"),
               (12.0, "timing=camera photos_ms=4301 analysis_ms=2214 led_ms=1664 total_ms=9115")]
         return t
 
@@ -379,6 +396,19 @@ class Scenario:
                 (12.6, self.row("mag", 13)), (12.7, self.row("pmic", 3)), (12.8, self.row("gauge", 2)),
                 (12.9, self.row("ioexp", 0)), (13.0, self.row("clocks", 133)), (13.2, self.row("ir", 132)),
                 (17.7, self.row("nfc", 4508)), (20.3, self.row("rfid", 2565)), (20.4, self.row("mem", 0))]
+
+    def run_logs(self):
+        """The `!` lines the audio and vibration rows log before their records: (seconds, line)."""
+        if not self.kode_logs:
+            return []
+        out = [(12.3, f"!N 2026-11-03T16:30:00.000Z kaos.audio test audio: {hz} Hz came back at {x10}, "
+                      "others -382, floor -979") for hz, x10 in self.tones]
+        for k, mg in enumerate(self.haptic_on):
+            out.append((12.45, f"!N 2026-11-03T16:30:00.000Z kaos.haptic test haptic_pat: window {2 * k + 1} (on) "
+                               f"at 235 Hz = {mg:.1f} mg, n=80"))
+            out.append((12.45, f"!N 2026-11-03T16:30:00.000Z kaos.haptic test haptic_pat: window {2 * k + 2} (off) "
+                               "at 235 Hz = 1.9 mg, n=42"))
+        return out
 
     def operator_script(self):
         """The recorded operator: (seconds after the camera's end, record)."""
@@ -561,6 +591,7 @@ class FakeKode:
         self.locked = False           # stored by an earlier session: every station verb refused
         self.locked_now = False       # locked in this session: only `test_dot_end` answers
         self.mode = "dormant"         # test_dot_info's state=: dormant or awake (waking and ending are instants here)
+        self.bright = 100             # the glass's level a pass puts up (`test_dot_bright`), till the next boot
         self.relays = 0xFF
         self.boost = False
         self.boost_at = None          # when the boost was asked for
@@ -746,6 +777,17 @@ class FakeKode:
         self.answer([f"test_dot state={self.mode} locked={int(self.locked_now)} run={self.run_state} "
                      "psram_free=27853504 j3=free"])
 
+    def v_test_dot_bright(self, a):
+        if not self.sc.has_bright:
+            self.answer([], ">err code=1 msg=test_dot_bright")
+            return
+        pct = a.get("pct", "")
+        if not pct.isdigit() or not 10 <= int(pct) <= 100:
+            self.answer([], ">err code=3 msg=pct")
+            return
+        self.bright = int(pct)
+        self.answer([f"bright pct={self.bright}"])
+
     def v_test_dot_screen(self, a):
         self.answer([f"screen phase={a.get('phase', '-')} ok=1"])
 
@@ -777,6 +819,8 @@ class FakeKode:
         self.at(cam_end, ">ok")
         for d, r in self.sc.run_ring():
             self.ring_add(d, r)
+        for d, x in self.sc.run_logs():
+            self.at(d, x)
         self.lane_idle_at = self.now() + max(d for d, _ in self.sc.run_ring()) / self.speed
         if self.sc.operator == "injected":
             self.operator = Operator(lambda r: self.ring_add(0.0, r))

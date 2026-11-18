@@ -267,6 +267,26 @@ INJECT_ID = {"pad-left": "left", "bottom": "bot", "pad-down": "down", "top": "to
 
 PLACE_DEFAULTS = dict(usb_s=30, camera_s=10, marks_s=15, dx_mm=15, turn_deg=5, window=[704, 628])
 
+# Limits the Kode does not judge itself, worked out on the PC from what it sends: each is
+# written on its row with its margin, and moves the verdict only when `judge_extra` says so.
+#   panel:  the most `expratio` of cam_colour: the white's exposure against the nominal,
+#           without the marks' factor; above it the panel is too dim.
+#   audio:  the least level of a tone that came back, dBFS (the Kode logs tenths of a dB).
+#   led:    the least flux of each colour of the LED.
+#   haptic: the least "on" level of the vibration, mg: the middle one of the on windows,
+#           as the Kode passes the pattern on two cycles of three.
+EXTRA_DEFAULTS = dict(panel=1.67, audio=-25.0, led=dict(red=6100, green=16600, blue=20600), haptic=40.0)
+EXTRA_ROWS = {"cam_colour": "panel", "audio": "audio", "led": "led", "haptic": "haptic"}
+EXTRA_UNITS = dict(panel="", audio="dBFS", led="", haptic="mg")
+# The Kode's log lines the audio and vibration limits are read from: they come as `!` lines,
+# inside whichever answer is open, never as records.
+TONE_RX = re.compile(r"test audio: (\d+) Hz came back at (-?\d+),")
+HAPTIC_ON_RX = re.compile(r"test haptic_pat: window \d+ \(on\) at \d+ Hz = (-?\d+(?:\.\d+)?) mg")
+HAPTIC_ON_WINDOWS = 3
+# Bench only: the glass's level, percent, the Kode puts up in this run in place of full
+# (`test_dot_bright`), told after the port is open because opening it reboots the Kode.
+BRIGHT_ENV = "E5_BRIGHT"
+
 # The rear pads: the station's relays and ADC, through the Kode.
 RELAY_REST = 0xFF          # every relay open
 RELAY_GND = 0xFB           # the GND pad pulled to the station's ground
@@ -450,6 +470,16 @@ def load_config(path):
     place = dict(PLACE_DEFAULTS)
     place.update(cfg.get("place") or {})
     cfg["place"] = place
+    limits = json.loads(json.dumps(EXTRA_DEFAULTS))
+    for k, v in (cfg.get("extra_limits") or {}).items():
+        if isinstance(limits.get(k), dict) and isinstance(v, dict):
+            limits[k].update(v)
+        elif k in limits:
+            limits[k] = v
+    cfg["extra_limits"] = limits
+    judge = {k: False for k in EXTRA_DEFAULTS}
+    judge.update({k: bool(v) for k, v in (cfg.get("judge_extra") or {}).items() if k in judge})
+    cfg["judge_extra"] = judge
     return cfg
 
 
@@ -646,6 +676,9 @@ class Station:
         self.interrupted = False             # SIGTERM or Ctrl-C: the page's Stop
         self.lock = LOCK_NOT_SENT
         self.op_end_t = None
+        self.meas = dict(tones=[], haptic_on=[])   # read off the Kode's `!` lines for the extra limits
+        self.extra_limits = {}
+        self.bench_bright = None
 
     # ---- events and steps ---------------------------------------------------
     def emit(self, **ev):
@@ -671,14 +704,74 @@ class Station:
 
     def add(self, sid, status, measured="", rng="", secs=0.0, images=(), detail="", values=None, name=None):
         name = name or STEPS[sid][0]
+        values = list(values) if values is not None else values_from(measured)
+        if sid in EXTRA_ROWS:
+            status, measured = self.extra_limit(sid, status, measured, values)
         self.results.append(dict(n=len(self.results) + 1, id=sid, name=name, status=status, measured=measured,
                                  range=rng, secs=round(secs, 2), images=list(images), detail=detail,
-                                 values=values if values is not None else values_from(measured)))
+                                 values=values))
         print(f"{len(self.results):2d} {name:36s} {status:11s} {secs:6.1f}s  {measured[:90]}", flush=True)
         img = str(self.outdir / images[0]) if images and self.outdir else None
         self.emit(type="result", id=sid, state=EVENT_STATE.get(status, status), values=self.results[-1]["values"],
                   image=img, reason=reason_from(status, measured, detail), step_s=round(secs, 2),
                   total_s=round(CLOCK.monotonic() - self.t0, 1))
+
+    def extra_limit(self, sid, status, measured, values):
+        """A limit the Kode does not judge, on row `sid`: its value and margin written on
+        the row and in results.json. Recorded only, unless `judge_extra` names it: then a
+        PASS under the limit is a FAIL, and a PASS whose value never came is NO VERDICT.
+        A row that did not pass keeps its own verdict."""
+        key = EXTRA_ROWS[sid]
+        lim = self.cfg["extra_limits"][key]
+        judged = self.cfg["judge_extra"][key]
+        unit = EXTRA_UNITS[key]
+        val, ok, text = None, None, ""
+        if key == "panel":
+            m = re.search(r"\bexpratio=(\d+(?:\.\d+)?)", measured)
+            if m:
+                val = float(m.group(1))
+                ok = val <= lim
+                text = f"panel: expratio {val:.2f}, max {lim:g}, margin {lim - val:+.2f}"
+        elif key == "audio":
+            tones = self.meas["tones"]
+            if tones:
+                hz, x10 = min(tones, key=lambda t: t[1])
+                val = x10 / 10.0
+                ok = val >= lim
+                text = (f"audio: weakest tone {val:.1f} dBFS at {hz} Hz of {len(tones)}, min {lim:g} dBFS, "
+                        f"margin {val - lim:+.1f} dB")
+        elif key == "led":
+            got = {c: _int(_match(rf"\bflux_{c}=(\d+)", measured)) for c in lim}
+            if all(v is not None for v in got.values()):
+                worst = min(lim, key=lambda c: got[c] / lim[c])
+                val = got
+                ok = all(got[c] >= lim[c] for c in lim)
+                text = ("led: flux " + " / ".join(f"{c} {got[c]}" for c in lim) + ", min "
+                        + " / ".join(str(lim[c]) for c in lim) + f", margin x{got[worst] / lim[worst]:.2f} ({worst})")
+        elif key == "haptic":
+            on = self.meas["haptic_on"][-HAPTIC_ON_WINDOWS:]
+            if on:
+                val = sorted(on)[len(on) // 2]
+                ok = val >= lim
+                text = (f"haptic: 'on' {val:.1f} mg (middle of {len(on)} on windows), min {lim:g} mg, "
+                        f"margin x{val / lim:.1f}")
+        if ok is None:
+            word = "not received"
+            text = f"{key}: no value from the Kode"
+        elif ok:
+            word = "margin ok"
+        else:
+            word = ("OVER LIMIT" if key == "panel" else "UNDER LIMIT")
+        if not ok:
+            if judged and status == PASS:
+                status = FAIL if ok is False else NOVERDICT
+                word += f", judged: {status}"
+            elif not judged:
+                word += ", recorded only"
+        text += ": " + word
+        self.extra_limits[key] = dict(row=sid, value=val, limit=lim, unit=unit, ok=ok, judged=judged, text=text)
+        values.append(value(f"{key}_limit", word, unit, json.dumps(lim) if isinstance(lim, dict) else str(lim)))
+        return status, (measured + "  |  " + text if measured else text)
 
     def tick(self, block, t0):
         self.blocks[block] = round(self.blocks.get(block, 0.0) + CLOCK.monotonic() - t0, 2)
@@ -782,6 +875,23 @@ class Station:
             self.log(why, "error")
             self.close()
             return EXIT_NO_REPORT
+        pct = os.environ.get(BRIGHT_ENV)
+        if pct:
+            why = None
+            if not self.bench:
+                why = f"{BRIGHT_ENV} dims the glass on the bench only: a factory run is refused with it"
+            else:
+                try:
+                    self.link.cmd(f"test_dot_bright pct={int(pct)}")
+                    self.bench_bright = dict(pct=int(pct), ok=True)
+                    self.log(f"bench: the glass at {int(pct)}% in this run ({BRIGHT_ENV})")
+                except (CommandError, ValueError) as e:
+                    why = f"{BRIGHT_ENV}={pct}: the Kode did not take test_dot_bright ({e})"
+            if why:
+                self.info = None
+                self.log(why, "error")
+                self.close()
+                return EXIT_NO_REPORT
         self.screen("connecting")
         self.make_outdir(self.info["serial"])
         self.find_repeat()
@@ -1207,8 +1317,17 @@ class Station:
         self.installs = {}
 
     def note_log(self, x):
-        """A `!` line of the Kode, inside whichever answer: a chunk of an image the
+        """A `!` line of the Kode, inside whichever answer: a tone that came back and a
+        vibration window are kept for the extra limits, and a chunk of an image the
         install read again off the microSD is counted on that install's row."""
+        m = TONE_RX.search(x)
+        if m:
+            self.meas["tones"].append((int(m.group(1)), int(m.group(2))))
+            return
+        m = HAPTIC_ON_RX.search(x)
+        if m:
+            self.meas["haptic_on"].append(float(m.group(1)))
+            return
         m = SD_REREAD_RX.search(x)
         if not m:
             return
@@ -2420,7 +2539,7 @@ class Station:
     def write_results(self, shown, total):
         doc = dict(verdict=shown, serial=self.info["serial"], repeat_of=self.repeat_of, lock=self.lock, info=self.info,
                    total_s=round(total, 1), blocks=self.blocks, exit_record=self.exit, photos=self.photos,
-                   place_again=self.place_again,
+                   place_again=self.place_again, extra_limits=self.extra_limits, bench_bright=self.bench_bright,
                    steps={r["id"]: r for r in self.results})
         write_atomic(self.outdir / "results.json", json.dumps(doc, indent=1, ensure_ascii=False).encode())
 
