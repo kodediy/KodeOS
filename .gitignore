@@ -9,7 +9,6 @@ dependencies.lock
 .DS_Store
 *.swp
 storage_image/*.bin
-storage_image/*.commit
 storage_image/.kode/
 apps_image/*.bin
 apps_image/*.commit

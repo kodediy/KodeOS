@@ -24,7 +24,6 @@ on:
     paths:
       - 'components/kgui/idf_component.yml'
       - 'tools/assemble_release.sh'
-      - 'tools/build_c5.sh'
       - 'tools/build_welcome.sh'
       - 'tools/mkapps.py'
       - 'apps_image/welcome.pin'
@@ -117,8 +116,9 @@ jobs:
             refuse "the sdk submodule is not at $pin"
           fi
 
-      # The C5 image a release ships must have been through the C5's own main,
-      # and so its own CI, before the SDK pinned it.
+      # The C5 the SDK pins is the one this kodeOS speaks to, and the factory
+      # closes the C5 with a release of it: that commit must have been through
+      # the C5's own main, and so its own CI, before the SDK pinned it.
       - name: The C5 the SDK pins is on the C5's main
         run: |
           pinned="$(git -C sdk ls-tree HEAD c5 | awk '{ print $3 }')"
@@ -138,33 +138,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # The runner ships SDKs this job never uses. They go first, to leave
-      # room for the ESP-IDF image and both build trees: a rehearsal once died
+      # room for the ESP-IDF image and the build trees: a rehearsal once died
       # pulling an image with 98 MB left.
       - name: Free the runner's disk
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
-      # The C5's firmware builds for esp32c5 before kodeOS, so its image and
-      # stamp are in storage_image/ when kodeOS's FAT is made. It builds with
-      # ESP-IDF v6.1, like kodeOS and like the C5's own repository: a later one
-      # has no Key Manager for the C5's identity (kodediy/kode_slave_c5#4).
-      # The action itself marks the workspace a safe git directory.
-      - name: Build the C5 image
-        uses: espressif/esp-idf-ci-action@e6f5c74232b1ccd4c97ed641f1e48553853f1fd5 # v1.2.0
-        with:
-          esp_idf_version: v6.1
-          target: esp32c5
-          command: |
-            tools/build_c5.sh
-
-      # The C5's image is in storage_image/ now and its build tree, at the
-      # root, is not needed again in this job. The ESP-IDF image stays:
-      # kodeOS builds with it next.
-      - name: Drop the C5's build
-        run: |
-          sudo rm -rf build_c5
           df -h /
 
       # The welcome app is private and has its own read-only deploy key. Its
@@ -227,7 +206,7 @@ jobs:
             echo "kodeOS $VERSION"
             echo "kodeos commit  $(git rev-parse HEAD)"
             echo "sdk commit     $(git -C sdk rev-parse HEAD)"
-            echo "c5 stamp       $(cat build/c5_slave.commit 2>/dev/null || cat storage_image/c5_slave.commit)"
+            echo "c5 pin         $(git -C sdk ls-tree HEAD c5 | awk '{ print $3 }')"
             echo "welcome pin    $(cat apps_image/welcome.pin)"
             echo "welcome stamp  $(cat apps_image/*.commit)"
             echo "ESP-IDF        $(python3 -c 'import json; print(json.load(open("build/project_description.json"))["git_revision"])')"

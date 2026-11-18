@@ -115,7 +115,6 @@ sdk/components/kaos/imu/src/imu_ao.c misra-c2012-2.7 5
 sdk/components/kaos/imu/src/imu_ao.c misra-c2012-5.9 5
 sdk/components/kaos/imu/src/imu_ao.c misra-c2012-8.9 2
 sdk/components/kaos/ioexp/src/ioexp_ao.c misra-c2012-10.8 1
-sdk/components/kaos/ioexp/src/ioexp_ao.c misra-c2012-17.7 1
 sdk/components/kaos/ioexp/src/ioexp_ao.c misra-c2012-2.7 1
 sdk/components/kaos/ioexp/src/ioexp_ao.c misra-c2012-5.9 3
 sdk/components/kaos/ioexp/src/ioexp_ao.c misra-c2012-8.9 3
@@ -558,7 +557,6 @@ sdk/components/kdrv/station/src/kdrv_station_i2c.c unreadVariable 1
 sdk/components/kdrv/station/src/kdrv_station_i2c.c variableScope 1
 sdk/components/kdrv/storage/src/kdrv_fs.c misra-c2012-10.2 1
 sdk/components/kdrv/storage/src/kdrv_fs.c misra-c2012-5.9 1
-sdk/components/kdrv/storage/src/kdrv_fs.c misra-c2012-8.9 1
 sdk/components/kdrv/storage/src/kdrv_fs.c redundantInitialization 1
 sdk/components/kdrv/storage/src/kdrv_sd.c misra-c2012-10.8 7
 sdk/components/kdrv/storage/src/kdrv_sd.c misra-c2012-5.6 1

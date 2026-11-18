@@ -19,7 +19,8 @@ bench run never resets nor locks the Kode.
 `step`/`result` for each row -> `phase camera` -> `operator` prompts and
 answers within `phase buttons` and `phase touch` -> `phase rest` ->
 `phase result` -> `photos` -> (`lock`, when the lock failed) -> `end` ->
-`removed`. On a PASS the Kode is locked before `end`, so `end` is the run's
+`removed`. `photos` usually comes earlier, beside the operator; it comes
+again after `phase result` only when that read failed or left a photo out. On a PASS the Kode is locked before `end`, so `end` is the run's
 last word.
 
 Every row of `start.steps` gets a `result`; rows the run never reached
@@ -55,15 +56,15 @@ The point the operator has reached. `text` is meant to be shown large.
 
 ```json
 {"type":"phase","name":"place","text":"Put the Kode in the nest","t":1793260000.1}
-{"type":"phase","name":"camera","text":"DO NOT TOUCH: the camera is looking at the screen","limit_s":8,"t":1793260004.0}
+{"type":"phase","name":"camera","text":"DO NOT TOUCH: the camera is looking at the screen","limit_s":15,"t":1793260004.0}
 {"type":"phase","name":"buttons","text":"Press the button that lights up","t":1793260012.0}
 {"type":"phase","name":"touch","text":"Touch the circle that lights up","t":1793260040.0}
 {"type":"phase","name":"rest","text":"Finishing the automatic tests","t":1793260050.0}
 {"type":"phase","name":"result","text":"Result: ALL GOOD","result":"pass","t":1793260060.0}
 ```
 
-`camera.limit_s` is how long the camera is expected to look, for the
-"do not touch" countdown. `result.result` is `pass` or `fail`.
+`camera.limit_s` is how long the rows before the camera and the camera are
+expected to take, for the "do not touch" countdown. `result.result` is `pass` or `fail`.
 
 ## `operator`
 
@@ -110,7 +111,10 @@ A `timeout` answer has no `ms` and no `got`: the Kode gives none.
 `j3_failed` or `panel_failed` (these two carry a `reason` too;
 `badly_seated` carries the placement picture as `image`). The run's
 clock starts at `ok`. The camera window of a good placement is kept in the
-station's configuration (`place.window`).
+station's configuration (`place.window`). When the screen sits more than
+16 px off that window's centre, the window centred on it is kept instead and the
+run ends at once with `recalibrated` (the station's NO VERDICT): the Kode's next
+run uses the new window.
 
 ## `camera`
 
@@ -153,8 +157,10 @@ status 3: the Kode must not leave the station.
 
 ## `photos`
 
-The run's photos read off the Kode after the verdict is told to it and
-before the lock.
+The run's photos read off the Kode, beside the operator once the Kode's lane
+is free, and in any case before the lock. A read that failed or left a photo
+out is done again after the verdict is told to the Kode, and says so in a
+second `photos`.
 
 ```json
 {"type":"photos","n":12,"bytes":186000,"secs":4.1,"folder":"/.../20261103-114646_KODE1TEST00001D","retries":1,"missing":[]}

@@ -67,6 +67,8 @@ class FakeLink:
         return self.stream.pop(0) if self.stream else None
 
     def cmd(self, line, timeout=10.0):
+        if line.startswith("test_dot_relays"):       # the operator light, not a poll
+            return []
         self.log.append(line)
         assert line == "test_dot_poll", line
         recs = self.polls.pop(0) if self.polls else ["poll state=done lane=idle"]

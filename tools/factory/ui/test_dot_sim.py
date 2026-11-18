@@ -26,6 +26,10 @@ Cases (`--case`, or the environment variable TEST_DOT_CASE that
   noverdict   everything passes but the pixel check, which cannot judge
   timeouts    the operator does nothing: every button and touch step times out
   misplaced   the placement never completes (the Kode sits badly)
+  off_centre  the Kode 3 mm off the camera window's centre: the station keeps
+              the centred window and stops (NO VERDICT); run it again to pass
+  camera_off  the fixture's camera too close: the screen's band fits no
+              window, even centred, and the framing is the station's NO VERDICT
   no_camera   the camera on J3 never answers
   no_usb      the Kode never appears on USB
 
@@ -40,6 +44,7 @@ import base64
 import bisect
 import io
 import itertools
+import math
 import os
 import random
 import sys
@@ -67,6 +72,19 @@ TOUCH_PX = 64              # how far from the target a touch may land, per axis
 SERIAL = "KODE1TEST00001D"
 MAC_P4 = "38:44:be:07:e6:54"
 WINDOW = "704,628"
+# Where the fake's screen sits: its centre's offset from the camera array's centre, mm,
+# and the camera's scale, sensor px per panel px. This offset is the one the template's
+# window is centred on; the framing is worked out from it and the window in use.
+OFFSET_MM = (-2.40, 1.50)
+SCALE = 2.15
+ANGLE_DEG = -1.0           # the screen's turn, as the placement and cam_straight say it
+BAND_CORNERS = ((-205, -126), (205, -126), (205, 129), (-205, 129))   # panel px from the centre
+
+# What the fake's microSD holds and the station's settings name, so a factory
+# run (which needs both images and the expected kodeOS) goes through.
+SD_FILES = {"onboarding.bin": "1" * 64, "storage.bin": "2" * 64}
+WELCOME_VERSION = "0.0.5"
+KODEOS_RUNNING = "00.00.26"
 
 INFO = [
     f'serial={SERIAL} product="KODE-DOT" board="1.0"',
@@ -211,19 +229,81 @@ class Scenario:
                            Kode could not keep).
     @param rfid_tag        The ID the station's tag holds before the run.
     @param rfid_dead_write True: `rfid_write` changes nothing and says so.
+    @param rfid_late_clone True: the first `rfid_write` answers `match=no`
+                           past its deadline (3.1 s) and
+                           leaves the reader busy for rfid_busy_s more: every
+                           rfid verb meanwhile is refused at once.
+    @param rfid_busy_s     How long the reader stays busy after that clone.
+    @param nfc_write_fails How many `nfc_write`s, the first ones, find the tag
+                           and fail on a transient read inside the write.
     @param pads_charger    What the charger says with the 5 V on the pads:
                            "charging" (current at once), "slow" (current from
                            the fourth `bat_info`), "full" (no current, charge
                            done) or "idle" (no current, not charging).
+    @param sd_files        {file name: SHA-256}: what the Kode's microSD holds
+                           for `file_sha`.
+    @param install         What `test_dot_welcome` and `test_dot_storage` end
+                           with: "installed", "failed", "refused" or "silent"
+                           (no last record).
+    @param apps            What `app_list` gives: [(name, version)].
+    @param install_s       Seconds from `started` to the last record, or
+                           {"welcome": s, "storage": s}. The Kode runs the
+                           installs one after the other, in the order armed.
+    @param install_gap_s   Seconds between one install's last record and the
+                           next one's `started` (0: the same instant).
+    @param have            The images already on the Kode, byte for byte ("welcome",
+                           "storage"): asked with sha=, they answer present=yes
+                           and are not written; the others answer present=no
+                           and are written.
+    @param sha_refused     True: a kodeOS without sha=: the key is
+                           refused with `>err code=3 msg=sha`.
+    @param disarm_refused  True: a kodeOS without the empty name:
+                           `name=""` is refused with `>err code=3 msg=name`
+                           and what was armed stays armed.
+    @param nfc_truncated   How many `nfc_write`s, the first ones longer than the
+                           tag's text, leave it cut to that text's length and
+                           say ok.
+    @param nfc_read_fails  How many `nfc_read`s, the first ones, find the tag
+                           and fail on a transient read ("carries no NDEF message").
+    @param haptic_name     The name the Kode gives its vibration row.
+    @param run_refused     True: `test component=all` answers `>err` at once
+                           (the run never reaches the camera's end).
     @param boost_late      True: `test_dot_boost state=on` answers on=0 with
                            the boost on, as a record taken before the
                            charger's next poll does.
+    @param sd_rereads      {kind: n}: the install of that image reads n chunks
+                           again off the microSD, each said on the wire as
+                           kodeOS's appmgr says it, halfway through the install.
+    @param boost_falls_s   Seconds after `test_dot_boost state=on` at which the
+                           boost stops under the load (None: it holds): A0
+                           and the gauge's current then read as with it off.
+    @param tones           [(Hz, level in tenths of dBFS)]: the tones the audio
+                           row logs as come back.
+    @param haptic_on       The "on" windows' levels the vibration row logs, mg.
+    @param expratio        cam_colour's expratio, as the record writes it.
+    @param led_flux        (red, green, blue) on the LED's record.
+    @param kode_logs       False: the audio and vibration rows log nothing (a
+                           kodeOS that logs less).
+    @param has_bright      False: a kodeOS without `test_dot_bright` (before r5).
+    @param offset_mm       (dx, dy): the screen's centre from the camera array's,
+                           mm, as the placement and the framing say it.
+    @param scale           The fixture camera's sensor px per panel px: above ~2.38
+                           the judged band fits no window. A band outside the
+                           window makes cam_zones and cam_colour fail.
+    @param led_result      What the LED's record says: it looks in the whole field,
+                           not in the window.
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
                  photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
                  rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
-                 boost_late=False):
+                 boost_late=False, sd_files=None, install="installed", install_s=3.0,
+                 install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
+                 rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
+                 sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False,
+                 boost_falls_s=None, sd_rereads=None, tones=((1535, -7), (1957, -28)),
+                 haptic_on=(284.0, 282.9, 277.3), expratio="1.00", led_flux=(25259, 73720, 104989),
+                 kode_logs=True, has_bright=True, offset_mm=None, scale=None, led_result="pass"):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -235,6 +315,57 @@ class Scenario:
         self.rfid_dead_write = rfid_dead_write
         self.pads_charger = pads_charger
         self.boost_late = boost_late
+        self.boost_falls_s = boost_falls_s
+        self.sd_rereads = dict(sd_rereads or {})
+        self.sd_files = dict(SD_FILES if sd_files is None else sd_files)
+        self.apps = list(apps if apps is not None else [("onboarding", WELCOME_VERSION)])
+        self.install = install
+        self.install_s = install_s
+        self.install_gap_s = install_gap_s
+        self.have = set(have)
+        self.sha_refused = sha_refused
+        self.disarm_refused = disarm_refused or sha_refused
+        self.nfc_truncated = nfc_truncated
+        self.nfc_read_fails = nfc_read_fails
+        self.haptic_name = haptic_name
+        self.run_refused = run_refused
+        self.rfid_late_clone = rfid_late_clone
+        self.rfid_busy_s = rfid_busy_s
+        self.nfc_write_fails = nfc_write_fails
+        self.tones = list(tones)
+        self.haptic_on = list(haptic_on)
+        self.expratio = expratio
+        self.led_flux = tuple(led_flux)
+        self.kode_logs = kode_logs
+        self.has_bright = has_bright
+        if offset_mm is None:
+            offset_mm = (OFFSET_MM[0], OFFSET_MM[1] + 3.0) if case == "off_centre" else OFFSET_MM
+        self.offset_mm = tuple(offset_mm)
+        self.scale = scale if scale is not None else (2.45 if case == "camera_off" else SCALE)
+        self.led_result = led_result
+        self.win = WINDOW              # the camera window the last placement asked for
+        self.sensor_win = WINDOW       # the one the camera opened with, as it woke
+
+    @staticmethod
+    def _xy(win):
+        return [int(v) for v in win.split(",")]
+
+    def offset_said(self):
+        """The offset the Kode says: worked out with the window asked for, on a photo
+        taken in the window the camera opened with."""
+        w, o = self._xy(self.win), self._xy(self.sensor_win)
+        return tuple(self.offset_mm[k] + (w[k] - o[k]) / self.scale * 0.0807 for k in (0, 1))
+
+    def framing(self):
+        """Whether the judged band (panel rows 125 to 380, the whole width, turned
+        ANGLE_DEG) sits 40 px inside the camera's window, as tdan_judge_frame decides it."""
+        wx, wy = self._xy(self.sensor_win)
+        sx = 1296 + self.offset_mm[0] / 0.0807 * self.scale - wx
+        sy = 972 + self.offset_mm[1] / 0.0807 * self.scale - wy
+        ca, sa = math.cos(math.radians(ANGLE_DEG)), math.sin(math.radians(ANGLE_DEG))
+        us = [sx + (x * ca - y * sa) * self.scale for x, y in BAND_CORNERS]
+        vs = [sy + (x * sa + y * ca) * self.scale for x, y in BAND_CORNERS]
+        return min(us) >= 40 and max(us) <= 1056 - 40 and min(vs) >= 40 and max(vs) <= 768 - 40
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -243,6 +374,13 @@ class Scenario:
                 (3.3, "place init ok=1 ms=877 why=-")]
         if self.case == "no_camera":
             return [(1.0, "place state=no_camera"), (10.0, "place result=cam_missing"), (10.0, ">ok")]
+        if self.case in ("cam_lost", "cam_lost_once"):
+            self.place_n = getattr(self, "place_n", 0) + 1
+            if self.case == "cam_lost" or self.place_n == 1:
+                looks = [(3.5 + k * PLACE_LOOK_S, f'place check n={k + 1} marks=0 dx=0.00 dy=0.00 ang=0.00 '
+                                                  f'win="{WINDOW}" lost=2') for k in range(2)]
+                return head + [(3.4, "place state=searching")] + looks + [
+                    (3.5 + 2 * PLACE_LOOK_S, "place result=cam_lost looks=2"), (3.5 + 2 * PLACE_LOOK_S, ">ok")]
         if self.case == "misplaced":
             looks = [(3.5 + k * PLACE_LOOK_S, f'place check n={k + 1} marks=2 dx=18.20 dy=-6.40 ang=12.30 '
                                               f'win="{WINDOW}"') for k in range(PLACE_MISPLACED_LOOKS)]
@@ -250,10 +388,11 @@ class Scenario:
                 (18.0, "place state=misplaced"),
                 (18.0, "place result=misplaced marks=2 dx_mm=18.20 dy_mm=-6.40 ang_deg=12.30 "
                        "limit_mm=15.0 limit_deg=5.0"), (18.0, ">ok")]
+        dx, dy = (f"{v:.2f}" for v in self.offset_said())
         return head + [(3.4, "place state=searching"),
-                       (3.5, f'place check n=1 marks=4 dx=-1.78 dy=1.09 ang=-1.00 win="{WINDOW}"'),
-                       (5.4, f'place result=ok dx_mm=-1.78 dy_mm=1.09 ang_deg=-1.00 marks=4 tries=1 '
-                             f'win="{WINDOW}" ms=1966'),
+                       (3.5, f'place check n=1 marks=4 dx={dx} dy={dy} ang=-1.00 win="{self.win}"'),
+                       (5.4, f'place result=ok dx_mm={dx} dy_mm={dy} ang_deg=-1.00 marks=4 tries=1 '
+                             f'win="{self.win}" ms=1966'),
                        (5.4, ">ok")]
 
     # ---- the run -----------------------------------------------------------
@@ -271,15 +410,19 @@ class Scenario:
             extra = blob_lines("dead_97_275", make_jpeg("dead 97,275", (64, 64), (190, 186, 196)))
         elif self.case == "noverdict":
             pixels = "test=cam_pixels result=noverdict why=noise sat=0.000,0.000 sigma=0.040,0.066"
+        inside = self.framing()
+        dx, dy = (f"{v:.2f}" for v in self.offset_said())
         return [
-            "test=cam_framing result=pass marks=4 inside=1 dx_mm=-1.78 dy_mm=1.10 scale=2.234 nominal=1 "
-            f'min_marks=4 rescued=0 recentred=0 win="{WINDOW}"',
+            f"test=cam_framing result={'pass' if inside else 'fail'} marks=4 inside={int(inside)} dx_mm={dx} "
+            f'dy_mm={dy} scale={self.scale:.3f} nominal=1 min_marks=4 rescued=0 recentred=0 win="{self.win}"',
             "test=cam_straight result=pass angle_deg=-1.00 persp_pct=0.2 max_angle=7 max_persp_pct=8",
         ] + [x[2:] for x in extra] + [
             pixels,
             "test=cam_lines result=pass lines=0 x=0 y0=0 y1=0 row_y=0 level=-0.042 hlevel=-0.030 "
             "max_level=-0.20 wlevel=-0.010,-0.017 whlevel=-0.044,-0.023",
-            'test=cam_zones result=pass zones=0 min_ratio=1.00 limit_ratio=0.86 bright=0 at=""',
+            # A band cut by the window reads as a dark zone.
+            (f'test=cam_zones result={"pass" if inside else "fail"} zones={0 if inside else 1} '
+             f'min_ratio={"1.00" if inside else "0.41"} limit_ratio=0.86 bright=0 at=""'),
         ]
 
     def run_line(self):
@@ -289,21 +432,36 @@ class Scenario:
         t += [(9.0, x) for x in self.camera()]
         t += [(11.0, "colour_info dark=0.0,1.6,0.0 white=143.0,152.1,146.5 grey=0.3598,0.3140,0.3262 "
                      "red=0.9478,0.0000,0.0522 green=0.0000,1.0000,0.0000 blue=0.0006,0.1053,0.8941"),
-              (11.0, "test=cam_colour result=pass dist_grey=0.0528 dist_red=0.0240 dist_green=0.0000 "
-                     "dist_blue=0.0112 wchroma=0.022 ripple=0.023 expratio=1.00 tol=0.250 retakes=0")]
+              (11.0, f"test=cam_colour result={'pass' if self.framing() else 'fail'} dist_grey=0.0528 "
+                     "dist_red=0.0240 dist_green=0.0000 "
+                     f"dist_blue=0.0112 wchroma=0.022 ripple=0.023 expratio={self.expratio} tol=0.250 retakes=0")]
         t += [(11.1, x[2:]) for x in blob_lines("colours", make_colours())]
-        t += [(11.9, "test=led result=pass flux_red=25259 dist_red=0.41 flux_green=73720 dist_green=0.63 "
-                     "flux_blue=104989 dist_blue=0.52 at=556,108 min_flux=4000 max_dist=0.8"),
+        r, g, b = self.led_flux
+        t += [(11.9, f"test=led result={self.led_result} flux_red={r} dist_red=0.41 flux_green={g} dist_green=0.63 "
+                     f"flux_blue={b} dist_blue=0.52 at=556,108 min_flux=4000 max_dist=0.8"),
               (12.0, "timing=camera photos_ms=4301 analysis_ms=2214 led_ms=1664 total_ms=9115")]
         return t
 
     def run_ring(self):
         """The records after the `>ok`, which `test_dot_poll` hands over; the
         operator's are added by the operator model."""
-        return [(12.4, self.row("audio", 208)), (12.5, self.row("haptic", 600)),
+        return [(12.4, self.row("audio", 208)), (12.5, self.row(self.haptic_name, 600)),
                 (12.6, self.row("mag", 13)), (12.7, self.row("pmic", 3)), (12.8, self.row("gauge", 2)),
                 (12.9, self.row("ioexp", 0)), (13.0, self.row("clocks", 133)), (13.2, self.row("ir", 132)),
                 (17.7, self.row("nfc", 4508)), (20.3, self.row("rfid", 2565)), (20.4, self.row("mem", 0))]
+
+    def run_logs(self):
+        """The `!` lines the audio and vibration rows log before their records: (seconds, line)."""
+        if not self.kode_logs:
+            return []
+        out = [(12.3, f"!N 2026-11-03T16:30:00.000Z kaos.audio test audio: {hz} Hz came back at {x10}, "
+                      "others -382, floor -979") for hz, x10 in self.tones]
+        for k, mg in enumerate(self.haptic_on):
+            out.append((12.45, f"!N 2026-11-03T16:30:00.000Z kaos.haptic test haptic_pat: window {2 * k + 1} (on) "
+                               f"at 235 Hz = {mg:.1f} mg, n=80"))
+            out.append((12.45, f"!N 2026-11-03T16:30:00.000Z kaos.haptic test haptic_pat: window {2 * k + 2} (off) "
+                               "at 235 Hz = 1.9 mg, n=42"))
+        return out
 
     def operator_script(self):
         """The recorded operator: (seconds after the camera's end, record)."""
@@ -478,6 +636,7 @@ class FakeKode:
         self.is_open = False
         self.lines = []
         self.relays_sent = []
+        self.light = []                      # R4 as each `test_dot_relays` set it: True is on
         self.out = []                 # [(due, seq, bytes)], sorted
         self.seq = itertools.count()
         self.rx = b""
@@ -485,8 +644,11 @@ class FakeKode:
         self.locked = False           # stored by an earlier session: every station verb refused
         self.locked_now = False       # locked in this session: only `test_dot_end` answers
         self.mode = "dormant"         # test_dot_info's state=: dormant or awake (waking and ending are instants here)
+        self.bright = 100             # the glass's level a pass puts up (`test_dot_bright`), till the next boot
         self.relays = 0xFF
         self.boost = False
+        self.boost_at = None          # when the boost was asked for
+        self.sent_at = []             # [(time, line)]: every line the host sent, when it arrived
         self.tag_text = None
         self.tag_id = self.sc.rfid_tag
         self.ring = []                # [(due, seq, record)], sorted: what the poll hands over
@@ -496,6 +658,13 @@ class FakeKode:
         self.operator = None
         self.photo_asks = {}
         self.photo_sends = {}
+        self.install_free = None      # when the install armed last ends: the next one starts then
+        self.armed = {}               # {kind: file} armed and not taken back
+        self.rfid_clones = 0
+        self.nfc_writes = 0
+        self.nfc_cuts = 0
+        self.nfc_reads = 0
+        self.rfid_busy_until = None
 
     # ---- the pyserial surface --------------------------------------------
     def open(self):
@@ -503,6 +672,7 @@ class FakeKode:
         self.out.clear()
         self.rx = b""
         self.ring.clear()
+        self.install_free = None
         self.run_state = "none"
         self.mode = "dormant"
         self.locked = self.locked or self.locked_now   # the reboot reads the stored lock
@@ -526,6 +696,7 @@ class FakeKode:
             line = raw.decode(errors="replace").strip("\r")
             if line:
                 self.lines.append(line)
+                self.sent_at.append((self.now(), line))
                 if self.now() >= self.ready_at:
                     self.handle(line)
         return len(data)
@@ -579,6 +750,7 @@ class FakeKode:
                 self.answer([], ">err code=5 msg=locked")
                 return
             if verb in WAKING_VERBS:
+                self.waking = self.mode == "dormant"
                 self.mode = "awake"
         fn = getattr(self, "v_" + verb, None)
         if fn is None:
@@ -594,20 +766,99 @@ class FakeKode:
         recs[0] = recs[0].replace(SERIAL, self.sc.serial)
         self.answer(recs)
 
+    def v_file_sha(self, a):
+        name = a.get("name", "")
+        sha = self.sc.sd_files.get(name.rpartition("/")[2]) if name.startswith("/sdcard/") else None
+        if sha is None:
+            self.answer([], ">err code=2 msg=nofile")
+            return
+        self.answer([f"file_sha name={name} sha256={sha} size=1048576"], delay=0.2)
+
+    def install_image(self, kind, a):
+        if "sha" in a and self.sc.sha_refused:
+            self.answer([], ">err code=3 msg=sha")
+            return
+        if a.get("name") == "":
+            if self.sc.disarm_refused:
+                self.answer([], ">err code=3 msg=name")
+                return
+            # Taken back: its records never come (the sim lays them out at the arm).
+            self.armed.pop(kind, None)
+            self.ring = [x for x in self.ring if not x[2].startswith(kind + "=")]
+            if not any(x[2].startswith(("welcome=", "storage=")) for x in self.ring):
+                self.install_free = None
+            self.answer([f"{kind} armed=none"])
+            return
+        if a.get("sha") and kind in self.sc.have:
+            self.armed.pop(kind, None)
+            self.answer([f"{kind} armed=none present=yes ms=310"])
+            return
+        self.armed[kind] = a.get("name")
+        self.answer([f"{kind} armed={a.get('name')}" + (" present=no ms=4" if "sha" in a else "")])
+        now = self.now()
+        start = 0.5
+        if self.install_free is not None:
+            if self.install_free == float("inf"):
+                return                    # the one before never ends: this one never starts
+            start = max(start, (self.install_free - now) * self.speed + self.sc.install_gap_s)
+        secs = self.sc.install_s
+        if isinstance(secs, dict):
+            secs = secs[kind]
+        self.ring_add(start, f"{kind}=started file={a.get('name')}")
+        for k in range(self.sc.sd_rereads.get(kind, 0)):
+            self.at(start + secs / 2, f"!W 2026-11-03T16:30:00.000Z kaos.appmgr '{a.get('name')}': the chunk at "
+                                      f"{32768 * (k + 1)} did not read; it is read again with the card mounted "
+                                      f"again ({k + 1} of 2)")
+            self.at(start + secs / 2, f"!W 2026-11-03T16:30:00.000Z kaos.storage '/sdcard/{a.get('name')}': a chunk "
+                                      f"did not read; the card is mounted again to read from {32768 * (k + 1)} once more")
+        if self.sc.install == "silent":
+            self.install_free = float("inf")
+            return
+        self.ring_add(start + secs, f"{kind}={self.sc.install} file={a.get('name')}")
+        self.install_free = now + (start + secs) / self.speed
+
+    def v_test_dot_welcome(self, a):
+        self.install_image("welcome", a)
+
+    def v_test_dot_storage(self, a):
+        self.install_image("storage", a)
+
+    def v_app_list(self, a):
+        self.answer([f'name="{n}" version={v} size_kb=2048 category="other" display="{n}"' for n, v in self.sc.apps],
+                    delay=0.05)
+
     def v_test_dot_info(self, a):
         self.answer([f"test_dot state={self.mode} locked={int(self.locked_now)} run={self.run_state} "
                      "psram_free=27853504 j3=free"])
+
+    def v_test_dot_bright(self, a):
+        if not self.sc.has_bright:
+            self.answer([], ">err code=1 msg=test_dot_bright")
+            return
+        pct = a.get("pct", "")
+        if not pct.isdigit() or not 10 <= int(pct) <= 100:
+            self.answer([], ">err code=3 msg=pct")
+            return
+        self.bright = int(pct)
+        self.answer([f"bright pct={self.bright}"])
 
     def v_test_dot_screen(self, a):
         self.answer([f"screen phase={a.get('phase', '-')} ok=1"])
 
     def v_test_dot_place(self, a):
+        if a.get("win"):
+            self.sc.win = a["win"]
+        if getattr(self, "waking", True):  # the camera opens its window only as it wakes
+            self.sc.sensor_win = self.sc.win
         for d, r in self.sc.place():
             self.at(d, r)
 
     def v_test(self, a):
         comp = a.get("component")
         if comp == "all":
+            if self.sc.run_refused:
+                self.answer(["test=all result=aborted why=sd_missing"], ">err code=4 msg=aborted", delay=0.3)
+                return
             self.start_run()
             return
         if comp == "pmic":
@@ -626,6 +877,8 @@ class FakeKode:
         self.at(cam_end, ">ok")
         for d, r in self.sc.run_ring():
             self.ring_add(d, r)
+        for d, x in self.sc.run_logs():
+            self.at(d, x)
         self.lane_idle_at = self.now() + max(d for d, _ in self.sc.run_ring()) / self.speed
         if self.sc.operator == "injected":
             self.operator = Operator(lambda r: self.ring_add(0.0, r))
@@ -653,7 +906,9 @@ class FakeKode:
         for x in take:
             self.ring.remove(x)
         due = [x[2] for x in take]
-        done = (not self.ring) and self.run_end_at is not None and now >= self.run_end_at
+        # The run is done with its rows: the installs go on after it, as on the board.
+        rows_left = [x for x in self.ring if not x[2].startswith(("welcome=", "storage="))]
+        done = (not rows_left) and self.run_end_at is not None and now >= self.run_end_at
         if done:
             self.run_state = "done"
         lane = "idle" if (self.lane_idle_at is not None and now >= self.lane_idle_at) else "busy"
@@ -691,13 +946,21 @@ class FakeKode:
         if (b & 0x03) == 0x01:
             self.answer([], ">err code=5 msg=forbidden")
             return
-        self.relays_sent.append(b)
-        self.relays = b
+        self.light.append((b & 0x08) == 0)       # R4, the operator light, is apart from the pads' relays
+        self.relays_sent.append(b | 0x08)
+        self.relays = b | 0x08
         self.answer([f"relays state=0x{b:02X} ok=1"])
+
+    def boosting(self):
+        """The boost on and still holding the load."""
+        if not self.boost:
+            return False
+        falls = self.sc.boost_falls_s
+        return falls is None or self.now() - self.boost_at < falls
 
     def volts(self, ch):
         if self.relays == 0xFC:
-            return {0: 4.64 if self.boost else 0.0, 1: 1.63, 2: 0.0, 3: 5.03}[ch]
+            return {0: 4.64 if self.boosting() else 0.0, 1: 1.63, 2: 0.0, 3: 5.03}[ch]
         return GOOD_VOLTS.get((self.relays, ch), 0.0)
 
     def v_test_dot_adc(self, a):
@@ -707,6 +970,7 @@ class FakeKode:
 
     def v_test_dot_boost(self, a):
         self.boost = a.get("state") == "on"
+        self.boost_at = self.now()
         cur = -1150 if self.boost else -20
         said = self.boost and not self.sc.boost_late       # late: the record still shows the charger before
         self.answer([f"boost on={1 if said else 0} fault=0x00 current_ma={cur}"], delay=0.3)
@@ -728,8 +992,9 @@ class FakeKode:
             else:
                 rec = "vbat_mv=4000 vbus_mv=4550 vbus=on boost=off current_ma=514 soc=80 charging=1 fault=0"
         elif self.relays == 0xFC:
-            rec = (f"vbat_mv=3900 vbus_mv=0 vbus=off boost={'on' if self.boost else 'off'} "
-                   f"current_ma={-1150 if self.boost else -20} soc=80 charging=0 fault=0")
+            on = self.boosting()
+            rec = (f"vbat_mv=3900 vbus_mv=0 vbus=off boost={'on' if on else 'off'} "
+                   f"current_ma={-1150 if on else -20} soc=80 charging=0 fault=0")
         else:
             rec = "vbat_mv=4000 vbus_mv=4900 vbus=on boost=off current_ma=516 soc=80 charging=1 fault=0"
         self.answer([rec], delay=0.05)
@@ -749,17 +1014,48 @@ class FakeKode:
         if self.sc.case in ("fail", "nfc"):
             self.answer(["nfc=tag state=none"], '>err code=4 msg="no tag in the window"', delay=3.0)
             return
-        self.tag_text = a.get("text")
+        self.nfc_writes += 1
+        if self.nfc_writes <= self.sc.nfc_write_fails:
+            self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=1 model="Ultralight / NTAG (Type-2)"'],
+                        '>err code=1 msg="opened, but carries no NDEF message - write one with nfc_write first"',
+                        delay=1.1)
+            return
+        text = a.get("text")
+        if (self.tag_text is not None and len(text) > len(self.tag_text)
+                and self.nfc_cuts < self.sc.nfc_truncated):
+            self.nfc_cuts += 1
+            text = text[:len(self.tag_text)]
+        self.tag_text = text
         self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=2 model="NTAG213"'], delay=0.8)
 
     def v_nfc_read(self, a):
         if self.sc.case in ("fail", "nfc") or self.tag_text is None:
             self.answer(["nfc=tag state=none"], '>err code=4 msg="no tag in the window"', delay=3.0)
             return
+        self.nfc_reads += 1
+        if self.nfc_reads <= self.sc.nfc_read_fails:
+            self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=1 model="Ultralight / NTAG (Type-2)"'],
+                        '>err code=1 msg="opened, but carries no NDEF message - write one with nfc_write first"',
+                        delay=1.1)
+            return
         self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=2 model="NTAG213"',
                      f"nfc=ndef len={len(self.tag_text) + 7} text={quote(self.tag_text)}"], delay=0.6)
 
+    def rfid_busy(self):
+        """True, with the refusal said, while the reader is still taken."""
+        if self.rfid_busy_until is not None and self.now() < self.rfid_busy_until:
+            self.answer([], '>err code=3 msg="rfid busy or not fitted"', delay=0.001)
+            return True
+        return False
+
     def v_rfid_write(self, a):
+        if self.rfid_busy():
+            return
+        self.rfid_clones += 1
+        if self.sc.rfid_late_clone and self.rfid_clones == 1:
+            self.answer(["rfid=clone match=no"], '>err code=4 msg="clone not verified"', delay=3.09)
+            self.rfid_busy_until = self.now() + (3.09 + self.sc.rfid_busy_s) / self.speed
+            return
         if self.sc.rfid_dead_write:
             self.answer([f"rfid=clone id={quote(a.get('id'))} match=no"], delay=1.5)
             return
@@ -767,6 +1063,8 @@ class FakeKode:
         self.answer([f"rfid=clone id={quote(self.tag_id)} match=yes"], delay=1.5)
 
     def v_rfid_read(self, a):
+        if self.rfid_busy():
+            return
         if self.tag_id is None:
             self.answer(["rfid=tag state=none"], '>err code=4 msg="no tag in the window"', delay=3.0)
             return
@@ -838,6 +1136,10 @@ def seed_config(path, template):
     if not path.exists():
         cfg = json.loads(Path(template).read_text())
         cfg["wifi"]["channel_24"], cfg["wifi"]["channel_5"] = 2, 48
+        cfg["expect"] = {"kodeos": KODEOS_RUNNING}
+        cfg["sd_images"] = {"welcome": {"file": "onboarding.bin", "sha256": SD_FILES["onboarding.bin"],
+                                        "version": WELCOME_VERSION},
+                            "storage": {"file": "storage.bin", "sha256": SD_FILES["storage.bin"]}}
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(cfg, indent=2) + "\n")
 
@@ -863,7 +1165,8 @@ class NullBeacon:
 def main(argv=None):
     ap = argparse.ArgumentParser(description="The station program against a fake Kode.")
     ap.add_argument("--case", default=os.environ.get("TEST_DOT_CASE", "pass"),
-                    choices=["pass", "fail", "nfc", "buttons", "noverdict", "timeouts", "misplaced", "no_camera", "no_usb"])
+                    choices=["pass", "fail", "nfc", "buttons", "noverdict", "timeouts", "misplaced", "no_camera", "no_usb",
+                             "off_centre", "camera_off"])
     ap.add_argument("--speed", type=float, default=float(os.environ.get("TEST_DOT_SPEED", "1")),
                     help="how much faster than the recorded board the fake answers")
     ap.add_argument("--events", action="store_true")

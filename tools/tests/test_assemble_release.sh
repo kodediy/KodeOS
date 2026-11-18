@@ -22,15 +22,12 @@ echo "fake otadata"          > "$build_dir/ota_data_initial.bin"
 echo "fake kodeos v00.00.99" > "$build_dir/kodeos.bin"
 echo "fake storage with kode/" > "$build_dir/storage.bin"
 
-# The FAT's staging: Kody's pack and the C5 image, stamped with the commit the
-# SDK pins, as tools/build_c5.sh and the root CMake leave them.
+# The FAT's staging: Kody's pack, as the root CMake leaves it. The welcome
+# app's data folder joins it below.
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{ print $1 }'; }
-pinned_c5="$(git -C sdk ls-tree HEAD c5 | awk '{ print $3 }')"
 stage_fs() {   # stage_fs <build_dir> - a FAT staging the release accepts
     mkdir -p "$1/storage_stage/kode"
     echo "fake manifest" > "$1/storage_stage/kode/kode.json"
-    echo "fake c5 image" > "$1/storage_stage/c5_slave.bin"
-    printf '%s %s\n' "$pinned_c5" "$(sha256 "$1/storage_stage/c5_slave.bin")" > "$1/c5_slave.commit"
 }
 stage_fs "$build_dir"
 
@@ -116,10 +113,10 @@ else
     cat "$sums_file" >&2
 fi
 
-expected_entries="$(printf 'kodeos-factory-v00.00.99/bootloader.bin\nkodeos-factory-v00.00.99/partition-table.bin\nkodeos-factory-v00.00.99/ota_data_initial.bin\nkodeos-factory-v00.00.99/kodeos.bin\nkodeos-factory-v00.00.99/apps.bin\nkodeos-factory-v00.00.99/storage.bin\nkodeos-factory-v00.00.99/flash.sh\nkodeos-factory-v00.00.99/README.txt\nkodeos-factory-v00.00.99/THIRD_PARTY_NOTICES.txt' | sort)"
+expected_entries="$(printf 'kodeos-factory-v00.00.99/bootloader.bin\nkodeos-factory-v00.00.99/partition-table.bin\nkodeos-factory-v00.00.99/ota_data_initial.bin\nkodeos-factory-v00.00.99/kodeos.bin\nkodeos-factory-v00.00.99/apps.bin\nkodeos-factory-v00.00.99/storage.bin\nkodeos-factory-v00.00.99/flash.sh\nkodeos-factory-v00.00.99/write_unchecked.py\nkodeos-factory-v00.00.99/README.txt\nkodeos-factory-v00.00.99/THIRD_PARTY_NOTICES.txt' | sort)"
 actual_entries="$(unzip -Z1 "$zip_file" 2>/dev/null | sort)"
 if [ "$actual_entries" = "$expected_entries" ]; then
-    ok "zip contains exactly the 9 expected files"
+    ok "zip contains exactly the 10 expected files"
 else
     bad "zip contents mismatch"
     diff <(echo "$expected_entries") <(echo "$actual_entries")
@@ -260,34 +257,25 @@ else
     cat "$over_out" >&2
 fi
 
-# --- case 7: the FAT's C5 image must be the one the SDK pins ---
-c5_case() {   # c5_case <name> <mutation> - a complete build dir, then one change
+# --- case 7: the FAT carries Kody's pack and the welcome app's data, nothing else ---
+fat_case() {   # fat_case <name> <mutation> - a complete build dir, then one change
     local dir="$work/build-$1"
     cp -R "$build_dir" "$dir"
     eval "$2"
     tools/assemble_release.sh 00.00.99 "$dir" "$work/dist-$1" "$apps_dir" >/dev/null 2>"$work/$1.err"
 }
-if c5_case other-commit 'printf "%s %s\n" 0000000000000000000000000000000000000000 "$(sha256 "$dir/storage_stage/c5_slave.bin")" > "$dir/c5_slave.commit"'; then
-    bad "assemble_release.sh should refuse a C5 image built from another commit"
+if fat_case c5-image 'echo "a C5 image" > "$dir/storage_stage/c5_slave.bin"'; then
+    bad "assemble_release.sh should refuse a C5 image in the FAT"
 else
-    ok "assemble_release.sh refuses a C5 image built from another commit"
+    ok "assemble_release.sh refuses a C5 image in the FAT"
 fi
-if c5_case dirty 'printf "%s-dirty %s\n" "$pinned_c5" "$(sha256 "$dir/storage_stage/c5_slave.bin")" > "$dir/c5_slave.commit"'; then
-    bad "assemble_release.sh should refuse a C5 image built from a dirty tree"
+if grep -q 'c5_slave.bin' "$work/c5-image.err"; then
+    ok "the refusal names the C5 image"
 else
-    ok "assemble_release.sh refuses a C5 image built from a dirty tree"
+    bad "the refusal does not name the C5 image"
+    cat "$work/c5-image.err" >&2
 fi
-if c5_case swapped 'echo "another image" > "$dir/storage_stage/c5_slave.bin"'; then
-    bad "assemble_release.sh should refuse a C5 image that is not the stamped one"
-else
-    ok "assemble_release.sh refuses a C5 image that is not the stamped one"
-fi
-if c5_case no-c5 'rm "$dir/storage_stage/c5_slave.bin"'; then
-    bad "assemble_release.sh should refuse a FAT with no C5 image"
-else
-    ok "assemble_release.sh refuses a FAT with no C5 image"
-fi
-if c5_case bench-file 'echo "bench app" > "$dir/storage_stage/buttons_led.bin"' ; then
+if fat_case bench-file 'echo "bench app" > "$dir/storage_stage/buttons_led.bin"' ; then
     bad "assemble_release.sh should refuse a bench file in the FAT"
 else
     ok "assemble_release.sh refuses a bench file in the FAT"

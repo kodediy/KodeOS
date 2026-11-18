@@ -18,8 +18,8 @@
 #     apps_dir  default: apps_image (holds <CONFIG_KODEOS_WELCOME_APP>.bin)
 #   exit: 0 on success, 1 if a required input file is missing,
 #         kodeos.bin is past its ceiling (tools/check_os_size.sh),
-#         the FAT does not carry exactly kode/, the C5 image the SDK pins and
-#         the welcome app's data folder, or the welcome app's image is not
+#         the FAT does not carry exactly kode/ and the welcome app's data
+#         folder, or the welcome app's image is not
 #         the project the build names, or the image or that data folder is not
 #         the one tools/build_welcome.sh stamped from apps_image/welcome.pin
 set -euo pipefail
@@ -47,6 +47,7 @@ require "${build_dir}/ota_data_initial.bin"
 require "${build_dir}/kodeos.bin"
 require "${build_dir}/storage.bin"
 require "${templates_dir}/flash.sh"
+require "${templates_dir}/write_unchecked.py"
 require "${templates_dir}/FACTORY_README.txt"
 require "${templates_dir}/THIRD_PARTY_NOTICES.txt"
 
@@ -57,34 +58,16 @@ require "${templates_dir}/THIRD_PARTY_NOTICES.txt"
 # two guards cannot drift apart.
 tools/check_os_size.sh "${build_dir}/kodeos.bin" || exit 1
 
-# The FAT ships Kody's pack, the C5 image this release was built against and
-# the welcome app's data folder (checked further down, with the app), and
-# nothing else: a bench file left in storage_image/ must not reach a
-# customer, and a C5 image from another commit would not speak this kodeOS's
-# KODE wire. The stamp is what tools/build_c5.sh wrote, "<commit> <sha256>".
+# The FAT ships Kody's pack and the welcome app's data folder (checked further
+# down, with the app), and nothing else: a bench file left in storage_image/
+# must not reach a customer. A C5 image is one of them: the factory closes
+# the C5 with a signed image of the C5's own release, and a closed C5 takes
+# no unsigned one.
 stage_fs="${build_dir}/storage_stage"
-require "${stage_fs}/c5_slave.bin"
-require "${build_dir}/c5_slave.commit"
-extra="$(cd "$stage_fs" && ls -A | grep -vxE 'kode|c5_slave\.bin|\.kode' || true)"
+extra="$(cd "$stage_fs" && ls -A | grep -vxE 'kode|\.kode' || true)"
 if [ -n "$extra" ]; then
-    echo "error: the FAT image holds more than kode/, c5_slave.bin and .kode/: $(echo $extra)" >&2
+    echo "error: the FAT image holds more than kode/ and .kode/: $(echo $extra)" >&2
     echo "  move bench files out of storage_image/ and build again" >&2
-    exit 1
-fi
-pinned="$(git -C sdk ls-tree HEAD c5 | awk '{ print $3 }')"
-read -r stamp_commit stamp_sum < "${build_dir}/c5_slave.commit"
-if [ -z "$pinned" ] || [ "$stamp_commit" != "$pinned" ]; then
-    echo "error: c5_slave.bin was built from ${stamp_commit:-nothing}, the SDK pins ${pinned:-nothing}" >&2
-    echo "  run tools/build_c5.sh with the SDK's C5 checked out, then build again" >&2
-    exit 1
-fi
-if command -v sha256sum >/dev/null 2>&1; then
-    actual_sum="$(sha256sum "${stage_fs}/c5_slave.bin" | awk '{ print $1 }')"
-else
-    actual_sum="$(shasum -a 256 "${stage_fs}/c5_slave.bin" | awk '{ print $1 }')"
-fi
-if [ "$stamp_sum" != "$actual_sum" ]; then
-    echo "error: the c5_slave.bin in the FAT is not the one tools/build_c5.sh stamped" >&2
     exit 1
 fi
 
@@ -100,9 +83,9 @@ welcome="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["KOD
 require "${apps_dir}/${welcome}.bin"
 require "${apps_dir}/${welcome}.commit"
 require "${apps_dir}/welcome.pin"
-# The image must be the one tools/build_welcome.sh built from the pin, the
-# same rule as the C5's: one copied in by hand has no stamp, and one built
-# from another commit or a dirty tree has the wrong one. The stamp is
+# The image must be the one tools/build_welcome.sh built from the pin: one
+# copied in by hand has no stamp, and one built from another commit or a
+# dirty tree has the wrong one. The stamp is
 # "<commit> <sha256 of the image> <digest of the data folder>".
 read -r _ _ welcome_pin < "${apps_dir}/welcome.pin"
 read -r welcome_commit welcome_sum welcome_data < "${apps_dir}/${welcome}.commit"
@@ -154,6 +137,8 @@ if [ -z "$apps_off" ] || [ -z "$flash_off" ] || [ $((apps_off)) -ne $((flash_off
     echo "error: flash.sh writes apps.bin at ${flash_off:-nowhere}, the apps region starts at ${apps_off:-nowhere}" >&2
     exit 1
 fi
+# The zones flash.sh --line blanks are table facts too; it names each wrong one.
+tools/check_line_blanks.sh "${templates_dir}/flash.sh"
 
 rm -rf "$stage"
 mkdir -p "$stage" "$out_dir"
@@ -166,9 +151,10 @@ cp "${build_dir}/ota_data_initial.bin"                 "$stage/"
 cp "${build_dir}/kodeos.bin"                           "$stage/"
 cp "${build_dir}/storage.bin"                          "$stage/"
 cp "${templates_dir}/flash.sh"                         "$stage/"
+cp "${templates_dir}/write_unchecked.py"               "$stage/"
 cp "${templates_dir}/FACTORY_README.txt"               "$stage/README.txt"
 cp "${templates_dir}/THIRD_PARTY_NOTICES.txt"          "$stage/"
-chmod +x "$stage/flash.sh"
+chmod +x "$stage/flash.sh" "$stage/write_unchecked.py"
 
 ( cd "$out_dir" && rm -f "${pack_name}.zip" && zip -rq "${pack_name}.zip" "${pack_name}" -x "${pack_name}/" )
 rm -rf "$stage"

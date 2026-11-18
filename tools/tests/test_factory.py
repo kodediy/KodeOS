@@ -55,7 +55,9 @@ PADS_BYTES = [0xFF, 0xFB, 0xFF, 0xFE, 0xFC, 0xFE, 0xFF]
 # The string keys among everything the station sends; every other key is bare.
 QUOTED = {("test_dot_place", "win"), ("test_dot_radio", "ssid24"), ("test_dot_radio", "ssid5"),
           ("test_dot_radio", "ble"), ("test_dot_blob", "name"), ("nfc_write", "text"),
-          ("rfid_write", "id")}
+          ("rfid_write", "id"), ("file_sha", "name"), ("test_dot_welcome", "name"),
+          ("test_dot_welcome", "project"), ("test_dot_welcome", "sha"), ("test_dot_storage", "name"),
+          ("test_dot_storage", "sha")}
 
 
 # Every bound the station program copies from kqp_config.h, by its name there.
@@ -232,6 +234,37 @@ class TestFullPass(Base):
                                 if p.suffix in (".csv", ".html") or p.name.startswith("2")), [])
 
 
+class TestAppsLeft(Base):
+    """After the factory reset of a PASS, the Kode leaves with the Welcome alone."""
+
+    def test_a_pass_checks_the_apps_after_the_reset_and_before_the_lock(self):
+        r = self.run_case(sim.Scenario("pass"))
+        res = r.results()
+        self.assertEqual(res["verdict"], "PASS", r.stdout[-2000:])
+        self.assertEqual(res["steps"]["apps_left"]["status"], "PASS")
+        lines = r.fake.lines
+        self.assertLess(lines.index("test_dot_result verdict=pass"), lines.index("app_list"))
+        self.assertLess(lines.index("app_list"), lines.index("test_dot_lock confirm=on"))
+
+    def test_another_app_left_on_the_kode_fails_it_unlocked(self):
+        r = self.run_case(sim.Scenario("pass", apps=[("onboarding", sim.WELCOME_VERSION), ("kodecraft", "1.0.0")]))
+        res = r.results()
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertEqual(res["steps"]["apps_left"]["status"], "FAIL")
+        self.assertIn("kodecraft", res["steps"]["apps_left"]["measured"])
+        self.assertEqual(r.sent("test_dot_lock"), [])
+
+    def test_no_welcome_or_another_version_fails_it(self):
+        for apps in ([], [("onboarding", "0.0.4")]):
+            with self.subTest(apps=apps):
+                res = self.run_case(sim.Scenario("pass", apps=apps)).results()
+                self.assertEqual((res["verdict"], res["steps"]["apps_left"]["status"]), ("FAIL", "FAIL"))
+
+    def test_the_bench_does_not_ask(self):
+        r = self.run_case(sim.Scenario("pass"), ["--no-place"])
+        self.assertEqual(r.sent("app_list"), [])
+
+
 class TestExpectedVersion(Base):
 
     def run_expecting(self, version):
@@ -265,6 +298,74 @@ class TestNfc(Base):
         bad = {k: v["status"] for k, v in res["steps"].items() if v["status"] != "PASS"}
         self.assertEqual(bad, {"nfc": "FAIL"})
         self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=fail"])
+        # No tag in the field is not written again.
+        self.assertEqual(len(r.sent("nfc_write")), 1)
+
+    def nfc_value(self, step, name):
+        return next(v["value"] for v in step["values"] if v["name"] == name)
+
+    def test_a_clean_nfc_says_one_try_each(self):
+        nfc = self.run_case(sim.Scenario()).results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertRegex(nfc["measured"], r"write \d+\.\d s, tries 1\+1 \(other text, serial\); read \d+\.\d s, 1 try")
+        self.assertNotIn("once more", nfc["measured"])
+        self.assertEqual((self.nfc_value(nfc, "write_tries"), self.nfc_value(nfc, "read_tries")), (2, 1))
+
+    def test_a_write_that_fails_once_on_the_tag_is_written_again(self):
+        r = self.run_case(sim.Scenario(nfc_write_fails=1))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        self.assertIn("tries 2+1 (other text, serial)", nfc["measured"])
+        self.assertEqual(self.nfc_value(nfc, "write_tries"), 3)
+        texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
+        self.assertEqual(texts, [final.NFC_OTHER_TEXT, final.NFC_OTHER_TEXT, r.results()["serial"]])
+
+    def test_a_write_that_fails_twice_fails_the_kode(self):
+        r = self.run_case(sim.Scenario(nfc_write_fails=2))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "FAIL", nfc)
+        self.assertEqual(len(r.sent("nfc_write")), 2)
+
+    def test_a_serial_cut_short_on_the_tag_is_written_once_more(self):
+        r = self.run_case(sim.Scenario(nfc_truncated=1))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        self.assertIn("tries 1+2 (other text, serial)", nfc["measured"])
+        self.assertIn("2 tries", nfc["measured"].partition("; read")[2])
+        serial = r.results()["serial"]
+        self.assertIn(f'first read back "{serial[:len(final.NFC_OTHER_TEXT)]}": the serial written and read once more',
+                      nfc["measured"])
+        self.assertEqual((self.nfc_value(nfc, "write_tries"), self.nfc_value(nfc, "read_tries")), (3, 2))
+        texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
+        self.assertEqual(texts, [final.NFC_OTHER_TEXT, serial, serial])
+        self.assertEqual(len(r.sent("nfc_read")), 2)
+        self.assertIn(serial[:len(final.NFC_OTHER_TEXT)], nfc["detail"])
+
+    def test_a_serial_cut_short_twice_fails_the_kode_after_one_more_write(self):
+        r = self.run_case(sim.Scenario(nfc_truncated=2))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "FAIL", nfc)
+        self.assertEqual(r.results()["verdict"], "FAIL")
+        self.assertEqual(len(r.sent("nfc_write")), 3)
+        self.assertEqual(len(r.sent("nfc_read")), 2)
+
+    def test_a_read_back_that_fails_once_is_written_and_read_once_more(self):
+        r = self.run_case(sim.Scenario(nfc_read_fails=1))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        self.assertEqual(len(r.sent("nfc_write")), 3)
+        self.assertEqual(len(r.sent("nfc_read")), 2)
+        self.assertIn('first read back "nothing": the serial written and read once more', nfc["measured"])
+
+    def test_a_read_back_that_fails_twice_fails_the_kode_after_one_more_write(self):
+        r = self.run_case(sim.Scenario(nfc_read_fails=2))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "FAIL", nfc)
+        self.assertEqual(len(r.sent("nfc_write")), 3)
+        self.assertEqual(len(r.sent("nfc_read")), 2)
 
     def test_the_serial_is_written_after_another_text(self):
         r = self.run_case(sim.Scenario())
@@ -292,6 +393,181 @@ class TestRfidWrite(Base):
         self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=fail"])
 
 
+    def test_a_busy_reader_is_waited_for_and_does_not_use_up_the_tries(self):
+        # A clone answered past its deadline, then every rfid verb is refused
+        # as busy for a while: the waits do not use up the tries.
+        r = self.run_case(sim.Scenario(rfid_late_clone=True, rfid_busy_s=1.0))
+        rfid = r.results()["steps"]["rfid"]
+        self.assertEqual(rfid["status"], "PASS", rfid)
+        busy = next(v["value"] for v in rfid["values"] if v["name"] == "busy_refusals")
+        self.assertIn(f"reader busy {busy} times", rfid["measured"])
+        self.assertIn("tries 2+1 (other ID, own ID)", rfid["measured"])
+        self.assertGreater(busy, 0)
+        ids = [fields(ln.partition(" ")[2])["id"] for ln in r.sent("rfid_write")]
+        self.assertEqual(ids[-1], final.rfid_id_of(r.results()["info"]["mac"]))
+
+    def test_a_reader_that_stays_busy_fails_as_busy_within_its_bound(self):
+        r = self.run_case(sim.Scenario(rfid_late_clone=True, rfid_busy_s=999.0))
+        rfid = r.results()["steps"]["rfid"]
+        self.assertEqual(rfid["status"], "FAIL", rfid)
+        self.assertIn("stayed busy", rfid["measured"])
+        self.assertLess(rfid["secs"], 3.1 + final.RFID_BUSY_S + 2.0, rfid["secs"])
+
+    def test_a_clean_rfid_says_one_try_each(self):
+        rfid = self.run_case(sim.Scenario()).results()["steps"]["rfid"]
+        self.assertEqual(rfid["status"], "PASS", rfid)
+        self.assertRegex(rfid["measured"], r"write \d+\.\d s, tries 1\+1 \(other ID, own ID\) \(checked by the Kode: yes\), "
+                                           r"read \d+\.\d s, 1 try")
+        self.assertNotIn("busy", rfid["measured"])
+        vals = {v["name"]: v["value"] for v in rfid["values"]}
+        self.assertEqual((vals["write_tries"], vals["read_tries"], vals["busy_refusals"]), (2, 1, 0))
+
+    def test_a_clone_not_read_back_is_written_up_to_three_times(self):
+        r = self.run_case(sim.Scenario(rfid_dead_write=True))
+        self.assertEqual(len(r.sent("rfid_write")), 2 * final.RFID_WRITE_TRIES)
+        rfid = r.results()["steps"]["rfid"]
+        n = final.RFID_WRITE_TRIES
+        self.assertIn(f"tries {n}+{n} (other ID, own ID) (checked by the Kode: no)", rfid["measured"])
+        self.assertEqual(final.RFID_WRITE_TRIES, 3)
+
+
+class TestCameraLost(Base):
+
+    def test_a_camera_that_lost_its_settings_once_is_woken_again_and_passes(self):
+        # The fixture's camera lost its settings: J3 goes off and on and the
+        # placement repeats, without blaming the seating.
+        r = self.run_case(sim.Scenario(case="cam_lost_once"))
+        self.assertEqual(len(r.sent("test_dot_place")), 2)
+        self.assertEqual(r.results()["steps"]["place"]["status"], "PASS")
+        self.assertTrue(r.results()["place_again"], "the second placement is not counted")
+        self.assertIn("placement_lost", r.results()["blocks"])
+        # J3 goes off between the two placements.
+        self.assertEqual(len(r.sent("test_dot_end")) >= 1, True)
+
+    def test_a_placement_without_the_camera_lost_is_not_counted_again(self):
+        r = self.run_case(sim.Scenario())
+        self.assertFalse(r.results()["place_again"])
+
+    def test_a_camera_that_keeps_losing_them_is_the_station_not_the_seating(self):
+        r = self.run_case(sim.Scenario(case="cam_lost"))
+        self.assertEqual(len(r.sent("test_dot_place")), 2)
+        place = r.results()["steps"]["place"]
+        self.assertEqual(place["status"], "NO VERDICT", place)
+        self.assertIn("keeps losing its settings", place["measured"])
+        self.assertNotIn("badly seated", place["measured"])
+
+
+class TestFraming(Base):
+    """The camera window follows the screen; the framing is the fixture's, never the Kode's."""
+
+    def test_the_window_is_worked_out_as_the_bench_found_it(self):
+        # The bench's answers: an offset of -0.67 / -0.74 mm centres at 750,568, one of -0.82 / -2.94 mm at 746,510.
+        self.assertEqual(final.centred_window(-0.67, -0.74), [750, 568])
+        self.assertEqual(final.centred_window(-0.82, -2.94), [746, 510])
+        self.assertEqual(final.centred_window(*sim.OFFSET_MM), [int(v) for v in sim.WINDOW.split(",")])
+        # Never outside the array, always even.
+        self.assertEqual(final.centred_window(-40, 40), [0, 1176])
+
+    def test_the_margin_has_the_sign_the_kode_judged_on_the_bench(self):
+        # Two bench records at the old window 774,600: just in (inside=1) and just out (inside=0).
+        m_in = final.band_margins(-0.91, -1.68, 2.147, [774, 600], 1.43)
+        m_out = final.band_margins(-0.80, -2.02, 2.149, [774, 600], 1.37)
+        self.assertGreater(min(m_in.values()), 0)
+        self.assertLess(min(m_out.values()), 0)
+        self.assertEqual(min(m_out, key=m_out.get), "top")
+        # Centred on the second one, the band is well inside.
+        self.assertGreater(min(final.band_margins(-0.80, -2.02, 2.149, final.centred_window(-0.80, -2.02),
+                                                  1.37).values()), 30)
+
+    def test_a_centred_kode_is_placed_once_and_costs_nothing(self):
+        r = self.run_case(sim.Scenario())
+        self.assertEqual(r.rc, 0, r.stdout[-2000:])
+        res = r.results()
+        self.assertEqual(r.sent("test_dot_place"), [f'test_dot_place win="{sim.WINDOW}" cam_ms=10000 mark_ms=15000 '
+                                                    'dx_mm=15 deg=5'])
+        self.assertIsNone(res["recentred"])
+        framing = res["steps"]["cam_framing"]
+        self.assertEqual(framing["status"], "PASS")
+        self.assertRegex(framing["measured"], r"^band margin \+\d+ px at the ")
+        self.assertIn("band_margin", [v["name"] for v in framing["values"]])
+
+    def test_a_kode_3_mm_off_centre_recalibrates_the_station_and_passes_the_next_run(self):
+        r = self.run_case(sim.Scenario(case="off_centre"))
+        res = r.results()
+        new = final.centred_window(*r.fake.sc.offset_mm)
+        old = [int(v) for v in sim.WINDOW.split(",")]
+        # The first run keeps the centred window and stops: the station's NO VERDICT.
+        self.assertEqual(res["verdict"], "NO VERDICT")
+        place = res["steps"]["place"]
+        self.assertEqual(place["status"], "NO VERDICT")
+        self.assertTrue(place["measured"].startswith(
+            "station: the fixture's camera was off centre and is recalibrated: run the Kode again"), place["measured"])
+        self.assertIn(f"{old[0]},{old[1]} -> {new[0]},{new[1]}", place["measured"])
+        self.assertEqual(res["recentred"], dict(before=old, after=new))
+        self.assertEqual(json.loads(r.cfg.read_text())["place"]["window"], new)
+        self.assertEqual(len(r.sent("test_dot_place")), 1)
+        # Nothing else is run on the Kode.
+        for verb in ("test", "test_dot_welcome", "test_dot_storage", "nfc_write", "rfid_write", "test_dot_relays",
+                     "test_dot_lock"):
+            self.assertEqual(r.sent(verb), [], verb)
+        others = {k: v["status"] for k, v in res["steps"].items() if k not in ("info", "place", "exit_record")}
+        self.assertEqual(set(others.values()), {"NOT RUN"}, others)
+        words, kind = reports.phrases(dict(place, id="place"))
+        self.assertEqual((words, kind), (["Camera recentred on the Kode: run the Kode again"], "station"))
+        # The next run uses the new window and passes, placed once.
+        again = Run(sim.Scenario(case="off_centre"), home=r.home).go()
+        self.assertEqual(again.rc, 0, again.stdout[-2000:])
+        self.assertEqual(again.results()["verdict"], "PASS")
+        self.assertEqual([ln.split(" ")[1] for ln in again.sent("test_dot_place")], [f'win="{new[0]},{new[1]}"'])
+        self.assertIsNone(again.results()["recentred"])
+        self.assertEqual(again.results()["steps"]["cam_framing"]["status"], "PASS")
+
+    def test_without_the_recentre_the_same_kode_would_not_fit(self):
+        # The simulator's framing is worked out, not canned: the old window leaves the band out.
+        sc = sim.Scenario(case="off_centre")
+        self.assertFalse(sc.framing())
+        sc.win = sc.sensor_win = ",".join(str(v) for v in final.centred_window(*sc.offset_mm))
+        self.assertTrue(sc.framing())
+
+    def test_a_band_that_fits_no_window_is_the_station_never_a_fail(self):
+        # The window is centred on the Kode and the band is still out: the fixture's camera.
+        r = self.run_case(sim.Scenario(case="camera_off"))
+        res = r.results()
+        self.assertEqual(res["verdict"], "NO VERDICT", res["steps"]["cam_framing"])
+        self.assertEqual(len(r.sent("test_dot_place")), 1)
+        self.assertIsNone(res["recentred"])
+        framing = res["steps"]["cam_framing"]
+        self.assertEqual(framing["status"], "NO VERDICT")
+        self.assertTrue(framing["measured"].startswith("station: the fixture's camera is off centre, recalibrate"),
+                        framing["measured"])
+        self.assertNotIn("FAIL", [s["status"] for s in res["steps"].values()])
+        # The rows judged on the window's photo are the station's too, even the ones the
+        # Kode failed (the cut band reads as a dark zone and a wrong colour); the LED judges.
+        for i in ("cam_straight", "cam_pixels", "cam_lines", "cam_zones", "cam_colour"):
+            row = res["steps"][i]
+            self.assertEqual(row["status"], "NO VERDICT", i)
+            self.assertTrue(row["measured"].startswith("station: the screen's judged band is not inside"), i)
+        self.assertIn("which said FAIL", res["steps"]["cam_zones"]["measured"])
+        self.assertIn("which said FAIL", res["steps"]["cam_colour"]["measured"])
+        self.assertEqual(res["steps"]["led"]["status"], "PASS")
+        # The operator reads it as the station's.
+        words, kind = reports.phrases(dict(framing, id="cam_framing"))
+        self.assertEqual(kind, "station")
+        self.assertIn("recalibrate", words[0])
+
+    def test_the_led_still_fails_a_kode_with_the_band_outside(self):
+        r = self.run_case(sim.Scenario(case="camera_off", led_result="fail"))
+        res = r.results()
+        self.assertEqual(res["steps"]["led"]["status"], "FAIL")
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertEqual([i for i, v in res["steps"].items() if v["status"] == "FAIL"], ["led"])
+
+    def test_with_the_band_inside_a_screen_row_still_fails_the_kode(self):
+        r = self.run_case(sim.Scenario(case="fail"))
+        self.assertEqual(r.results()["steps"]["cam_framing"]["status"], "PASS")
+        self.assertEqual(r.results()["steps"]["cam_pixels"]["status"], "FAIL")
+
+
 class TestPhotos(Base):
 
     def test_missing_photo_is_asked_again_up_to_three_times(self):
@@ -299,7 +575,9 @@ class TestPhotos(Base):
         self.assertEqual(r.rc, 0, r.stdout[-2000:])
         folder = r.folders()[0]
         self.assertEqual(r.sent("test_dot_photos").count("test_dot_photos only=5"), 2)
-        self.assertEqual(r.sent("test_dot_photos").count("test_dot_photos only=7"), 3)
+        # Three rounds beside the operator, and the read done again at the end
+        # because one is still missing: three more for that one.
+        self.assertEqual(r.sent("test_dot_photos").count("test_dot_photos only=7"), 6)
         self.assertTrue((folder / f"photo_05_{sim.PHOTOS[4]}.jpg").is_file())
         self.assertFalse((folder / f"photo_07_{sim.PHOTOS[6]}.jpg").exists())
         photos = r.results()["photos"]
@@ -307,6 +585,14 @@ class TestPhotos(Base):
         self.assertEqual(photos["saved"], len(sim.PHOTOS) - 1)
         # A photo is evidence, not a test: the verdict does not move.
         self.assertEqual(r.results()["verdict"], "PASS")
+
+    def test_the_photos_are_read_beside_the_operator_once(self):
+        r = self.run_case(sim.Scenario("pass"))
+        self.assertEqual(r.sent("test_dot_photos"), ["test_dot_photos"])
+        lines = r.fake.lines
+        self.assertLess(lines.index("test_dot_photos"), lines.index("test_dot_result verdict=pass"))
+        self.assertIn("parallel/photos", r.results()["blocks"])
+        self.assertEqual(r.results()["photos"]["saved"], len(sim.PHOTOS))
 
     def test_bad_crc_photo_is_asked_again(self):
         r = self.run_case(sim.Scenario("pass", photo_bad_crc={3: 1}))
@@ -338,9 +624,15 @@ class TestRelays(Base):
         r = self.run_case(sim.Scenario("pass"))
         self.assertEqual(r.rc, 0, r.stdout[-2000:])
         sent = [int(fields(ln.split(" ", 1)[1])["state"], 16) for ln in r.sent("test_dot_relays")]
-        self.assertEqual(sent, PADS_BYTES)
+        # The operator light (R4) rides on the pads' byte and is written on its own
+        # when it goes on and off: leave its bit out and a repeat is not a change.
+        pads = [sent[0] | 0x08]
+        for b in sent[1:]:
+            if b | 0x08 != pads[-1]:
+                pads.append(b | 0x08)
+        self.assertEqual(pads, PADS_BYTES)
         self.assertEqual([b for b in sent if (b & 0x03) == FORBIDDEN], [])
-        self.assertEqual(r.fake.relays_sent, PADS_BYTES)
+        self.assertEqual([b for b in r.fake.relays_sent if (b & 0x03) == FORBIDDEN], [])
         steps = r.results()["steps"]
         for s in ("pads_gnd", "pads_loop", "pads_charge", "pads_delivery"):
             self.assertEqual(steps[s]["status"], "PASS", (s, steps[s]))
@@ -370,6 +662,46 @@ class TestRelays(Base):
         r = self.run_case(sim.Scenario("pass", boost_late=True))
         st = r.results()["steps"]["pads_delivery"]
         self.assertEqual(st["status"], "PASS", st)
+
+    @staticmethod
+    def boost_times(r):
+        """When the boost went on and off, and the A0 readings in between."""
+        on = next(t for t, ln in r.fake.sent_at if ln == "test_dot_boost state=on")
+        off = next(t for t, ln in r.fake.sent_at if ln == "test_dot_boost state=off")
+        a0 = [t for t, ln in r.fake.sent_at if ln == "test_dot_adc ch=0" and on < t < off]
+        return on, off, a0
+
+    def test_the_delivery_row_reads_the_boost_again_before_it_switches_it_off(self):
+        r = self.run_case(sim.Scenario("pass"))
+        st = r.results()["steps"]["pads_delivery"]
+        self.assertEqual(st["status"], "PASS", st)
+        on, off, a0 = self.boost_times(r)
+        self.assertEqual(len(a0), 2, a0)
+        self.assertGreaterEqual(a0[1] - on, final.DELIVERY_LATE_S)
+        bat = [t for t, ln in r.fake.sent_at if ln == "bat_info" and a0[1] < t < off]
+        self.assertEqual(len(bat), 1)
+        vals = {v["name"]: v["value"] for v in st["values"]}
+        self.assertAlmostEqual(vals["a0_late_v"], 4.64, 2)
+        self.assertEqual(vals["current_late_ma"], -1150)
+        self.assertGreaterEqual(vals["t_late"], final.DELIVERY_LATE_S)
+        self.assertIn("then A0=4.64 V -1150 mA at 2.5 s", st["measured"])
+
+    def test_a_boost_that_falls_under_the_load_fails_at_the_second_reading(self):
+        r = self.run_case(sim.Scenario("pass", boost_falls_s=1.5))
+        st = r.results()["steps"]["pads_delivery"]
+        self.assertEqual(st["status"], "FAIL", st)
+        self.assertIn("A0=0.0 V 2.5 s after the boost on", st["measured"])
+        self.assertIn("current_ma=-20 2.5 s after the boost on", st["measured"])
+        self.assertFalse(r.fake.boost)
+
+    def test_a_boost_that_fails_at_the_first_reading_is_not_waited_for(self):
+        r = self.run_case(sim.Scenario("pass", boost_falls_s=0.1))
+        st = r.results()["steps"]["pads_delivery"]
+        self.assertEqual(st["status"], "FAIL", st)
+        on, off, a0 = self.boost_times(r)
+        self.assertEqual(len(a0), 1, a0)
+        self.assertLess(off - on, final.DELIVERY_LATE_S)
+        self.assertNotIn("a0_late_v", [v["name"] for v in st["values"]])
 
 
 class TestRefusal(Base):
@@ -445,7 +777,7 @@ class TestOperatorSim(Base):
         self.assertEqual([e["type"] for e in ev][0], "start")
         self.assertIn("end", [e["type"] for e in ev])
         # A bench run never runs the factory reset, never locks, never joins the CSV.
-        self.assertEqual(r.sent("test_dot_result"), [])
+        self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
         self.assertEqual(r.sent("test_dot_lock"), [])
         self.assertIn("test_dot_end", r.fake.lines)
         self.assertFalse((r.out / "record_E5-01.csv").exists())
@@ -475,6 +807,247 @@ class TestLock(Base):
         self.assertLess(r.fake.lines.index("test_dot_photos"), r.fake.lines.index("test_dot_lock confirm=on"))
 
 
+class TestOperatorLight(Base):
+
+    def test_the_light_is_on_for_the_buttons_and_touch_and_off_after(self):
+        r = self.run_case(sim.Scenario("pass"))
+        self.assertEqual(r.rc, 0, r.stdout[-2000:])
+        # On while the operator works, off at the end, and every byte on the wire
+        # says so in its bit.
+        self.assertTrue(any(r.fake.light))
+        self.assertFalse(r.fake.light[-1])
+        sent = [int(fields(ln.split(" ", 1)[1])["state"], 16) for ln in r.sent("test_dot_relays")]
+        for b, lit in zip(sent, r.fake.light):
+            self.assertEqual((b & 0x08) == 0, lit)
+
+    def test_the_light_is_off_when_the_run_stops(self):
+        r = self.run_case(sim.Scenario("buttons"))
+        self.assertFalse(r.fake.light[-1])
+
+
+class TestSdImages(Base):
+    """The Welcome and Kody's pack the Kode installs from the station's microSD."""
+
+    SHA_W = "a" * 64
+    SHA_S = "b" * 64
+
+    def run_images(self, files=None, install="installed", install_s=3.0, args=(), case="pass",
+                   install_gap_s=0.0, run_refused=False, have=(), sha_refused=False, disarm_refused=False,
+                   sd_rereads=None):
+        sc = sim.Scenario(case, sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
+                          if files is None else files, install=install, install_s=install_s,
+                          install_gap_s=install_gap_s, run_refused=run_refused, have=have,
+                          sha_refused=sha_refused, disarm_refused=disarm_refused, sd_rereads=sd_rereads)
+        r = Run(sc, args)
+        self.addCleanup(r.cleanup)
+        cfg = json.loads(r.cfg.read_text())
+        images = {"welcome": {"file": "onboarding.bin", "sha256": self.SHA_W},
+                  "storage": {"file": "storage.bin", "sha256": self.SHA_S}}
+        cfg["sd_images"] = images
+        r.cfg.write_text(json.dumps(cfg))
+        return r.go()
+
+    def run_without_images(self, args=()):
+        r = Run(sim.Scenario("pass"), args)
+        self.addCleanup(r.cleanup)
+        cfg = json.loads(r.cfg.read_text())
+        cfg["sd_images"] = None
+        r.cfg.write_text(json.dumps(cfg))
+        return r.go()
+
+    def test_no_sd_images_key_installs_nothing_on_the_bench(self):
+        r = self.run_without_images(["--no-place"])
+        self.assertEqual(r.sent("file_sha") + r.sent("test_dot_welcome") + r.sent("test_dot_storage"), [])
+        self.assertNotIn("welcome", r.results()["steps"])
+        self.assertEqual(r.results()["verdict"], "BENCH PASS")
+
+    def test_a_factory_run_without_both_images_or_the_kodeos_is_refused(self):
+        for what in ("sd_images", "welcome", "storage", "expect"):
+            with self.subTest(what=what):
+                r = Run(sim.Scenario("pass"))
+                self.addCleanup(r.cleanup)
+                cfg = json.loads(r.cfg.read_text())
+                if what == "sd_images":
+                    cfg["sd_images"] = None
+                elif what == "expect":
+                    cfg["expect"] = {"kodeos": None}
+                else:
+                    del cfg["sd_images"][what]
+                r.cfg.write_text(json.dumps(cfg))
+                r.go()
+                self.assertEqual(r.rc, final.EXIT_NO_REPORT, r.stdout[-2000:])
+                self.assertEqual(r.fake.lines, [])          # the Kode is not even spoken to
+                self.assertEqual(r.folders(), [])
+                self.assertIn("a factory run is refused", r.stdout)
+
+    def test_a_welcome_already_on_the_kode_is_not_written_again(self):
+        r = self.run_images(have=("welcome",))
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertEqual(res["steps"]["welcome"]["status"], "PASS")
+        self.assertIn("already on the Kode", res["steps"]["welcome"]["measured"])
+        self.assertEqual(res["steps"]["storage"]["status"], "PASS")
+        self.assertIn("installed from storage.bin", res["steps"]["storage"]["measured"])
+        self.assertEqual(res["blocks"]["welcome_install"], 0.0)
+        self.assert_grammar(r)
+
+    def test_a_welcome_with_another_digest_on_the_kode_is_written(self):
+        r = self.run_images(have=("storage",))
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertIn("installed from onboarding.bin", res["steps"]["welcome"]["measured"])
+        self.assertNotIn("already on the Kode", res["steps"]["welcome"]["measured"])
+        self.assertIn("welcome_install", res["blocks"])   # timed from its records: the sim runs them at speed
+        self.assertEqual(len(r.sent("test_dot_welcome")), 1)
+        self.assertIn("already on the Kode", res["steps"]["storage"]["measured"])
+        self.assertEqual(res["blocks"]["storage_install"], 0.0)
+        self.assert_grammar(r)
+
+    def test_a_kodeos_without_sha_installs_as_before_and_says_so(self):
+        r = self.run_images(have=("welcome", "storage"), sha_refused=True)
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertIn("installed from onboarding.bin", res["steps"]["welcome"]["measured"])
+        self.assertIn("installed from storage.bin", res["steps"]["storage"]["measured"])
+        self.assertEqual(r.sent("test_dot_welcome"),
+                         [f'test_dot_welcome name="onboarding.bin" sha="{self.SHA_W}" project="onboarding"',
+                          'test_dot_welcome name="onboarding.bin"'])
+        self.assertIn("welcome: the Kode did not take sha=", r.stdout)
+
+    @staticmethod
+    def value(step, name):
+        return next(v["value"] for v in step["values"] if v["name"] == name)
+
+    def test_a_chunk_read_again_off_the_microsd_is_on_the_install_row(self):
+        r = self.run_images(install_s={"welcome": 8.0, "storage": 3.0}, sd_rereads={"welcome": 2})
+        res = r.results()
+        w, st = res["steps"]["welcome"], res["steps"]["storage"]
+        self.assertEqual((w["status"], st["status"]), ("PASS", "PASS"), w)
+        self.assertIn("microSD read again 2 times (chunk at 32768, 65536)", w["measured"])
+        self.assertEqual(self.value(w, "sd_rereads"), 2)
+        self.assertNotIn("read again", st["measured"])
+        self.assertEqual(self.value(st, "sd_rereads"), 0)
+
+    def test_an_install_without_rereads_says_nothing_of_them(self):
+        w = self.run_images().results()["steps"]["welcome"]
+        self.assertNotIn("read again", w["measured"])
+        self.assertEqual(self.value(w, "sd_rereads"), 0)
+
+    def test_matching_images_are_installed_and_the_pass_waits_for_them(self):
+        r = self.run_images()
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertEqual(res["steps"]["welcome"]["status"], "PASS")
+        self.assertEqual(res["steps"]["storage"]["status"], "PASS")
+        self.assertEqual(r.sent("test_dot_welcome"),
+                         [f'test_dot_welcome name="onboarding.bin" sha="{self.SHA_W}" project="onboarding"'])
+        self.assertEqual(r.sent("test_dot_storage"), [f'test_dot_storage name="storage.bin" sha="{self.SHA_S}"'])
+        self.assertEqual(r.sent("file_sha"), ['file_sha name="/sdcard/onboarding.bin"',
+                                              'file_sha name="/sdcard/storage.bin"'])
+        self.assertLess(r.fake.lines.index(f'test_dot_storage name="storage.bin" sha="{self.SHA_S}"'),
+                        r.fake.lines.index("test component=all"))
+        self.assertIn("welcome_install", res["blocks"])
+        self.assertIn("storage_install", res["blocks"])
+        self.assert_grammar(r)
+
+    def test_a_slow_install_holds_the_rfid_write_and_not_the_nfc_one(self):
+        r = self.run_images(install_s=30.0, args=["--events"])
+        self.assertEqual(r.results()["verdict"], "PASS", r.stdout[-2000:])
+        order = [e["id"] for e in r.events() if e["type"] == "result" and e["id"] in ("nfc", "rfid", "welcome", "storage")]
+        self.assertLess(order.index("nfc"), order.index("welcome"))
+        self.assertLess(order.index("welcome"), order.index("rfid"))
+
+    def results_order(self, r):
+        return [e["id"] for e in r.events() if e["type"] == "result" and e["id"] in ("rfid", "welcome", "storage")]
+
+    def test_an_install_that_goes_on_past_forty_seconds_holds_the_rfid_write_until_it_ends(self):
+        # Over a written apps region the Welcome takes ~23 s and Kody's pack starts
+        # only then: the pack is still being written 40 s after the arming.
+        r = self.run_images(install_s={"welcome": 39.0, "storage": 15.0}, args=["--events"])
+        res = r.results()
+        self.assertEqual(res["verdict"], "PASS", r.stdout[-2000:])
+        order = self.results_order(r)
+        self.assertLess(order.index("storage"), order.index("rfid"), order)
+        self.assertGreater(res["blocks"]["storage_install"], 14.0)
+
+    def test_the_next_install_started_in_a_later_poll_is_waited_for_too(self):
+        r = self.run_images(install_s={"welcome": 39.8, "storage": 3.0}, install_gap_s=8.0, args=["--events"])
+        self.assertEqual(r.results()["verdict"], "PASS", r.stdout[-2000:])
+        order = self.results_order(r)
+        self.assertLess(order.index("storage"), order.index("rfid"), order)
+
+    def test_an_install_the_run_never_reached_is_not_waited_for(self):
+        # The run stops before the camera's end, where the Kode starts the installs.
+        r = self.run_images(run_refused=True)
+        res = r.results()
+        self.assertEqual(res["steps"]["welcome"]["status"], "TIMEOUT", res["steps"]["welcome"])
+        self.assertIn("never started", res["steps"]["welcome"]["measured"])
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertLess(res["total_s"], 60.0, res["total_s"])
+
+    def test_a_wrong_image_is_the_stations_fault_and_installs_nothing(self):
+        r = self.run_images(files={"onboarding.bin": "c" * 64, "storage.bin": self.SHA_S})
+        res = r.results()
+        self.assertEqual(res["verdict"], "NO VERDICT")
+        self.assertEqual(res["steps"]["welcome"]["status"], "NO VERDICT")
+        self.assertIn("station: the station's microSD does not hold the right image", res["steps"]["welcome"]["measured"])
+        # The Kode is asked what it holds first, so it is armed; the station takes
+        # both arms back and the run that would start the installs never begins.
+        self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
+        self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
+        self.assertEqual(r.sent("test_dot_welcome")[-1], 'test_dot_welcome name=""')
+        self.assertEqual(r.sent("test_dot_storage")[-1], 'test_dot_storage name=""')
+        self.assertEqual(r.fake.armed, {})
+        self.assert_grammar(r)
+
+    def test_only_what_was_armed_is_taken_back(self):
+        r = self.run_images(files={"onboarding.bin": self.SHA_W, "storage.bin": "c" * 64}, have=("welcome",))
+        self.assertEqual(r.results()["verdict"], "NO VERDICT")
+        self.assertEqual(r.sent("test_dot_welcome"),
+                         [f'test_dot_welcome name="onboarding.bin" sha="{self.SHA_W}" project="onboarding"'])
+        self.assertEqual(r.sent("test_dot_storage"),
+                         [f'test_dot_storage name="storage.bin" sha="{self.SHA_S}"', 'test_dot_storage name=""'])
+        self.assertEqual(r.fake.armed, {})
+
+    def test_a_kodeos_without_the_empty_name_stays_armed_and_says_so(self):
+        r = self.run_images(files={"onboarding.bin": "c" * 64, "storage.bin": self.SHA_S}, disarm_refused=True)
+        self.assertEqual(r.results()["verdict"], "NO VERDICT")
+        self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
+        self.assertIn("welcome: the Kode did not take the disarm", r.stdout)
+        self.assertEqual(r.fake.armed, {"welcome": "onboarding.bin", "storage": "storage.bin"})
+
+    def test_a_missing_image_is_the_stations_fault_too(self):
+        r = self.run_images(files={"storage.bin": self.SHA_S})
+        res = r.results()
+        self.assertEqual((res["verdict"], res["steps"]["welcome"]["status"]), ("NO VERDICT", "NO VERDICT"))
+        self.assertEqual([ln for ln in r.fake.lines if ln.startswith("test component=all")], [])
+        self.assertEqual(r.fake.armed, {})
+
+    def test_a_kode_that_holds_both_images_reads_nothing_off_the_microsd(self):
+        r = self.run_images(have=("welcome", "storage"))
+        self.assertEqual(r.sent("file_sha"), [])
+        self.assertEqual(r.results()["verdict"], "PASS")
+
+    def test_a_failed_or_refused_install_fails_the_kode(self):
+        for word in ("failed", "refused"):
+            with self.subTest(word=word):
+                r = self.run_images(install=word)
+                res = r.results()
+                self.assertEqual(res["verdict"], "FAIL")
+                self.assertEqual(res["steps"]["welcome"]["status"], "FAIL")
+                self.assertIn(word, res["steps"]["welcome"]["measured"])
+                self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
+
+    def test_an_install_with_no_last_record_does_not_pass(self):
+        r = self.run_images(install="silent")
+        res = r.results()
+        self.assertEqual((res["verdict"], res["steps"]["welcome"]["status"]), ("FAIL", "TIMEOUT"))
+        # The Kode runs the installs one after the other: the pack behind a Welcome
+        # that never ends never starts.
+        self.assertEqual(res["steps"]["storage"]["status"], "TIMEOUT")
+        self.assertIn("never started", res["steps"]["storage"]["measured"])
+
+
 class TestBenchFlags(Base):
 
     def test_no_write_and_no_place_never_reset_or_lock(self):
@@ -488,7 +1061,7 @@ class TestBenchFlags(Base):
                 if flag == "--no-place":
                     self.assertEqual((r.rc, res["verdict"]), (final.EXIT_PASS, "BENCH PASS"))
                 self.assertEqual(res["lock"], "not_sent")
-                self.assertEqual(r.sent("test_dot_result"), [])
+                self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
                 self.assertEqual(r.sent("test_dot_lock"), [])
                 self.assertIn("test_dot_end", r.fake.lines)
                 self.assertFalse((r.out / "record_E5-01.csv").exists())
@@ -496,6 +1069,114 @@ class TestBenchFlags(Base):
                     self.assertEqual(r.sent("nfc_write"), [])
                 else:
                     self.assertEqual(r.sent("test_dot_place"), [])
+
+
+class TestExtraLimits(Base):
+    """The limits the Kode does not judge (rondas/r5-qa-escapes.md): worked out on
+    the PC, written on the row with their margin, and judged only when the
+    station's settings say so in judge_extra."""
+
+    # Per limit: the row, a Kode under it, and the word it gets.
+    UNDER = {
+        "panel": ("cam_colour", dict(expratio="1.80"), "OVER LIMIT"),
+        "audio": ("audio", dict(tones=((1535, -7), (1957, -300))), "UNDER LIMIT"),
+        "led": ("led", dict(led_flux=(5000, 73720, 104989)), "UNDER LIMIT"),
+        "haptic": ("haptic", dict(haptic_on=(30.0, 35.0, 300.0)), "UNDER LIMIT"),
+    }
+
+    def run_judging(self, scenario, judge=()):
+        r = Run(scenario)
+        self.addCleanup(r.cleanup)
+        cfg = json.loads(r.cfg.read_text())
+        cfg["judge_extra"] = {k: True for k in judge}
+        r.cfg.write_text(json.dumps(cfg))
+        return r.go()
+
+    def test_a_good_kode_is_recorded_with_its_margins_and_passes(self):
+        res = self.run_case(sim.Scenario()).results()
+        self.assertEqual(res["verdict"], "PASS")
+        self.assertEqual(sorted(res["extra_limits"]), ["audio", "haptic", "led", "panel"])
+        for key, (row, _, _) in self.UNDER.items():
+            lim = res["extra_limits"][key]
+            self.assertIs(lim["ok"], True, lim)
+            self.assertFalse(lim["judged"])
+            self.assertIn(lim["text"], res["steps"][row]["measured"])
+            self.assertTrue(lim["text"].endswith(": margin ok"), lim["text"])
+        self.assertEqual(res["extra_limits"]["audio"]["value"], -2.8, "the Kode logs tenths of a dB")
+        self.assertEqual(res["extra_limits"]["haptic"]["value"], 282.9, "the middle of the three on windows")
+        self.assertEqual(res["extra_limits"]["panel"]["value"], 1.0)
+
+    def test_under_a_limit_is_recorded_only_by_default(self):
+        for key, (row, knobs, word) in self.UNDER.items():
+            with self.subTest(limit=key):
+                res = self.run_case(sim.Scenario(**knobs)).results()
+                self.assertEqual(res["verdict"], "PASS", "recorded only: the verdict does not move")
+                self.assertEqual(res["steps"][row]["status"], "PASS")
+                self.assertIs(res["extra_limits"][key]["ok"], False)
+                self.assertIn(f"{word}, recorded only", res["steps"][row]["measured"])
+
+    def test_under_a_judged_limit_fails_the_kode(self):
+        for key, (row, knobs, word) in self.UNDER.items():
+            with self.subTest(limit=key):
+                res = self.run_judging(sim.Scenario(**knobs), [key]).results()
+                self.assertEqual(res["steps"][row]["status"], "FAIL", res["steps"][row]["measured"])
+                self.assertIn(f"{word}, judged: FAIL", res["steps"][row]["measured"])
+                self.assertEqual(res["verdict"], "FAIL")
+                self.assertTrue(res["extra_limits"][key]["judged"])
+
+    def test_a_judged_limit_passes_a_good_kode(self):
+        res = self.run_judging(sim.Scenario(), list(self.UNDER)).results()
+        self.assertEqual(res["verdict"], "PASS")
+
+    def test_one_weak_on_window_of_three_does_not_fail_the_motor(self):
+        res = self.run_judging(sim.Scenario(haptic_on=(5.0, 280.0, 281.0)), ["haptic"]).results()
+        self.assertEqual(res["steps"]["haptic"]["status"], "PASS")
+        self.assertEqual(res["extra_limits"]["haptic"]["value"], 280.0)
+
+    def test_a_value_that_never_came_is_said_and_no_verdict_when_judged(self):
+        res = self.run_case(sim.Scenario(kode_logs=False)).results()
+        self.assertEqual(res["verdict"], "PASS")
+        self.assertIn("not received, recorded only", res["steps"]["audio"]["measured"])
+        self.assertIsNone(res["extra_limits"]["haptic"]["ok"])
+        res = self.run_judging(sim.Scenario(kode_logs=False), ["audio"]).results()
+        self.assertEqual(res["steps"]["audio"]["status"], "NO VERDICT")
+        self.assertEqual(res["verdict"], "NO VERDICT")
+
+
+class TestBenchBright(Base):
+    """E5_BRIGHT: the bench's dim panel, told to the Kode after the port is open
+    (opening it reboots the Kode), before the placement wakes the glass."""
+
+    def run_bright(self, pct, scenario=None, args=("--no-write",)):
+        with mock.patch.dict(os.environ, {final.BRIGHT_ENV: pct}):
+            return self.run_case(scenario or sim.Scenario(), args)
+
+    def test_the_glass_level_is_told_after_the_info_and_before_the_placement(self):
+        r = self.run_bright("40")
+        self.assertEqual(r.sent("test_dot_bright"), ["test_dot_bright pct=40"])
+        ln = r.fake.lines
+        self.assertLess(ln.index("test_dot_info"), ln.index("test_dot_bright pct=40"))
+        self.assertLess(ln.index("test_dot_bright pct=40"), ln.index(r.sent("test_dot_place")[0]))
+        self.assertEqual(r.fake.bright, 40)
+        self.assertEqual(r.results()["bench_bright"], {"pct": 40, "ok": True})
+
+    def test_without_it_nothing_is_told(self):
+        r = self.run_case(sim.Scenario(), ["--no-write"])
+        self.assertEqual(r.sent("test_dot_bright"), [])
+        self.assertIsNone(r.results()["bench_bright"])
+
+    def test_a_factory_run_refuses_it(self):
+        r = self.run_bright("40", args=())
+        self.assertEqual(r.rc, final.EXIT_NO_REPORT)
+        self.assertEqual(r.sent("test_dot_bright"), [])
+        self.assertEqual(r.sent("test_dot_place"), [])
+
+    def test_a_kodeos_without_the_verb_or_a_level_out_of_range_runs_nothing(self):
+        for pct, sc in (("40", sim.Scenario(has_bright=False)), ("5", sim.Scenario()), ("dim", sim.Scenario())):
+            with self.subTest(pct=pct):
+                r = self.run_bright(pct, sc)
+                self.assertEqual(r.rc, final.EXIT_NO_REPORT)
+                self.assertEqual(r.sent("test_dot_place"), [])
 
 
 class TestContract(Base):

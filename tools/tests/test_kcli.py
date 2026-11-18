@@ -74,7 +74,7 @@ class FakeBoardSerial:
 
     def __init__(self, clock, chunk=1024, ready_line=None, ignore_installs=0,
                  stall_after_acks=None, fail_at_ack=None, close_line=">ok",
-                 alive=True, wakes_on_reopen=False):
+                 alive=True, wakes_on_reopen=False, waits=0, wait_every=1.0):
         self.clock = clock
         self.chunk = chunk                  # None: ready says no window at all
         self.ready_line = ready_line        # an answer to use instead of ready
@@ -84,6 +84,9 @@ class FakeBoardSerial:
         self.close_line = close_line        # None: the board never closes
         self.alive = alive                  # does the console answer `ping`
         self.wakes_on_reopen = wakes_on_reopen
+        self.waits = waits                  # `>|wait` records before the ready
+        self.wait_every = wait_every        # seconds between two of them
+        self.later = []                     # (when, bytes) still to be said
 
         self.timeout = None
         self.port = None
@@ -112,6 +115,7 @@ class FakeBoardSerial:
         self.is_open = True
         # A reopen resets the board, which is what the host relies on.
         self.rx.clear()
+        self.later.clear()
         self.in_payload = False
         self._line.clear()
         if self.wakes_on_reopen and self.opens > 1:
@@ -125,6 +129,8 @@ class FakeBoardSerial:
         return len(self.rx)
 
     def read(self, n=1):
+        while self.later and self.later[0][0] <= self.clock.now:
+            self.rx += self.later.pop(0)[1]
         if not self.rx:
             self.clock.now += self.timeout or SERIAL_TIMEOUT_S
             return b""
@@ -170,9 +176,19 @@ class FakeBoardSerial:
             self.outstanding = 0
             # The prompt and the erase sequence AO_Log draws before a record,
             # and a log line in between: neither may hide the ready.
-            self._say("!I kaos.app: transfer armed")
             window = "" if self.chunk is None else f" chunk={self.chunk}"
-            self.rx += b"kode> \r\x1b[K>|ready" + window.encode() + b"\r\n"
+            ready = (b"!I kaos.app: transfer armed\r\n"
+                     b"kode> \r\x1b[K>|ready" + window.encode() + b"\r\n")
+            if self.waits == 0:
+                self.rx += ready
+                return
+            # An app the image evicts is copied to the card first: a wait at
+            # once and one every wait_every seconds, then the ready.
+            self._say(">|wait")
+            for i in range(1, self.waits):
+                self.later.append((self.clock.now + i * self.wait_every,
+                                   b">|wait\r\n"))
+            self.later.append((self.clock.now + self.waits * self.wait_every, ready))
 
     def _payload(self, data):
         window = self.chunk if self.chunk is not None else 4096
@@ -386,6 +402,22 @@ class PayloadConversation(unittest.TestCase):
         self.assertIsNotNone(died)
         self.assertIn("install: no terminator (timeout)", str(died.code))
         self.assertEqual(bytes(fake.received), sample(2500))
+
+    def test_a_board_that_says_wait_is_waited_for_past_the_readys_own_time(self):
+        data = sample(2500)
+        fake, died, out = self.talk("install", data, waits=40)   # 40 s of copy
+        self.assertIsNone(died)
+        self.assertEqual(fake.opens, 1, "a board that said wait was reset")
+        self.assertEqual(sum(l.startswith("install ") for l in fake.lines), 1)
+        self.assertEqual(bytes(fake.received), data)
+        self.assertEqual(out.count("copies an app this one evicts"), 1)
+
+    def test_a_board_that_stops_saying_wait_is_still_given_up_on(self):
+        fake, died, out = self.talk("install", sample(500), waits=3,
+                                    wait_every=kcli.READY_TIMEOUT + 1.0)
+        self.assertIsNotNone(died)
+        self.assertIn("never said ready", str(died.code))
+        self.assertEqual(bytes(fake.received), b"")
 
     def test_a_board_that_never_says_ready_is_given_one_reset_and_then_dropped(self):
         fake, died, out = self.talk("install", sample(500), ignore_installs=2)

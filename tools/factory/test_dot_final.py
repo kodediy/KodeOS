@@ -50,6 +50,7 @@ import csv
 import html
 import io
 import json
+import math
 import os
 import random
 import re
@@ -95,7 +96,8 @@ C5_LINK_PAUSE_S = 0.5
 RUN_BUDGET_S = 300             # the whole run, camera and operator included
 POLL_PERIOD_S = 0.15
 POLL_TIMEOUT_S = 5.0
-CAMERA_EXPECTED_S = 8          # the page's "do not touch" countdown
+CAMERA_EXPECTED_S = 15         # the page's "do not touch" countdown: the rows before the camera and the camera (~14.6 s)
+J3_OFF_S = 0.5                 # J3's rail off before a second placement, for the camera to reset
 STATION_FAULT = "station: "    # a row the station could not measure says so first
 OPERATOR_LIMIT_S = 20          # the Kode gives each button and touch step this long
 # The rear pads' limits, from the station's bench (e5_test.py),
@@ -188,9 +190,22 @@ STEPS = {
     "buttons": ("Buttons", "operator"),
     "tp": ("Touch", "operator"),
     "mem": ("Internal memory", "memory"),
+    "welcome": ("Welcome from the microSD", "install"),
+    "storage": ("Kody's pack from the microSD", "install"),
     "exit_record": ("The Kode's exit record", "record"),
 }
+# What the Kode installs from the station's microSD, by the name of its verb and its
+# records: the key under `sd_images` in the station's settings -> the verb.
+SD_IMAGES = {"welcome": "test_dot_welcome", "storage": "test_dot_storage"}
+INSTALL_ENDS = ("installed", "failed", "refused")   # the last record of an install
+INSTALL_WAIT_S = 40.0          # how long after the run the RFID write waits for an install the Kode has not started
+INSTALL_LIMIT_S = 120.0        # how long after its start an install may go on before it has failed
 FACTORY_RESET = ("factory_reset", "Factory reset", "record")   # a step only once a PASS is sent
+APPS_LEFT = ("apps_left", "Apps the Kode leaves with")           # a step only after the factory reset of a PASS
+# The app a Kode leaves the station with, alone in its apps region after the
+# factory reset of a PASS (the kodeOS build's CONFIG_KODEOS_WELCOME_APP).
+WELCOME_PROJECT = "onboarding"
+APP_LIST_TIMEOUT_S = 5.0
 CERTIFICATE = ("certificate", "Certificate", "record")        # a step only before a PASS, where one is issued
 CERTIFICATE_RANGE = "factory-link issues it and the C5 keeps it"
 
@@ -201,6 +216,9 @@ CERTIFICATE_RANGE = "factory-link issues it and the C5 keeps it"
 certify = None
 ORDER = list(STEPS)
 CAM_IDS = ["cam_framing", "cam_straight", "cam_pixels", "cam_lines", "cam_zones", "cam_colour"]
+# The rows judged on the window's photo: with the band outside it they are the station's.
+# The LED is looked for in the whole field and judges whatever the window.
+BAND_ROWS = CAM_IDS[1:]
 RADIO_IDS = ["c5", "wifi_24", "wifi_5", "ble_rx"]
 PADS_IDS = ["pads_charge", "pads_delivery", "pads_gnd", "pads_loop"]
 # The Kode's rows, in the order a run gives them (sd and imu with the camera,
@@ -212,9 +230,20 @@ BACKGROUND = ["pads", "nfc", "rfid", "radio"]     # the PC's work beside the ope
 OPTIONAL = set()
 # What the NFC step writes before the serial, so the serial is a real write.
 NFC_OTHER_TEXT = "KODE E5"
-# Times the RFID step writes an ID before giving it up: one clone in about thirty
-# is not read back by the Kode on the bench, and the next one is.
-RFID_WRITE_TRIES = 2
+# Times the RFID step writes an ID before giving it up: a clone now and then
+# is not read back by the Kode, the misses come in bursts, and two IDs are
+# written per run.
+RFID_WRITE_TRIES = 3
+# The Kode's line for a chunk of an image it reads again off the microSD, with the card mounted again.
+SD_REREAD_RX = re.compile(r"'([^']+)': the chunk at (\d+) did not read; it is read again with the card mounted again")
+# A clone answered past its deadline keeps the Kode's reader until its worker
+# reports, and every rfid verb meanwhile is refused at once with this code and
+# word. That refusal is not a try: it is asked again RFID_BUSY_PAUSE_S apart,
+# for RFID_BUSY_S from the step's first one at most (a reader that is not
+# fitted answers the same, for good).
+RFID_BUSY_CODE = 3
+RFID_BUSY_S = 3.0
+RFID_BUSY_PAUSE_S = 0.2
 
 PASS, FAIL, TIMEOUT, NOVERDICT, NOTRUN = "PASS", "FAIL", "TIMEOUT", "NO VERDICT", "NOT RUN"
 EVENT_STATE = {NOVERDICT: "NOVERDICT", NOTRUN: "NOT_RUN"}
@@ -242,6 +271,66 @@ INJECT_ID = {"pad-left": "left", "bottom": "bot", "pad-down": "down", "top": "to
 
 PLACE_DEFAULTS = dict(usb_s=30, camera_s=10, marks_s=15, dx_mm=15, turn_deg=5, window=[704, 628])
 
+# The camera's window on the fixture (test_dot_priv.h, tdan.h). The Kode photographs a
+# WIN_W x WIN_H window of the OV5640's array; the judged band of the glass (panel rows
+# 125 to 380, the whole width) must sit INSIDE_MARGIN_PX inside it. The placement says
+# where the screen's centre is, in mm from the array's centre; the window that centres
+# the band on it is worked out here and, when it is more than RECENTRE_MIN_PX away from
+# the one in use, the station keeps it and ends the run as its own NO VERDICT: the
+# Kode's next run uses it.
+SENSOR_W, SENSOR_H = 2592, 1944
+SENSOR_CX, SENSOR_CY = 1296, 972
+WIN_W, WIN_H = 1056, 768
+MM_PER_PANEL_PX = 0.0807
+NOMINAL_SCALE = 2.15               # sensor px per panel px on the fixture
+BAND_X = (-205.0, 205.0)           # the band's edges, panel px from the screen's centre
+BAND_Y = (-126.0, 129.0)
+INSIDE_MARGIN_PX = 40
+RECENTRE_MIN_PX = 16
+
+
+def centred_window(dx_mm, dy_mm):
+    """The window whose centre is the screen's: [column, row], even, inside the array."""
+    def axis(centre, d_mm, half, room):
+        v = centre + d_mm / MM_PER_PANEL_PX * NOMINAL_SCALE - half
+        return min(max(2 * round(v / 2), 0), room)
+    return [axis(SENSOR_CX, dx_mm, WIN_W // 2, SENSOR_W - WIN_W),
+            axis(SENSOR_CY, dy_mm, WIN_H // 2, SENSOR_H - WIN_H)]
+
+
+def band_margins(dx_mm, dy_mm, scale, win, angle_deg=0.0):
+    """How far inside its limit each edge of the judged band sits, px of the window:
+    worked out from the offset, the scale and the turn, not measured. Its sign is
+    the Kode's `inside`."""
+    sx = SENSOR_CX + dx_mm / MM_PER_PANEL_PX * scale - win[0]
+    sy = SENSOR_CY + dy_mm / MM_PER_PANEL_PX * scale - win[1]
+    ca, sa = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
+    corners = [(x, y) for x in BAND_X for y in BAND_Y]
+    us = [sx + (x * ca - y * sa) * scale for x, y in corners]
+    vs = [sy + (x * sa + y * ca) * scale for x, y in corners]
+    m = INSIDE_MARGIN_PX
+    return dict(left=min(us) - m, right=WIN_W - m - max(us), top=min(vs) - m, bottom=WIN_H - m - max(vs))
+
+# Limits the Kode does not judge itself, worked out on the PC from what it sends: each is
+# written on its row with its margin, and moves the verdict only when `judge_extra` says so.
+#   panel:  the most `expratio` of cam_colour: the white's exposure against the nominal,
+#           without the marks' factor; above it the panel is too dim.
+#   audio:  the least level of a tone that came back, dBFS (the Kode logs tenths of a dB).
+#   led:    the least flux of each colour of the LED.
+#   haptic: the least "on" level of the vibration, mg: the middle one of the on windows,
+#           as the Kode passes the pattern on two cycles of three.
+EXTRA_DEFAULTS = dict(panel=1.67, audio=-25.0, led=dict(red=6100, green=16600, blue=20600), haptic=40.0)
+EXTRA_ROWS = {"cam_colour": "panel", "audio": "audio", "led": "led", "haptic": "haptic"}
+EXTRA_UNITS = dict(panel="", audio="dBFS", led="", haptic="mg")
+# The Kode's log lines the audio and vibration limits are read from: they come as `!` lines,
+# inside whichever answer is open, never as records.
+TONE_RX = re.compile(r"test audio: (\d+) Hz came back at (-?\d+),")
+HAPTIC_ON_RX = re.compile(r"test haptic_pat: window \d+ \(on\) at \d+ Hz = (-?\d+(?:\.\d+)?) mg")
+HAPTIC_ON_WINDOWS = 3
+# Bench only: the glass's level, percent, the Kode puts up in this run in place of full
+# (`test_dot_bright`), told after the port is open because opening it reboots the Kode.
+BRIGHT_ENV = "E5_BRIGHT"
+
 # The rear pads: the station's relays and ADC, through the Kode.
 RELAY_REST = 0xFF          # every relay open
 RELAY_GND = 0xFB           # the GND pad pulled to the station's ground
@@ -250,6 +339,8 @@ RELAY_DELIVERY = 0xFC      # the Kode's boost into the station's load
 RELAY_FORBIDDEN_MASK = 0x03
 RELAY_FORBIDDEN = 0x01     # R2 closed with R1 at rest: the PC's 5 V into the load through the Kode
 RELAY_SETTLE_S = 0.02
+RELAY_LIGHT = 0x08         # R4: the operator light ("the station needs you"), on while its bit is low
+OPERATOR_LIGHT = {"on": False, "byte": RELAY_REST}   # the light and the last pads byte, shared by every writer
 GND_SETTLE_S = 0.1
 CHARGE_SETTLE_S = 1.5
 CHARGE_CURRENT_WAIT_S = 5.0    # how long the charging current is waited for after the settle
@@ -257,6 +348,7 @@ CHARGE_CURRENT_STEP_S = 0.5
 CHARGE_DONE = "3"              # `bat_info charging=`: the BQ25896's charge-termination state
 DELIVERY_SETTLE_S = 0.5
 BOOST_SETTLE_S = 0.6
+DELIVERY_LATE_S = 2.5      # the second reading of the boost, this long after it is asked for, just before it is switched off
 LOOP_COUNT = 20
 ADC_DIRECT_CH = 1          # A1 is wired straight; the others sit behind a /2 divider
 
@@ -299,6 +391,13 @@ def make_beacon(name):
     """The Mac's BLE beacon (test_dot_ble.py, macOS only)."""
     import test_dot_ble
     return test_dot_ble.Beacon(name)
+
+
+def relay_byte(b):
+    """The pads byte with the operator light added when it is on."""
+    if OPERATOR_LIGHT["on"]:
+        return b & ~RELAY_LIGHT & 0xFF
+    return b | RELAY_LIGHT
 
 
 class Abort(Exception):
@@ -415,11 +514,31 @@ def load_config(path):
     place = dict(PLACE_DEFAULTS)
     place.update(cfg.get("place") or {})
     cfg["place"] = place
+    limits = json.loads(json.dumps(EXTRA_DEFAULTS))
+    for k, v in (cfg.get("extra_limits") or {}).items():
+        if isinstance(limits.get(k), dict) and isinstance(v, dict):
+            limits[k].update(v)
+        elif k in limits:
+            limits[k] = v
+    cfg["extra_limits"] = limits
+    judge = {k: False for k in EXTRA_DEFAULTS}
+    judge.update({k: bool(v) for k, v in (cfg.get("judge_extra") or {}).items() if k in judge})
+    cfg["judge_extra"] = judge
     return cfg
 
 
 def save_config(path, cfg):
+    """The settings back, with the extra limits as the file had them: the defaults
+    filled in by load_config stay in the program, not in each station's copy."""
     path = Path(path).expanduser()
+    try:
+        before = json.loads(path.read_text())
+    except (OSError, ValueError):
+        before = {}
+    cfg = {k: v for k, v in cfg.items() if k not in ("extra_limits", "judge_extra")}
+    for k in ("extra_limits", "judge_extra"):
+        if k in before:
+            cfg[k] = before[k]
     tmp = path.with_suffix(".part")
     tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
     os.replace(tmp, path)
@@ -517,12 +636,37 @@ class Link:
 
     def __init__(self, port):
         self.board = kcli.Board(port)
+        self.on_log = None                      # called with every `!` line, whichever answer it came inside
+        raw = os.environ.get("E5_RAW")          # the bench's timed copy of the wire, both ways
+        if raw:
+            self._tee(open(raw, "a", buffering=1))
+
+    def _tee(self, f):
+        send, read = self.board.send_line, self.board.read_line
+
+        def stamp():
+            now = time.time()
+            return time.strftime("%H:%M:%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}"
+
+        def send_line(line):
+            f.write(f"{stamp()} >>> {line}\n")
+            send(line)
+
+        def read_line(deadline):
+            x = read(deadline)
+            if x is not None:
+                f.write(f"{stamp()} {x}\n")
+            return x
+        self.board.send_line, self.board.read_line = send_line, read_line
 
     def close(self):
         self.board.close()
 
     def read_line(self, deadline):
-        return self.board.read_line(deadline)
+        x = self.board.read_line(deadline)
+        if x is not None and x.startswith("!") and self.on_log:
+            self.on_log(x)
+        return x
 
     def exchange(self, line, timeout=10.0, on_line=None):
         """Send `line`; return (records, `!` lines) at `>ok`, raise
@@ -531,7 +675,7 @@ class Link:
         deadline = CLOCK.monotonic() + timeout
         recs, logs = [], []
         while True:
-            x = self.board.read_line(deadline)
+            x = self.read_line(deadline)
             if x is None:
                 raise CommandError(line, None, recs, logs)
             if x.startswith(">|"):
@@ -565,6 +709,8 @@ class Station:
         self.outdir = None
         self.results = []
         self.blocks = {}
+        self.place_again = False       # a placement the camera lost was tried again
+        self.recentred = None          # the camera window this run centred and kept for the next
         self.t0 = CLOCK.monotonic()
         # A bench run never resets or locks a Kode: an injected operator, an
         # NFC tag left unwritten or a placement skipped is not a factory test.
@@ -574,6 +720,8 @@ class Station:
         self.sim_missed = set()
         self.sim_wrong = False
         self.pending = {}                    # rows finished later by the PC: nfc and rfid
+        OPERATOR_LIGHT.update(on=False, byte=RELAY_REST)
+        self.installs = {}                   # the images the Kode installs from the microSD: key -> job
         self.done_bg = set()
         self.extra = {}
         self.exit = dict(values={}, reasons={})
@@ -583,6 +731,9 @@ class Station:
         self.interrupted = False             # SIGTERM or Ctrl-C: the page's Stop
         self.lock = LOCK_NOT_SENT
         self.op_end_t = None
+        self.meas = dict(tones=[], haptic_on=[])   # read off the Kode's `!` lines for the extra limits
+        self.extra_limits = {}
+        self.bench_bright = None
 
     # ---- events and steps ---------------------------------------------------
     def emit(self, **ev):
@@ -608,14 +759,74 @@ class Station:
 
     def add(self, sid, status, measured="", rng="", secs=0.0, images=(), detail="", values=None, name=None):
         name = name or STEPS[sid][0]
+        values = list(values) if values is not None else values_from(measured)
+        if sid in EXTRA_ROWS:
+            status, measured = self.extra_limit(sid, status, measured, values)
         self.results.append(dict(n=len(self.results) + 1, id=sid, name=name, status=status, measured=measured,
                                  range=rng, secs=round(secs, 2), images=list(images), detail=detail,
-                                 values=values if values is not None else values_from(measured)))
+                                 values=values))
         print(f"{len(self.results):2d} {name:36s} {status:11s} {secs:6.1f}s  {measured[:90]}", flush=True)
         img = str(self.outdir / images[0]) if images and self.outdir else None
         self.emit(type="result", id=sid, state=EVENT_STATE.get(status, status), values=self.results[-1]["values"],
                   image=img, reason=reason_from(status, measured, detail), step_s=round(secs, 2),
                   total_s=round(CLOCK.monotonic() - self.t0, 1))
+
+    def extra_limit(self, sid, status, measured, values):
+        """A limit the Kode does not judge, on row `sid`: its value and margin written on
+        the row and in results.json. Recorded only, unless `judge_extra` names it: then a
+        PASS under the limit is a FAIL, and a PASS whose value never came is NO VERDICT.
+        A row that did not pass keeps its own verdict."""
+        key = EXTRA_ROWS[sid]
+        lim = self.cfg["extra_limits"][key]
+        judged = self.cfg["judge_extra"][key]
+        unit = EXTRA_UNITS[key]
+        val, ok, text = None, None, ""
+        if key == "panel":
+            m = re.search(r"\bexpratio=(\d+(?:\.\d+)?)", measured)
+            if m:
+                val = float(m.group(1))
+                ok = val <= lim
+                text = f"panel: expratio {val:.2f}, max {lim:g}, margin {lim - val:+.2f}"
+        elif key == "audio":
+            tones = self.meas["tones"]
+            if tones:
+                hz, x10 = min(tones, key=lambda t: t[1])
+                val = x10 / 10.0
+                ok = val >= lim
+                text = (f"audio: weakest tone {val:.1f} dBFS at {hz} Hz of {len(tones)}, min {lim:g} dBFS, "
+                        f"margin {val - lim:+.1f} dB")
+        elif key == "led":
+            got = {c: _int(_match(rf"\bflux_{c}=(\d+)", measured)) for c in lim}
+            if all(v is not None for v in got.values()):
+                worst = min(lim, key=lambda c: got[c] / lim[c])
+                val = got
+                ok = all(got[c] >= lim[c] for c in lim)
+                text = ("led: flux " + " / ".join(f"{c} {got[c]}" for c in lim) + ", min "
+                        + " / ".join(str(lim[c]) for c in lim) + f", margin x{got[worst] / lim[worst]:.2f} ({worst})")
+        elif key == "haptic":
+            on = self.meas["haptic_on"][-HAPTIC_ON_WINDOWS:]
+            if on:
+                val = sorted(on)[len(on) // 2]
+                ok = val >= lim
+                text = (f"haptic: 'on' {val:.1f} mg (middle of {len(on)} on windows), min {lim:g} mg, "
+                        f"margin x{val / lim:.1f}")
+        if ok is None:
+            word = "not received"
+            text = f"{key}: no value from the Kode"
+        elif ok:
+            word = "margin ok"
+        else:
+            word = ("OVER LIMIT" if key == "panel" else "UNDER LIMIT")
+        if not ok:
+            if judged and status == PASS:
+                status = FAIL if ok is False else NOVERDICT
+                word += f", judged: {status}"
+            elif not judged:
+                word += ", recorded only"
+        text += ": " + word
+        self.extra_limits[key] = dict(row=sid, value=val, limit=lim, unit=unit, ok=ok, judged=judged, text=text)
+        values.append(value(f"{key}_limit", word, unit, json.dumps(lim) if isinstance(lim, dict) else str(lim)))
+        return status, (measured + "  |  " + text if measured else text)
 
     def tick(self, block, t0):
         self.blocks[block] = round(self.blocks.get(block, 0.0) + CLOCK.monotonic() - t0, 2)
@@ -638,6 +849,7 @@ class Station:
                 raise Abort("the placement did not complete")
             self.run_all()
             self.finish_pending()
+            self.finish_installs()
             self.exit_record()
         except Abort as e:
             stop_why = f"not run: {e}"
@@ -660,6 +872,20 @@ class Station:
         return ends the program with no report (nothing is known of the Kode,
         or its kodeOS cannot run the station)."""
         a, cfg = self.a, self.cfg
+        # A factory run needs the settings that make its PASS mean what it says:
+        # the kodeOS every Kode must run, and both images the Kode installs from
+        # the microSD (E1 no longer writes them). Without them a Kode would pass
+        # with any kodeOS, with no Welcome or with no Kody pack. A bench run
+        # goes on without them.
+        if not self.bench:
+            missing = [k for k in SD_IMAGES if k not in self.sd_images()]
+            missing = [f"sd_images.{k}" for k in missing]
+            if not (cfg.get("expect") or {}).get("kodeos"):
+                missing.append("expect.kodeos")
+            if missing:
+                self.log(f"the station's settings ({self.config_path}) lack " + ", ".join(missing)
+                         + ": a factory run is refused", "error")
+                return EXIT_NO_REPORT
         if not port_present(a.port):
             usb_s = USB_WAIT_OVERRIDE_S if USB_WAIT_OVERRIDE_S is not None else cfg["place"]["usb_s"]
             if not self.wait_usb(a.port, usb_s):
@@ -676,6 +902,7 @@ class Station:
             return EXIT_NO_REPORT
         t0 = CLOCK.monotonic()
         self.link = Link(a.port)
+        self.link.on_log = self.note_log
         for _ in range(PING_TRIES):
             try:
                 self.link.cmd("ping", PING_TIMEOUT_S)
@@ -703,6 +930,23 @@ class Station:
             self.log(why, "error")
             self.close()
             return EXIT_NO_REPORT
+        pct = os.environ.get(BRIGHT_ENV)
+        if pct:
+            why = None
+            if not self.bench:
+                why = f"{BRIGHT_ENV} dims the glass on the bench only: a factory run is refused with it"
+            else:
+                try:
+                    self.link.cmd(f"test_dot_bright pct={int(pct)}")
+                    self.bench_bright = dict(pct=int(pct), ok=True)
+                    self.log(f"bench: the glass at {int(pct)}% in this run ({BRIGHT_ENV})")
+                except (CommandError, ValueError) as e:
+                    why = f"{BRIGHT_ENV}={pct}: the Kode did not take test_dot_bright ({e})"
+            if why:
+                self.info = None
+                self.log(why, "error")
+                self.close()
+                return EXIT_NO_REPORT
         self.screen("connecting")
         self.make_outdir(self.info["serial"])
         self.find_repeat()
@@ -761,7 +1005,14 @@ class Station:
                   steps=[dict(id=i, name=STEPS[i][0], block=STEPS[i][1]) for i in self.planned()], **extra)
 
     def planned(self):
-        return [i for i in ORDER if not (i == "place" and self.a.no_place)]
+        out = []
+        for i in ORDER:
+            if i == "place" and self.a.no_place:
+                continue
+            if i in SD_IMAGES and i not in self.sd_images():
+                continue
+            out.append(i)
+        return out
 
     def wait_usb(self, port, seconds):
         t = CLOCK.monotonic()
@@ -781,15 +1032,10 @@ class Station:
             self.log(f"{line}: {e.term or 'no answer'}")
 
     # ---- placement ---------------------------------------------------------
-    def place(self):
-        """The Kode in the fixture: the camera on J3, the four marks, the
-        offset and the turn inside their limits. True: the test starts."""
+    def place_look(self, win):
+        """One `test_dot_place` with the camera window `win`: (result record, records,
+        location picture as a list, last line)."""
         c = self.cfg["place"]
-        self.begin("place")
-        t1 = CLOCK.monotonic()
-        self.emit(type="place", state="waiting", text="Put the Kode in the nest", t=CLOCK.time())
-        self.phase("place")
-        win = c.get("window") or PLACE_DEFAULTS["window"]
         line = (f"test_dot_place win={quote(f'{int(win[0])},{int(win[1])}')} "
                 f"cam_ms={int(float(c['camera_s']) * 1000)} mark_ms={int(float(c['marks_s']) * 1000)} "
                 f"dx_mm={num_text(c['dx_mm'])} deg={num_text(c['turn_deg'])}")
@@ -816,10 +1062,50 @@ class Station:
             term = e.term
         blobs.flush()
         img = self.save_cam_blobs(blobs)
-        img = [img["location"]] if "location" in img else []
-        dt = CLOCK.monotonic() - t1
+        return res, recs, ([img["location"]] if "location" in img else []), term
+
+    def off_centre(self, res, win):
+        """The window centred on a good placement's screen, when it is more than
+        RECENTRE_MIN_PX away from `win`; else None."""
+        try:
+            new = centred_window(float(res["dx_mm"]), float(res["dy_mm"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        if max(abs(new[0] - win[0]), abs(new[1] - win[1])) <= RECENTRE_MIN_PX:
+            return None
+        return new
+
+    def place(self):
+        """The Kode in the fixture: the camera on J3, the four marks, the
+        offset and the turn inside their limits. True: the test starts."""
+        c = self.cfg["place"]
+        self.begin("place")
+        t1 = CLOCK.monotonic()
+        self.emit(type="place", state="waiting", text="Put the Kode in the nest", t=CLOCK.time())
+        self.phase("place")
+        win = [int(v) for v in (c.get("window") or PLACE_DEFAULTS["window"])]
+        res, recs, img, term = self.place_look(win)
         r = (res or {}).get("result")
+        dt = CLOCK.monotonic() - t1
         self.blocks["placement"] = round(dt, 2)
+        new = self.off_centre(res, win) if r == "ok" else None
+        if new:
+            # The camera opens its window only as it wakes, and a second wake in
+            # one run finds no room for the photos: the station keeps the
+            # centred window and the next run of the Kode uses it.
+            self.recentred = dict(before=win, after=new)
+            self.cfg["place"]["window"] = new
+            try:
+                save_config(self.config_path, self.cfg)
+            except OSError as e:
+                self.log(f"the centred camera window could not be kept: {e}", "error")
+            msg = (STATION_FAULT + "the fixture's camera was off centre and is recalibrated: run the Kode again "
+                   f"(camera window {win[0]},{win[1]} -> {new[0]},{new[1]}; offset {res.get('dx_mm')} / "
+                   f"{res.get('dy_mm')} mm)")
+            self.add("place", NOVERDICT, msg, f"camera window within {RECENTRE_MIN_PX} px of the screen's centre",
+                     dt, img, values=values_from(" ".join(recs[-1:])))
+            self.emit(type="place", state="recalibrated", text=msg, t=CLOCK.time())
+            return False
         if r == "ok":
             msg = (f"placed: offset {res.get('dx_mm')} / {res.get('dy_mm')} mm, turn {res.get('ang_deg')} degrees, "
                    f"{res.get('tries')} checks")
@@ -836,7 +1122,26 @@ class Station:
                     pass
             return True
         detail = "\n".join(recs + [term or "no answer"])
-        if r == "cam_missing":
+        if r == "cam_lost" and not self.place_again:
+            # The camera on J3 kept losing its settings: no seating fixes that.
+            # The end takes J3's rail down, a pause lets it drop, and the next
+            # placement brings it up again: one more try.
+            self.place_again = True
+            self.blocks["placement_lost"] = round(dt, 2)
+            self.log("placement: the camera on J3 lost its settings; J3 off and on, one more try")
+            try:
+                self.link.cmd("test_dot_end", END_TIMEOUT_S)
+            except CommandError as e:
+                self.log(f"test_dot_end before the second placement: {e.term or 'no answer'}")
+            CLOCK.sleep(J3_OFF_S)
+            self.screen("connecting")
+            return self.place()
+        if r == "cam_lost":
+            msg = ("station: the camera on J3 keeps losing its settings (the fixture's camera, its cable, "
+                   "or the Kode's J3): try another station; on a second one, the Kode's J3")
+            self.add("place", NOVERDICT, msg, "the camera keeps its settings", dt, img, detail)
+            self.emit(type="place", state="cam_lost", text=msg, reason="top_connector_j3", t=CLOCK.time())
+        elif r == "cam_missing":
             msg = "Top connector (J3): the camera does not answer (camera module, its cable or the connector)"
             self.add("place", FAIL, msg, f"OV5640 camera on J3 within {c['camera_s']} s", dt, img, detail)
             self.emit(type="place", state="j3_failed", text=msg, reason="top_connector_j3", t=CLOCK.time())
@@ -911,6 +1216,9 @@ class Station:
                     s.poll_done = f["state"] == "done"
                     s.lane_idle = f.get("lane") == "idle"
                 return
+            if r.startswith("welcome=") or r.startswith("storage="):
+                self.install_record(f, r)
+                return
             if r.startswith("step="):
                 s.op_steps[s.cur_op].append(r)
                 self.operator_event(f)
@@ -926,6 +1234,8 @@ class Station:
                 s.cam_detail.append(r)
                 return
             name = f.get("test")
+            if name == "haptic_pat":                     # the vibration row, with the pattern
+                name = "haptic"
             if name is None:
                 return
             if name in CAM_IDS or name == "led":
@@ -952,6 +1262,7 @@ class Station:
                 else:
                     self.op_end_t = CLOCK.monotonic()
                     self.phase("rest")
+                    self.operator_light(False)
                 return
             if name in ROW_SEQ:
                 st = ROW_WORD.get(f.get("result", ""), TIMEOUT)
@@ -969,6 +1280,7 @@ class Station:
                 next_row()
 
         self.handle = handle
+        self.arm_installs()
         self.link.board.send_line("test component=all")
         while True:
             x = self.link.read_line(deadline)
@@ -998,6 +1310,217 @@ class Station:
                 self.begin(sid)
                 self.add(sid, TIMEOUT, why, values=[], detail="\n".join(s.logs)[-REPORT_DETAIL_CHARS:])
 
+    def sd_images(self):
+        """The images the station's settings give the Kode to install from its microSD:
+        {key: (file, sha256)}. No `sd_images` key, nothing is installed."""
+        out = {}
+        cfg = self.cfg.get("sd_images")
+        if not isinstance(cfg, dict):
+            return out
+        for key in SD_IMAGES:
+            item = cfg.get(key)
+            if isinstance(item, dict) and item.get("file") and item.get("sha256"):
+                out[key] = (str(item["file"]), str(item["sha256"]).lower())
+        return out
+
+    def arm_installs(self):
+        """Before the run: the Kode is asked first whether it already holds each
+        configured image (its SHA-256 over the installed bytes) and, when it does
+        not, it is armed to install it, and the file on its microSD is checked
+        against the same SHA-256. An image that is not there or does not match is
+        the station's fault, not the Kode's: the row says so, what was armed is
+        disarmed and the run stops before it starts, so nothing armed is written. A Kode that holds
+        both reads nothing off the microSD (0.53 s of `file_sha` saved)."""
+        want = {k: sha for k, (_, sha) in self.sd_images().items()}
+        welcome_absent = False
+        for key, (name, sha) in self.sd_images().items():
+            t0 = CLOCK.monotonic()
+            self.begin(key)
+            # The Kode hashes what it already holds (the Welcome app by name, the whole
+            # storage partition) and skips the write only when the bytes are the
+            # approved image's. With no Welcome at all (hashed in 0 ms) the Kode is new
+            # or its install was cut:
+            # its storage is written without hashing the 2 MB first (0.175 s), at
+            # worst a pack written again that was already right.
+            have = ""
+            if not (key == "storage" and welcome_absent):
+                have = f" sha={quote(sha)}" + (f" project={quote(WELCOME_PROJECT)}" if key == "welcome" else "")
+            try:
+                try:
+                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(name)}{have}", 10.0)
+                except CommandError as e:
+                    if not have:
+                        raise
+                    # A kodeOS without sha= refuses the key: the order of before. Said in
+                    # the log, so a skip that never fires does not go unseen.
+                    self.log(f"{key}: the Kode did not take sha= ({e.term or 'no answer'}); installing as before", "warn")
+                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(name)}")
+            except CommandError as e:
+                self.add(key, FAIL, f"the Kode did not take the install of {name}: {e.term or 'no answer'}",
+                         f"{key}=installed", 0.0, values=[])
+                continue
+            got = next((fields(r) for r in recs if r.startswith(key + " ")), {})
+            if got.get("present") == "yes":
+                self.blocks[key + "_install"] = 0.0
+                self.add(key, PASS, f"already on the Kode: its bytes have the SHA-256 of {name}; "
+                         f"not written (hash {got.get('ms', '?')} ms)", f"{key}=installed", CLOCK.monotonic() - t0,
+                         values=[value("present", 1)])
+                continue
+            if key == "welcome" and got.get("ms") == "0":
+                welcome_absent = True            # nothing to hash: no Welcome at all
+            self.installs[key] = dict(file=name, t_arm=CLOCK.monotonic(), t0=None, t_end=None, end=None, record="",
+                                      judged=False, rereads=[])
+        bad = []
+        for key in list(self.installs):
+            name = self.installs[key]["file"]
+            t0 = CLOCK.monotonic()
+            got = ""
+            why = ""
+            try:
+                for r in self.link.cmd(f"file_sha name={quote('/sdcard/' + name)}", 10.0):
+                    m = re.search(r"sha256=([0-9a-f]{64})", r)
+                    if m:
+                        got = m.group(1)
+            except CommandError as e:
+                why = e.term or "no answer"
+            if got != want[key]:
+                if not why:
+                    why = f"SHA-256 {got[:12] or 'unread'} instead of {want[key][:12]}"
+                self.add(key, NOVERDICT, STATION_FAULT + f"the station's microSD does not hold the right image ({name}): {why}",
+                         f"SHA-256 {want[key]}", CLOCK.monotonic() - t0, values=[])
+                self.log(f"{key}: the station's microSD does not hold the right image ({name}): {why}", "error")
+                bad.append(key)
+        if bad:
+            self.disarm_installs()
+            raise Abort("the station's microSD does not hold the right image: " + ", ".join(bad))
+
+    def disarm_installs(self):
+        """Take back what arm_installs armed, for a run that does not start: an
+        empty name disarms. A kodeOS without the empty name refuses it; its arm
+        then lasts until the next arm or restart, and the log says so."""
+        for key in list(self.installs):
+            try:
+                self.link.cmd(f'{SD_IMAGES[key]} name=""', 10.0)
+            except CommandError as e:
+                self.log(f"{key}: the Kode did not take the disarm ({e.term or 'no answer'}); "
+                         "it stays armed until the next arm or restart", "warn")
+        self.installs = {}
+
+    def note_log(self, x):
+        """A `!` line of the Kode, inside whichever answer: a tone that came back and a
+        vibration window are kept for the extra limits, and a chunk of an image the
+        install read again off the microSD is counted on that install's row."""
+        m = TONE_RX.search(x)
+        if m:
+            self.meas["tones"].append((int(m.group(1)), int(m.group(2))))
+            return
+        m = HAPTIC_ON_RX.search(x)
+        if m:
+            self.meas["haptic_on"].append(float(m.group(1)))
+            return
+        m = SD_REREAD_RX.search(x)
+        if not m:
+            return
+        name = m.group(1).rpartition("/")[2]
+        for job in self.installs.values():
+            if job["file"].rpartition("/")[2] == name:
+                job["rereads"].append(int(m.group(2)))
+
+    def install_record(self, f, r):
+        """A `welcome=` or `storage=` record: started, then installed, failed or refused."""
+        key = "storage"
+        if "welcome" in f:
+            key = "welcome"
+        job = self.installs.get(key)
+        if job is None:
+            return
+        now = CLOCK.monotonic()
+        if f[key] == "started":
+            job["t0"] = now
+        elif f[key] in INSTALL_ENDS:
+            job["end"] = f[key]
+            job["t_end"] = now
+            job["record"] = r
+            start = job["t_arm"]
+            if job["t0"] is not None:
+                start = job["t0"]
+            self.blocks[key + "_install"] = round(now - start, 2)
+            self.judge_install(key)
+
+    def install_quiet_since(self, job):
+        """When the wait for an install the Kode has not started counts from: its
+        arming, or the end of the install before it. The Kode runs them one after
+        the other, and the next one's `started` may come in a later poll."""
+        ends = [j["t_end"] for j in self.installs.values() if j is not job and j["t_end"] is not None]
+        return max([job["t_arm"]] + ends)
+
+    def installing(self):
+        """True while an install has no last record. An install the Kode started is
+        waited for until it ends or its limit passes: over a written apps region
+        the Welcome takes ~23 s, and an RFID write sent while Kody's pack and the
+        microSD remount after it are still going is not read back. Only an install
+        the Kode has not started has a shorter bound once the run is over; its
+        judgment then comes from finish_installs."""
+        s = self.state
+        now = CLOCK.monotonic()
+        for job in self.installs.values():
+            if job["end"] is not None:
+                continue
+            if job["t0"] is not None:
+                if now - job["t0"] < INSTALL_LIMIT_S:
+                    return True
+            elif not (s.poll_done and now - self.install_quiet_since(job) > INSTALL_WAIT_S):
+                return True
+        return False
+
+    def judge_install(self, key):
+        """The row of an install, when its last record is in or the wait for it is over."""
+        job = self.installs[key]
+        if job["judged"]:
+            return
+        job["judged"] = True
+        secs = self.blocks.get(key + "_install", CLOCK.monotonic() - job["t_arm"])
+        rng = f"{key}=installed"
+        again = job["rereads"]
+        note = ""
+        if again:
+            at = ", ".join(str(o) for o in again)
+            note = f"; microSD read again {times(len(again))} (chunk at {at})"
+        vals = [value("sd_rereads", len(again))]
+        if job["end"] == "installed":
+            self.add(key, PASS, f"installed from {job['file']} in {secs:.1f} s" + note, rng, secs, values=vals,
+                     detail=job["record"])
+        elif job["end"] is None and job["t0"] is None:
+            s = getattr(self, "state", None)
+            why = (f"within {INSTALL_LIMIT_S:.0f} s" if s is not None and s.cam_done
+                   else "(the run stopped before the camera's end, where the Kode starts it)")
+            self.add(key, TIMEOUT, f"the Kode never started the install of {job['file']} {why}", rng, secs,
+                     values=vals)
+        elif job["end"] is None:
+            self.add(key, TIMEOUT, f"no last record {INSTALL_LIMIT_S:.0f} s after the install of {job['file']} began"
+                     + note, rng, secs, values=vals)
+        else:
+            self.add(key, FAIL, f"{job['end']}: {job['record']}" + note, rng, secs, values=vals,
+                     detail=job["record"])
+
+    def finish_installs(self):
+        """Before the exit record and the verdict: every install ended, and well. The
+        factory reset of a PASS needs the Welcome the Kode installed."""
+        s = getattr(self, "state", None)
+        for key, job in self.installs.items():
+            # The Kode starts the installs at the camera's end: a run that never got
+            # there never starts them, and waiting their whole limit only keeps the
+            # operator waiting. A started install has its limit from its start.
+            never = job["t0"] is None and (s is None or not s.cam_done)
+            while job["end"] is None and not never:
+                start = job["t_arm"]
+                if job["t0"] is not None:
+                    start = job["t0"]
+                if CLOCK.monotonic() - start >= INSTALL_LIMIT_S:
+                    break
+                self.sleep_pump(0.5)
+            self.judge_install(key)
+
     def camera_done(self):
         """The camera's tests and its LED, at the run line's end."""
         s = self.state
@@ -1007,6 +1530,7 @@ class Station:
                 self.blocks[b] = round(float(tm[k]) / 1000, 2)
         imgs = self.save_cam_blobs(s.cam)
         loc = imgs.get("location")
+        band_out = False
         for i in CAM_IDS:
             if i not in s.begun:
                 s.begun.add(i)
@@ -1031,6 +1555,13 @@ class Station:
                     rng.append(f"{k}={v}")
                 unit = "mm" if k.endswith("_mm") else ("degrees" if k.endswith("_deg") else "")
                 vals.append(value(k, val, unit))
+            if i == "cam_framing":
+                st, meas = self.framing(f, st, meas, vals)
+                band_out = st == NOVERDICT and meas.startswith(STATION_FAULT)
+            elif i in BAND_ROWS and band_out:
+                meas = (STATION_FAULT + "the screen's judged band is not inside the camera window (recalibrate the "
+                        f"station): this row does not judge the Kode, which said {st}; " + meas)
+                st = NOVERDICT
             pics = []
             if i == "cam_pixels":
                 pics = [b for k, b in imgs.items() if k.startswith(("dead_", "on_"))]
@@ -1062,6 +1593,29 @@ class Station:
             s.begun.add("buttons")
             self.begin("buttons")
             self.phase("buttons")
+            self.operator_light(True)
+
+    def framing(self, f, st, meas, vals):
+        """cam_framing is the fixture's, not the Kode's: written with the band's margin,
+        never a FAIL. A band outside the window (centred on the Kode by the placement)
+        is the station's camera off centre: NO VERDICT, the station to recalibrate."""
+        try:
+            win = [int(v) for v in f["win"].strip('"').split(",")]
+            turn = float((self.state.cam_tests.get("cam_straight") or {}).get("angle_deg", 0))
+            m = band_margins(float(f["dx_mm"]), float(f["dy_mm"]), float(f["scale"]), win, turn)
+        except (KeyError, ValueError, IndexError):
+            m = None
+        if m:
+            worst = min(m, key=m.get)
+            vals.append(value("band_margin", round(m[worst]), "px"))
+            meas = (f"band margin {m[worst]:+.0f} px at the {worst} (left {m['left']:.0f}, right {m['right']:.0f}, "
+                    f"top {m['top']:.0f}, bottom {m['bottom']:.0f}; worked out from the offset, scale and turn); "
+                    + meas)
+        if st == FAIL:
+            meas = (STATION_FAULT + "the fixture's camera is off centre, recalibrate the station: the screen's "
+                    "judged band is not inside the camera window centred on the Kode; " + meas)
+            st = NOVERDICT
+        return st, meas
 
     def retry_blobs(self):
         """A camera picture that arrived broken is asked for again, three
@@ -1093,7 +1647,9 @@ class Station:
         s = self.state
         want = self.cfg.get("parallel_with_operator")
         want = want if isinstance(want, list) else BACKGROUND
-        todo = [w for w in BACKGROUND if w in want]
+        # The photos are read beside the operator too, last: they are kept on the
+        # Kode from the camera on, and the read no longer waits for the verdict.
+        todo = [w for w in BACKGROUND if w in want] + ["photos"]
         while CLOCK.monotonic() < deadline:
             self.pump()
             if s.poll_done and not s.lane_idle:
@@ -1103,7 +1659,11 @@ class Station:
             # 125 kHz carrier of that row was still on failed three runs in eleven.
             rows_in = all(r in self.pending or r in self.done_bg or self.has(r) for r in ("nfc", "rfid"))
             ready = [w for w in todo if w not in ("nfc", "rfid") or (w in self.pending and rows_in)]
-            if s.poll_done and not ready:
+            # The RFID write waits for the images the Kode installs from the microSD;
+            # the NFC, the pads and the radio do not.
+            wait = self.installing()
+            ready = [w for w in ready if w != "rfid" or not wait]
+            if s.poll_done and not ready and not wait:
                 break
             if ready and s.cam_done and s.lane_idle:
                 todo.remove(ready[0])
@@ -1136,7 +1696,8 @@ class Station:
 
     def background(self, what):
         t = CLOCK.monotonic()
-        self.done_bg.add(what)
+        if what != "photos":
+            self.done_bg.add(what)
         try:
             if what == "radio":
                 self.radio_block()
@@ -1146,6 +1707,8 @@ class Station:
                 self.rfid_step()
             elif what == "pads":
                 self.pads_block(self.sleep_pump)
+            elif what == "photos":
+                self.save_photos()
         except Exception as e:
             self.log(f"beside the operator, {what}: {type(e).__name__}: {e}", "error")
         self.blocks["parallel/" + what] = round(CLOCK.monotonic() - t, 2)
@@ -1167,6 +1730,14 @@ class Station:
             self.pads_block(CLOCK.sleep)
 
     # ---- the operator --------------------------------------------------------
+    def operator_light(self, on):
+        """R4, the light that tells the operator to press and touch, kept with the pads' relays as they are."""
+        OPERATOR_LIGHT["on"] = on
+        try:
+            self.link.cmd(f"test_dot_relays state=0x{relay_byte(OPERATOR_LIGHT['byte']):02X}")
+        except CommandError as e:
+            self.log(f"operator light: {e}", "error")
+
     def operator_event(self, f):
         """A button or touch step, to the page as it happens."""
         if "step" not in f:
@@ -1177,6 +1748,7 @@ class Station:
             if kind == "press" and not self.state.buttons_phase:
                 self.state.buttons_phase = True
                 self.phase("buttons")
+                self.operator_light(True)
             self.emit(type="operator", step=k, of=int(f["of"]), kind=kind, what=f.get(kind),
                       limit_s=OPERATOR_LIMIT_S, t=CLOCK.time())
             return
@@ -1243,6 +1815,29 @@ class Station:
             now = CLOCK.monotonic()
 
     # ---- NFC and RFID ------------------------------------------------------
+    def rfid_ask(self, line, timeout, busy):
+        """One rfid verb. A `busy` refusal is asked again while the step's busy
+        time lasts; `busy` (a dict) keeps the first refusal's time and the count.
+        @return (records, logs); raises the last CommandError."""
+        while True:
+            self.operator_sim_pump()               # the bench operator's release must not wait for this step
+            try:
+                got = self.link.exchange(line, timeout)
+                busy["last"] = False
+                return got
+            except CommandError as e:
+                if not (e.code == RFID_BUSY_CODE and "busy" in e.msg):
+                    busy["last"] = False
+                    raise
+                now = CLOCK.monotonic()
+                busy["last"] = True
+                busy["n"] += 1
+                if busy["t0"] is None:
+                    busy["t0"] = now
+                if now - busy["t0"] >= RFID_BUSY_S:
+                    raise
+                self.sleep_pump(RFID_BUSY_PAUSE_S)
+
     def rfid_step(self):
         """RFID 125 kHz: the ID from the Kode's MAC written into the station's
         T5577 and read back; PASS only when what is read is what was written."""
@@ -1253,6 +1848,8 @@ class Station:
         write = not self.a.no_write
         want = rfid_id_of(self.info["mac"])
         tag, tw, tr, wrote = None, None, None, False
+        busy = dict(t0=None, n=0, last=False)
+        w_tries, r_tries = [], 0             # the writes sent for each ID, and the reads
         if write and want:
             t1 = CLOCK.monotonic()
             # The tag may already hold this Kode's ID (the same Kode, back at the
@@ -1262,10 +1859,11 @@ class Station:
             both = []
             for ident in (rfid_other(want), want):
                 done = False
+                w_tries.append(0)
                 for _ in range(RFID_WRITE_TRIES):          # a clone the Kode could not read back is written again
-                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
+                    w_tries[-1] += 1
                     try:
-                        wr, _ = self.link.exchange(f"rfid_write id={quote(ident)}", 60.0)
+                        wr, _ = self.rfid_ask(f"rfid_write id={quote(ident)}", 60.0, busy)
                         det.append(" ".join(wr))
                         done = any(fields(r).get("match") == "yes" for r in wr)
                     except CommandError as e:
@@ -1276,10 +1874,10 @@ class Station:
             wrote = all(both)
             tw = CLOCK.monotonic() - t1
         for _ in range(3):
-            self.operator_sim_pump()
             t2 = CLOCK.monotonic()
+            r_tries += 1
             try:
-                recs = self.link.cmd("rfid_read ms=3000", 15.0)
+                recs = self.rfid_ask("rfid_read ms=3000", 15.0, busy)[0]
             except CommandError as e:
                 det.append(str(e))
                 continue
@@ -1289,10 +1887,20 @@ class Station:
                 tag, tr = m, CLOCK.monotonic() - t2
                 break
         read = (tag or {}).get("id", "").upper()
+        nothing = "nothing"
+        if busy["last"]:
+            nothing = f"nothing: the Kode's reader stayed busy for {RFID_BUSY_S:.0f} s"
         if write and want:
-            info = f"written {want}; read {read or 'nothing'}"
-            if tw is not None and tr is not None:
-                info += f"; write {tw:.1f} s (checked by the Kode: {'yes' if wrote else 'no'}), read {tr:.1f} s"
+            info = f"written {want}; read {read or nothing}"
+            # How many times each verb went out, whatever the outcome: a pass after
+            # retries reads differently from a clean one.
+            info += f"; write {tw:.1f} s, {each_try(w_tries, ('other ID', 'own ID'))}"
+            info += f" (checked by the Kode: {'yes' if wrote else 'no'}), read"
+            if tr is not None:
+                info += f" {tr:.1f} s,"
+            info += f" {tries(r_tries)}"
+            if busy["n"]:
+                info += f"; reader busy {times(busy['n'])}"
             # The Kode's own check of its writes counts too: without it the tag
             # may only be showing what it already held.
             valid = bool(tag) and read == want and wrote
@@ -1305,7 +1913,9 @@ class Station:
         status = PASS if valid else (TIMEOUT if st == TIMEOUT and not tag else FAIL)
         vals = [value("protocol", "EM4100"), value("id_written", want or ""), value("id_read", read),
                 value("t_write", round(tw, 2) if tw is not None else 0, "s"),
-                value("t_read", round(tr, 2) if tr is not None else 0, "s")]
+                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("busy_refusals", busy["n"]),
+                value("write_tries", sum(w_tries)), value("write_tries_each", "+".join(map(str, w_tries))),
+                value("read_tries", r_tries)]
         self.add("rfid", status, (info or "no ID") + f"; kodeOS row test=rfid: {st}",
                  "read = written (a 5-byte ID from the Kode's MAC)", CLOCK.monotonic() - t0,
                  detail="\n".join(det)[-REPORT_DETAIL_CHARS:], values=vals)
@@ -1323,6 +1933,9 @@ class Station:
         read, uid, rd = "", "", []
         skip_read = False
         wrote = True
+        retries = 0
+        w_tries, r_tries = [], 0             # the writes sent for each text, and the reads
+        again = None                         # the read back that had the serial written and read once more
         try:
             if write:
                 t1 = CLOCK.monotonic()
@@ -1331,15 +1944,28 @@ class Station:
                 # another text first, and both writes must be taken.
                 wr = []
                 for text in (NFC_OTHER_TEXT, serial):
-                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
-                    try:
-                        wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
-                        det.append(" ".join(wr))
-                    except CommandError as e:
-                        wr = e.records
-                        det.append(" ".join(wr) + f" {e.term}")
-                        wrote = False
-                        skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                    # One more write when the tag answered and the write failed: a
+                    # transient read inside the write ("carries no NDEF message")
+                    # goes right the next time. No tag in the field is not tried
+                    # again, and the read back below still decides.
+                    w_tries.append(0)
+                    for more in (True, False):
+                        self.operator_sim_pump()           # the bench operator's release must not wait for this step
+                        w_tries[-1] += 1
+                        try:
+                            wr, _ = self.link.exchange(f"nfc_write text={quote(text)}", 30.0)
+                            det.append(" ".join(wr))
+                            wrote = True
+                            break
+                        except CommandError as e:
+                            wr = e.records
+                            det.append(" ".join(wr) + f" {e.term}")
+                            wrote = False
+                            skip_read = e.term is not None and "no tag" in e.term   # nothing to read back
+                            if skip_read or not more:
+                                break
+                            retries += 1
+                    if not wrote:
                         break
                 tw = CLOCK.monotonic() - t1
                 uid = next((fields(r).get("uid", "") for r in wr if r.startswith("nfc=tag")), "")
@@ -1348,6 +1974,7 @@ class Station:
             else:
                 self.operator_sim_pump()
                 t2 = CLOCK.monotonic()
+                r_tries += 1
                 try:
                     rd = self.link.cmd("nfc_read ms=3000", 30.0)
                 except CommandError as e:
@@ -1361,18 +1988,52 @@ class Station:
                     read = f.get("text", "")
                 if r.startswith("nfc=tag") and not uid:
                     uid = f.get("uid", "")
+            if write and wrote and read != serial:
+                # The read back is not the serial after a write the Kode took: a write
+                # cut short by the flash (the new text at the length of the text
+                # before) or a read that failed once. Once more, and the read back
+                # still decides.
+                retries += 1
+                again = read
+                self.operator_sim_pump()
+                w_tries[-1] += 1
+                try:
+                    wr2, _ = self.link.exchange(f"nfc_write text={quote(serial)}", 30.0)
+                    det.append(" ".join(wr2))
+                    self.operator_sim_pump()
+                    r_tries += 1
+                    rd = self.link.cmd("nfc_read ms=3000", 30.0)
+                except CommandError as e:
+                    rd = e.records
+                    det.append(str(e))
+                det.append(" ".join(rd))
+                read = next((fields(r).get("text", "") for r in rd if r.startswith("nfc=ndef")), "")
         except Exception as e:
             det.append(f"{type(e).__name__}: {e}")
         ok = (read == serial and wrote) if write else bool(uid)
         info = (f"written {serial}; " if write else "") + f"read {read or 'nothing'}" + (f"; tag {uid}" if uid else "")
-        if tw is not None and tr is not None:
-            info += f"; write {tw:.1f} s, read {tr:.1f} s"
+        if w_tries:
+            # How many times each verb went out, whatever the outcome: a pass after
+            # retries reads differently from a clean one.
+            info += "; write"
+            if tw is not None:
+                info += f" {tw:.1f} s,"
+            info += f" {each_try(w_tries, ('other text', 'serial'))}"
+        if r_tries:
+            info += "; read"
+            if tr is not None:
+                info += f" {tr:.1f} s,"
+            info += f" {tries(r_tries)}"
+        if again is not None:
+            info += f"; first read back \"{again or 'nothing'}\": the serial written and read once more"
         if skip_read:
             info += "; the write found no tag"     # the station's tag, not the Kode (ui/reports.py)
         status = PASS if (ok and st == PASS) else (TIMEOUT if st == TIMEOUT and not read else FAIL)
         vals = [value("text_written", serial if write else ""), value("text_read", read), value("uid", uid),
                 value("t_write", round(tw, 2) if tw is not None else 0, "s"),
-                value("t_read", round(tr, 2) if tr is not None else 0, "s")]
+                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("write_retries", retries),
+                value("write_tries", sum(w_tries)), value("write_tries_each", "+".join(map(str, w_tries))),
+                value("read_tries", r_tries)]
         self.add("nfc", status, info + f"; kodeOS row test=nfc: {st}",
                  "read = written (an NDEF text with the Kode's serial)", CLOCK.monotonic() - t0,
                  detail="\n".join(det)[-REPORT_DETAIL_CHARS:], values=vals)
@@ -1530,6 +2191,7 @@ class Station:
                 f"A0 < {DELIVERY_IDLE_MAX_V:.1f} V without the boost",
                 t0, [value("a0_no_boost_v", s0, "V")])
             return
+        t_on = CLOCK.monotonic()
         b = pads.boost_on()
         sleep(BOOST_SETTLE_S)
         e0 = pads.adc(0)
@@ -1551,19 +2213,44 @@ class Station:
             bad.append(f"boost on={b.get('on')} and bat_info boost={f2.get('boost')}")
         if not fault_ok(b.get("fault", "?")):
             bad.append(f"fault={b.get('fault')}")
+        late = ""
+        late_vals = []
+        detail = str(f2)
+        if not bad:
+            # The same A0 and current again with the load still on, just before the
+            # boost is switched off: a boost that holds at first and falls under the
+            # load fails here. The wait takes no hold, so the install goes on through it.
+            sleep(max(0.0, DELIVERY_LATE_S - (CLOCK.monotonic() - t_on)))
+            t_late = CLOCK.monotonic() - t_on
+            e1 = pads.adc(0)
+            f3, _, cur3 = pads.bat()
+            detail += "\n" + str(f3)
+            if not DELIVERY_A0_MIN_V <= e1 <= DELIVERY_A0_MAX_V:
+                bad.append(f"A0={e1} V {t_late:.1f} s after the boost on ({DELIVERY_A0_MIN_V:.1f} to "
+                           f"{DELIVERY_A0_MAX_V:.2f})")
+            if cur3 is None or not DELIVERY_CURRENT_MIN_MA <= cur3 <= DELIVERY_CURRENT_MAX_MA:
+                bad.append(f"gauge: current_ma={cur3} {t_late:.1f} s after the boost on (discharge expected from "
+                           f"{DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA}, negative)")
+            cur3_text = ""
+            if cur3 is not None:
+                cur3_text = cur3
+            late = f", then A0={e1} V {cur3_text} mA at {t_late:.1f} s"
+            late_vals = [value("a0_late_v", e1, "V"), value("current_late_ma", cur3_text, "mA"),
+                         value("t_late", round(t_late, 2), "s")]
         restored = pads.boost_off()
         if not restored:
             bad.append("the boost did not confirm off (and kodeOS's 0.5 A back)")
         vals = [value("a0_no_boost_v", s0, "V"), value("a0_v", e0, "V"),
                 value("vbus_mv", vbus2 if vbus2 is not None else "", "mV"),
                 value("current_ma", cur if cur is not None else "", "mA"), value("fault", b.get("fault", "")),
-                value("boost_off", "yes" if restored else "NO")]
+                value("boost_off", "yes" if restored else "NO")] + late_vals
         fin("pads_delivery", FAIL if bad else PASS,
-            f"A0={e0} V boost={1 if boost_seen else 0} fault={b.get('fault')} limit 1.2 A, off={'yes' if restored else 'NO'}"
-            + ("; " + ", ".join(bad) if bad else ""),
+            f"A0={e0} V{late} boost={1 if boost_seen else 0} fault={b.get('fault')} limit 1.2 A, "
+            f"off={'yes' if restored else 'NO'}" + ("; " + ", ".join(bad) if bad else ""),
             f"A0 {DELIVERY_A0_MIN_V:.1f} to {DELIVERY_A0_MAX_V:.2f} V with the boost on (limit 1.2 A), no fault and "
-            f"a gauge current from {DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA} mA",
-            t0, vals, detail=str(f2))
+            f"a gauge current from {DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA} mA, the same again "
+            f"{DELIVERY_LATE_S:.1f} s after the boost on",
+            t0, vals, detail=detail)
 
     # ---- the radio -----------------------------------------------------------
     def radio_block(self):
@@ -1757,10 +2444,16 @@ class Station:
             if sid not in done:
                 self.add(sid, NOTRUN, stop_why, values=[])
         verdict = self.verdict()
+        if self.link is not None and OPERATOR_LIGHT["on"]:
+            self.operator_light(False)                 # never left on past the operator, whatever stopped it
         if self.link is not None:
             verdict = self.tell_kode(verdict)
             try:
-                self.save_photos()                     # read before the lock, which closes every verb
+                # Read before the lock, which closes every verb, unless they were read
+                # whole beside the operator: a read that failed or left one out is
+                # done again here.
+                if not self.photos or self.photos.get("missing") or not self.photos.get("of"):
+                    self.save_photos()
             except KeyboardInterrupt:
                 self.interrupted = True
                 self.log("interrupted while the photos were read", "error")
@@ -1856,7 +2549,35 @@ class Station:
         self.begin(FACTORY_RESET[0])
         self.add(FACTORY_RESET[0], PASS, "done; ship mode armed for the unplug", "the factory reset completes",
                  CLOCK.monotonic() - t1, values=[], name=name)
-        return PASS
+        return self.apps_left()
+
+    def apps_left(self):
+        """After the factory reset of a PASS: the apps region holds the Welcome app
+        and nothing else, at the version the station's settings name when they
+        name one. A PASS only when `app_list` says so; otherwise the Kode is
+        already reset and is not locked."""
+        t0 = CLOCK.monotonic()
+        self.begin(APPS_LEFT[0])
+        want_v = ((self.cfg.get("sd_images") or {}).get("welcome") or {}).get("version")
+        why = ""
+        try:
+            apps = [fields(r) for r in self.link.cmd("app_list", APP_LIST_TIMEOUT_S) if r.startswith("name=")]
+        except CommandError as e:
+            apps, why = None, e.term or "no answer"
+        names = sorted(f.get("name", "?") for f in (apps or []))
+        ok = apps is not None and names == [WELCOME_PROJECT]
+        if ok and want_v:
+            ok = apps[0].get("version") == str(want_v)
+        if apps is None:
+            text = f"app_list: {why}"
+        else:
+            text = "apps: " + (", ".join(f"{f.get('name')} {f.get('version')}" for f in apps) or "none")
+        rng = f"only {WELCOME_PROJECT}" + (f" {want_v}" if want_v else "")
+        self.add(APPS_LEFT[0], PASS if ok else FAIL, text, rng, CLOCK.monotonic() - t0,
+                 values=[value("apps", ",".join(names))], name=APPS_LEFT[1])
+        if ok:
+            return PASS
+        return FAIL
 
     def put_down(self, verdict):
         """A PASS is locked; a bench Kode is given back. A FAIL keeps its
@@ -1938,6 +2659,7 @@ class Station:
     def write_results(self, shown, total):
         doc = dict(verdict=shown, serial=self.info["serial"], repeat_of=self.repeat_of, lock=self.lock, info=self.info,
                    total_s=round(total, 1), blocks=self.blocks, exit_record=self.exit, photos=self.photos,
+                   place_again=self.place_again, recentred=self.recentred, extra_limits=self.extra_limits, bench_bright=self.bench_bright,
                    steps={r["id"]: r for r in self.results})
         write_atomic(self.outdir / "results.json", json.dumps(doc, indent=1, ensure_ascii=False).encode())
 
@@ -2049,7 +2771,8 @@ class Pads:
     def relays(self, b):
         relay_guard(self.byte, b)
         self.byte = b
-        f = record(self.link.cmd(f"test_dot_relays state=0x{b:02X}"), "relays")
+        OPERATOR_LIGHT["byte"] = b
+        f = record(self.link.cmd(f"test_dot_relays state=0x{relay_byte(b):02X}"), "relays")
         if not f or not truthy(f.get("ok")):
             raise PadsError(f"relays 0x{b:02X}: {f or 'no record'}")
         self.sleep(RELAY_SETTLE_S)
@@ -2087,6 +2810,25 @@ class Pads:
                 fn()
             except (PadsError, CommandError) as e:
                 log(f"pads: could not put the station at rest ({what}): {e}")
+
+
+def tries(n):
+    """`1 try`, `2 tries`."""
+    if n == 1:
+        return "1 try"
+    return f"{n} tries"
+
+
+def each_try(counts, names):
+    """The writes sent for each value, in order: `tries 1+2 (other ID, own ID)`."""
+    return f"tries {'+'.join(map(str, counts))} ({', '.join(names[:len(counts)])})"
+
+
+def times(n):
+    """`once`, `2 times`."""
+    if n == 1:
+        return "once"
+    return f"{n} times"
 
 
 def _int(v):

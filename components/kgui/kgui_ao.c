@@ -1278,7 +1278,8 @@ typedef struct {
 } GuiOsUpdate;
 
 /**
- * @brief The ESP32-C5's own firmware, which the factory's internal FAT carries.
+ * @brief The ESP32-C5's own firmware, by the name the internal FAT of a
+ *        board made with kodeOS v0.1.1 or earlier carries it.
  *
  * The radio coprocessor's image (`install dst=c5` writes it), never an app:
  * the launcher leaves a file of this name out of its list on either medium
@@ -10932,15 +10933,18 @@ static bool name_is_bin(const char *name)
 }
 
 /**
- * @brief Whether entries[@p i] may be an app: a .bin, and neither kodeOS's
- *        own image nor the C5's.
+ * @brief Whether entries[@p i] may be an app: a .bin that is not empty, and
+ *        neither kodeOS's own image nor the C5's.
  *
  * A pill is a promise to boot an app. GUI_OS_IMAGE is kodeOS: the About
  * sheet's Update writes it into kodeOS's own slot, and opening it from the
  * launcher would install the operating system as an app. GUI_C5_IMAGE is the
- * radio coprocessor's firmware, built for another chip. So neither is a row,
- * on either medium, nor a question to the manifest chain. Whether any other
- * .bin is built for this chip at all its name cannot say.
+ * radio coprocessor's firmware, built for another chip. A file of 0 bytes
+ * holds no image at all, and AO_Storage refuses its manifest with the same
+ * KODE_DENIED it answers when busy, so asking would only be refused
+ * GUI_DESC_TRIES times on every listing. So none of them is a row, on either
+ * medium, nor a question to the manifest chain. Whether any other .bin is
+ * built for this chip at all its name cannot say.
  *
  * @param me The AO.
  * @param i  Index into me->entries[].
@@ -10950,7 +10954,7 @@ static bool gui_entry_is_app(Gui const * const me, uint8_t i)
 {
     /* The system's own images, by name: never a row. */
     static const char *const SYSTEM_IMAGES[] = { GUI_OS_IMAGE, GUI_C5_IMAGE };
-    bool app = name_is_bin(me->entries[i].name);
+    bool app = name_is_bin(me->entries[i].name) && (0U < me->entries[i].size);
 
     for ( uint32_t k = 0U;
          app && ((sizeof(SYSTEM_IMAGES) / sizeof(SYSTEM_IMAGES[0])) > k);
@@ -14313,9 +14317,9 @@ static void gui_evict_end(Gui * const me, AppEvictEndEvt const * const e)
     else
     {
         /* Room is made and nobody is asked (it loads, and that
-         * is it). AO_AppMgr evicts the apps the card holds a copy of; when
-         * one it must evict has none yet, nothing is written and the
-         * install fails as busy (KFAIL_BUSY). */
+         * is it). AO_AppMgr evicts the apps the card holds a copy of; one
+         * it must evict that has none yet is copied first, with the write
+         * said at 0 % while it is, and the install goes on by itself. */
         KLOG_N(TAG, "install: %u app(s) make room for %s", (unsigned)e->victims,
                me->write_name);
         gui_install_write(me);
@@ -22044,12 +22048,13 @@ static void gui_failure_fill(Gui * const me)
 {
     int8_t const row = gui_sheet_card_row(me);
     const GuiWriteWords * const words = gui_write_words(me->write_what);
-    /* Nothing was written and nothing is damaged: an app this install
-     * would remove has no copy on the card yet, and AO_AppMgr is making it.
-     * The title stays the write's; Try again is the answer. */
+    /* Nothing was written and nothing is damaged: AO_AppMgr copies to the
+     * card an app this install would remove before it writes, and the card
+     * stayed busy with something else for the whole of its wait. The title
+     * stays the write's; Try again is the answer. */
     static const char * const BUSY_WHY[3] = {
-        "Nothing changed.", "An app this one replaces",
-        "is still being copied.",
+        "Nothing changed.", "The SD card was busy.",
+        "Try again in a moment.",
     };
     const char * const *why = words->why;
     char                detail[GUI_SYS_DETAIL_MAX];
@@ -33904,8 +33909,10 @@ static void gui_rest_park(Gui * const me)
  * lands on Rest as it was, and the tick decides from there: the count once the
  * time is gone, or another sleep once Kody has settled again. A round
  * that was given up, with the board never asleep, holds the next sleep back
- * until Rest asks again, so a busy owner does not take the glass down and up
- * on every retry of AO_LowPower's; one a person ended with a button does not.
+ * until Rest asks again, so an owner that says nothing does not take the
+ * glass down and up on every round AO_LowPower begins again; a busy owner is
+ * waited for with the round open and the glass at rest. One a person ended
+ * with a button does not.
  *
  * @param me The AO, parked at Rest.
  * @return The transition back to Gui_rest, which is neither left nor entered.
