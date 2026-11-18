@@ -282,6 +282,13 @@ class Scenario:
                 (3.3, "place init ok=1 ms=877 why=-")]
         if self.case == "no_camera":
             return [(1.0, "place state=no_camera"), (10.0, "place result=cam_missing"), (10.0, ">ok")]
+        if self.case in ("cam_lost", "cam_lost_once"):
+            self.place_n = getattr(self, "place_n", 0) + 1
+            if self.case == "cam_lost" or self.place_n == 1:
+                looks = [(3.5 + k * PLACE_LOOK_S, f'place check n={k + 1} marks=0 dx=0.00 dy=0.00 ang=0.00 '
+                                                  f'win="{WINDOW}" lost=2') for k in range(2)]
+                return head + [(3.4, "place state=searching")] + looks + [
+                    (3.5 + 2 * PLACE_LOOK_S, "place result=cam_lost looks=2"), (3.5 + 2 * PLACE_LOOK_S, ">ok")]
         if self.case == "misplaced":
             looks = [(3.5 + k * PLACE_LOOK_S, f'place check n={k + 1} marks=2 dx=18.20 dy=-6.40 ang=12.30 '
                                               f'win="{WINDOW}"') for k in range(PLACE_MISPLACED_LOOKS)]

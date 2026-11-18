@@ -96,6 +96,7 @@ RUN_BUDGET_S = 300             # the whole run, camera and operator included
 POLL_PERIOD_S = 0.15
 POLL_TIMEOUT_S = 5.0
 CAMERA_EXPECTED_S = 15         # the page's "do not touch" countdown: the rows before the camera and the camera (~14.6 s)
+J3_OFF_S = 0.5                 # J3's rail off before a second placement, for the camera to reset
 STATION_FAULT = "station: "    # a row the station could not measure says so first
 OPERATOR_LIMIT_S = 20          # the Kode gives each button and touch step this long
 # The rear pads' limits, from the station's bench (e5_test.py),
@@ -617,6 +618,7 @@ class Station:
         self.outdir = None
         self.results = []
         self.blocks = {}
+        self.place_again = False       # a placement the camera lost was tried again
         self.t0 = CLOCK.monotonic()
         # A bench run never resets or locks a Kode: an injected operator, an
         # NFC tag left unwritten or a placement skipped is not a factory test.
@@ -912,7 +914,26 @@ class Station:
                     pass
             return True
         detail = "\n".join(recs + [term or "no answer"])
-        if r == "cam_missing":
+        if r == "cam_lost" and not self.place_again:
+            # The camera on J3 kept losing its settings: no seating fixes that.
+            # The end takes J3's rail down, a pause lets it drop, and the next
+            # placement brings it up again: one more try.
+            self.place_again = True
+            self.blocks["placement_lost"] = round(dt, 2)
+            self.log("placement: the camera on J3 lost its settings; J3 off and on, one more try")
+            try:
+                self.link.cmd("test_dot_end", END_TIMEOUT_S)
+            except CommandError as e:
+                self.log(f"test_dot_end before the second placement: {e.term or 'no answer'}")
+            CLOCK.sleep(J3_OFF_S)
+            self.screen("connecting")
+            return self.place()
+        if r == "cam_lost":
+            msg = ("station: the camera on J3 keeps losing its settings (the fixture's camera, its cable, "
+                   "or the Kode's J3): try another station; on a second one, the Kode's J3")
+            self.add("place", NOVERDICT, msg, "the camera keeps its settings", dt, img, detail)
+            self.emit(type="place", state="cam_lost", text=msg, reason="top_connector_j3", t=CLOCK.time())
+        elif r == "cam_missing":
             msg = "Top connector (J3): the camera does not answer (camera module, its cable or the connector)"
             self.add("place", FAIL, msg, f"OV5640 camera on J3 within {c['camera_s']} s", dt, img, detail)
             self.emit(type="place", state="j3_failed", text=msg, reason="top_connector_j3", t=CLOCK.time())
@@ -2251,6 +2272,7 @@ class Station:
     def write_results(self, shown, total):
         doc = dict(verdict=shown, serial=self.info["serial"], repeat_of=self.repeat_of, lock=self.lock, info=self.info,
                    total_s=round(total, 1), blocks=self.blocks, exit_record=self.exit, photos=self.photos,
+                   place_again=self.place_again,
                    steps={r["id"]: r for r in self.results})
         write_atomic(self.outdir / "results.json", json.dumps(doc, indent=1, ensure_ascii=False).encode())
 

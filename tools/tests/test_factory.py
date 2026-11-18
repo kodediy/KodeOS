@@ -367,6 +367,32 @@ class TestRfidWrite(Base):
         self.assertEqual(final.RFID_WRITE_TRIES, 3)
 
 
+class TestCameraLost(Base):
+
+    def test_a_camera_that_lost_its_settings_once_is_woken_again_and_passes(self):
+        # r1st_1: the fixture's camera kept losing its settings; the station
+        # blamed the seating. Now J3 goes off and on and the placement repeats.
+        r = self.run_case(sim.Scenario(case="cam_lost_once"))
+        self.assertEqual(len(r.sent("test_dot_place")), 2)
+        self.assertEqual(r.results()["steps"]["place"]["status"], "PASS")
+        self.assertTrue(r.results()["place_again"], "the second placement is not counted")
+        self.assertIn("placement_lost", r.results()["blocks"])
+        # J3 goes off between the two placements.
+        self.assertEqual(len(r.sent("test_dot_end")) >= 1, True)
+
+    def test_a_placement_without_the_camera_lost_is_not_counted_again(self):
+        r = self.run_case(sim.Scenario())
+        self.assertFalse(r.results()["place_again"])
+
+    def test_a_camera_that_keeps_losing_them_is_the_station_not_the_seating(self):
+        r = self.run_case(sim.Scenario(case="cam_lost"))
+        self.assertEqual(len(r.sent("test_dot_place")), 2)
+        place = r.results()["steps"]["place"]
+        self.assertEqual(place["status"], "NO VERDICT", place)
+        self.assertIn("keeps losing its settings", place["measured"])
+        self.assertNotIn("badly seated", place["measured"])
+
+
 class TestPhotos(Base):
 
     def test_missing_photo_is_asked_again_up_to_three_times(self):
