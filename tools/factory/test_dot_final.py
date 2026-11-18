@@ -230,9 +230,9 @@ BACKGROUND = ["pads", "nfc", "rfid", "radio"]     # the PC's work beside the ope
 OPTIONAL = set()
 # What the NFC step writes before the serial, so the serial is a real write.
 NFC_OTHER_TEXT = "KODE E5"
-# Times the RFID step writes an ID before giving it up: about one clone in
-# sixteen is not read back by the Kode on the bench, the misses come in bursts
-# now and then, and two IDs are written per run.
+# Times the RFID step writes an ID before giving it up: a clone now and then
+# is not read back by the Kode, the misses come in bursts, and two IDs are
+# written per run.
 RFID_WRITE_TRIES = 3
 # The Kode's line for a chunk of an image it reads again off the microSD, with the card mounted again.
 SD_REREAD_RX = re.compile(r"'([^']+)': the chunk at (\d+) did not read; it is read again with the card mounted again")
@@ -300,8 +300,8 @@ def centred_window(dx_mm, dy_mm):
 
 def band_margins(dx_mm, dy_mm, scale, win, angle_deg=0.0):
     """How far inside its limit each edge of the judged band sits, px of the window:
-    worked out from the offset, the scale and the turn, not measured. On 608 bench
-    records its sign is the Kode's `inside` in every one."""
+    worked out from the offset, the scale and the turn, not measured. Its sign is
+    the Kode's `inside`."""
     sx = SENSOR_CX + dx_mm / MM_PER_PANEL_PX * scale - win[0]
     sy = SENSOR_CY + dy_mm / MM_PER_PANEL_PX * scale - win[1]
     ca, sa = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
@@ -1990,7 +1990,7 @@ class Station:
                     uid = f.get("uid", "")
             if write and wrote and read != serial:
                 # The read back is not the serial after a write the Kode took: a write
-                # cut short by the flash (d3_p3: "KODE1R8", the length of the text
+                # cut short by the flash (the new text at the length of the text
                 # before) or a read that failed once. Once more, and the read back
                 # still decides.
                 retries += 1

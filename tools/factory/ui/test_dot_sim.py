@@ -230,7 +230,7 @@ class Scenario:
     @param rfid_tag        The ID the station's tag holds before the run.
     @param rfid_dead_write True: `rfid_write` changes nothing and says so.
     @param rfid_late_clone True: the first `rfid_write` answers `match=no`
-                           past its deadline (3.1 s, rep_3 on the bench) and
+                           past its deadline (3.1 s) and
                            leaves the reader busy for rfid_busy_s more: every
                            rfid verb meanwhile is refused at once.
     @param rfid_busy_s     How long the reader stays busy after that clone.
@@ -250,19 +250,19 @@ class Scenario:
                            {"welcome": s, "storage": s}. The Kode runs the
                            installs one after the other, in the order armed.
     @param install_gap_s   Seconds between one install's last record and the
-                           next one's `started` (0 on the bench: same instant).
+                           next one's `started` (0: the same instant).
     @param have            The images already on the Kode, byte for byte ("welcome",
                            "storage"): asked with sha=, they answer present=yes
                            and are not written; the others answer present=no
                            and are written.
-    @param sha_refused     True: a kodeOS without sha= (before r3): the key is
+    @param sha_refused     True: a kodeOS without sha=: the key is
                            refused with `>err code=3 msg=sha`.
-    @param disarm_refused  True: a kodeOS without the empty name (before r4):
+    @param disarm_refused  True: a kodeOS without the empty name:
                            `name=""` is refused with `>err code=3 msg=name`
                            and what was armed stays armed.
     @param nfc_truncated   How many `nfc_write`s, the first ones longer than the
                            tag's text, leave it cut to that text's length and
-                           say ok (d3_p3 on the bench, 17-nov: "KODE1R8").
+                           say ok.
     @param nfc_read_fails  How many `nfc_read`s, the first ones, find the tag
                            and fail on a transient read ("carries no NDEF message").
     @param haptic_name     The name the Kode gives its vibration row.
@@ -278,7 +278,7 @@ class Scenario:
                            boost stops under the load (None: it holds): A0
                            and the gauge's current then read as with it off.
     @param tones           [(Hz, level in tenths of dBFS)]: the tones the audio
-                           row logs as come back (bench 17-nov: -0.7 and -2.8).
+                           row logs as come back.
     @param haptic_on       The "on" windows' levels the vibration row logs, mg.
     @param expratio        cam_colour's expratio, as the record writes it.
     @param led_flux        (red, green, blue) on the LED's record.
@@ -420,7 +420,7 @@ class Scenario:
             pixels,
             "test=cam_lines result=pass lines=0 x=0 y0=0 y1=0 row_y=0 level=-0.042 hlevel=-0.030 "
             "max_level=-0.20 wlevel=-0.010,-0.017 whlevel=-0.044,-0.023",
-            # A band cut by the window reads as a dark zone (bench, 2 of 62 runs with inside=0).
+            # A band cut by the window reads as a dark zone.
             (f'test=cam_zones result={"pass" if inside else "fail"} zones={0 if inside else 1} '
              f'min_ratio={"1.00" if inside else "0.41"} limit_ratio=0.86 bright=0 at=""'),
         ]
@@ -1015,7 +1015,7 @@ class FakeKode:
             self.answer(["nfc=tag state=none"], '>err code=4 msg="no tag in the window"', delay=3.0)
             return
         self.nfc_writes += 1
-        if self.nfc_writes <= self.sc.nfc_write_fails:    # ajeno_1 on the bench, 17-nov
+        if self.nfc_writes <= self.sc.nfc_write_fails:
             self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=1 model="Ultralight / NTAG (Type-2)"'],
                         '>err code=1 msg="opened, but carries no NDEF message - write one with nfc_write first"',
                         delay=1.1)

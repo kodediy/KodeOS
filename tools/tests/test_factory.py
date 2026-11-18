@@ -394,8 +394,8 @@ class TestRfidWrite(Base):
 
 
     def test_a_busy_reader_is_waited_for_and_does_not_use_up_the_tries(self):
-        # rep_3: a clone answered past its deadline, then every rfid verb was
-        # refused as busy within 9 ms, and a good Kode failed.
+        # A clone answered past its deadline, then every rfid verb is refused
+        # as busy for a while: the waits do not use up the tries.
         r = self.run_case(sim.Scenario(rfid_late_clone=True, rfid_busy_s=1.0))
         rfid = r.results()["steps"]["rfid"]
         self.assertEqual(rfid["status"], "PASS", rfid)
@@ -434,8 +434,8 @@ class TestRfidWrite(Base):
 class TestCameraLost(Base):
 
     def test_a_camera_that_lost_its_settings_once_is_woken_again_and_passes(self):
-        # r1st_1: the fixture's camera kept losing its settings; the station
-        # blamed the seating. Now J3 goes off and on and the placement repeats.
+        # The fixture's camera lost its settings: J3 goes off and on and the
+        # placement repeats, without blaming the seating.
         r = self.run_case(sim.Scenario(case="cam_lost_once"))
         self.assertEqual(len(r.sent("test_dot_place")), 2)
         self.assertEqual(r.results()["steps"]["place"]["status"], "PASS")

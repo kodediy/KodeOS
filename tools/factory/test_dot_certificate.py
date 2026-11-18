@@ -49,13 +49,16 @@ class Clock:
 
 
 class FakeLink:
-    """Answers every line `>ok`, keeping what was sent."""
+    """Answers every line `>ok`, keeping what was sent; `app_list` lists the
+    Welcome app alone, as a Kode leaves the factory reset of a PASS."""
 
     def __init__(self):
         self.sent = []
 
     def cmd(self, line, timeout=10.0):
         self.sent.append(line)
+        if line == "app_list":
+            return [f"name={final.WELCOME_PROJECT} version=0.0.7"]
         return []
 
 
@@ -93,7 +96,7 @@ class Certificate(unittest.TestCase):
             return "KODE1TEST00002B, new"
         self.assertEqual(final.PASS, self.tell(st, final.PASS, certify))
         self.assertEqual([[]], asked)                     # nothing told the Kode before it
-        self.assertEqual(["test_dot_result verdict=pass"], st.link.sent)
+        self.assertEqual(["test_dot_result verdict=pass", "app_list"], st.link.sent)
         self.assertEqual(final.PASS, self.row(st, "certificate")["status"])
         self.assertEqual("KODE1TEST00002B, new", self.row(st, "certificate")["measured"])
 
@@ -125,7 +128,7 @@ class Certificate(unittest.TestCase):
         st = self.station()
         self.assertEqual(final.PASS, self.tell(st, final.PASS, None))
         self.assertIsNone(self.row(st, "certificate"))
-        self.assertEqual(["test_dot_result verdict=pass"], st.link.sent)
+        self.assertEqual(["test_dot_result verdict=pass", "app_list"], st.link.sent)
 
 
 if __name__ == "__main__":
