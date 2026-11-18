@@ -56,7 +56,8 @@ PADS_BYTES = [0xFF, 0xFB, 0xFF, 0xFE, 0xFC, 0xFE, 0xFF]
 QUOTED = {("test_dot_place", "win"), ("test_dot_radio", "ssid24"), ("test_dot_radio", "ssid5"),
           ("test_dot_radio", "ble"), ("test_dot_blob", "name"), ("nfc_write", "text"),
           ("rfid_write", "id"), ("file_sha", "name"), ("test_dot_welcome", "name"),
-          ("test_dot_storage", "name")}
+          ("test_dot_welcome", "project"), ("test_dot_welcome", "sha"), ("test_dot_storage", "name"),
+          ("test_dot_storage", "sha")}
 
 
 # Every bound the station program copies from kqp_config.h, by its name there.
@@ -617,10 +618,11 @@ class TestSdImages(Base):
     SHA_S = "b" * 64
 
     def run_images(self, files=None, install="installed", install_s=3.0, args=(), case="pass",
-                   install_gap_s=0.0, run_refused=False):
+                   install_gap_s=0.0, run_refused=False, have=(), sha_refused=False):
         sc = sim.Scenario(case, sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
                           if files is None else files, install=install, install_s=install_s,
-                          install_gap_s=install_gap_s, run_refused=run_refused)
+                          install_gap_s=install_gap_s, run_refused=run_refused, have=have,
+                          sha_refused=sha_refused)
         r = Run(sc, args)
         self.addCleanup(r.cleanup)
         cfg = json.loads(r.cfg.read_text())
@@ -663,17 +665,53 @@ class TestSdImages(Base):
                 self.assertEqual(r.folders(), [])
                 self.assertIn("a factory run is refused", r.stdout)
 
+    def test_a_welcome_already_on_the_kode_is_not_written_again(self):
+        r = self.run_images(have=("welcome",))
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertEqual(res["steps"]["welcome"]["status"], "PASS")
+        self.assertIn("already on the Kode", res["steps"]["welcome"]["measured"])
+        self.assertEqual(res["steps"]["storage"]["status"], "PASS")
+        self.assertIn("installed from storage.bin", res["steps"]["storage"]["measured"])
+        self.assertEqual(res["blocks"]["welcome_install"], 0.0)
+        self.assert_grammar(r)
+
+    def test_a_welcome_with_another_digest_on_the_kode_is_written(self):
+        r = self.run_images(have=("storage",))
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertIn("installed from onboarding.bin", res["steps"]["welcome"]["measured"])
+        self.assertNotIn("already on the Kode", res["steps"]["welcome"]["measured"])
+        self.assertIn("welcome_install", res["blocks"])   # timed from its records: the sim runs them at speed
+        self.assertEqual(len(r.sent("test_dot_welcome")), 1)
+        self.assertIn("already on the Kode", res["steps"]["storage"]["measured"])
+        self.assertEqual(res["blocks"]["storage_install"], 0.0)
+        self.assert_grammar(r)
+
+    def test_a_kodeos_without_sha_installs_as_before_and_says_so(self):
+        r = self.run_images(have=("welcome", "storage"), sha_refused=True)
+        res = r.results()
+        self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
+        self.assertIn("installed from onboarding.bin", res["steps"]["welcome"]["measured"])
+        self.assertIn("installed from storage.bin", res["steps"]["storage"]["measured"])
+        self.assertEqual(r.sent("test_dot_welcome"),
+                         [f'test_dot_welcome name="onboarding.bin" sha="{self.SHA_W}" project="onboarding"',
+                          'test_dot_welcome name="onboarding.bin"'])
+        self.assertIn("welcome: the Kode did not take sha=", r.stdout)
+
     def test_matching_images_are_installed_and_the_pass_waits_for_them(self):
         r = self.run_images()
         res = r.results()
         self.assertEqual((r.rc, res["verdict"]), (0, "PASS"), r.stdout[-2000:])
         self.assertEqual(res["steps"]["welcome"]["status"], "PASS")
         self.assertEqual(res["steps"]["storage"]["status"], "PASS")
-        self.assertEqual(r.sent("test_dot_welcome"), ['test_dot_welcome name="onboarding.bin"'])
-        self.assertEqual(r.sent("test_dot_storage"), ['test_dot_storage name="storage.bin"'])
+        self.assertEqual(r.sent("test_dot_welcome"),
+                         [f'test_dot_welcome name="onboarding.bin" sha="{self.SHA_W}" project="onboarding"'])
+        self.assertEqual(r.sent("test_dot_storage"), [f'test_dot_storage name="storage.bin" sha="{self.SHA_S}"'])
         self.assertEqual(r.sent("file_sha"), ['file_sha name="/sdcard/onboarding.bin"',
                                               'file_sha name="/sdcard/storage.bin"'])
-        self.assertLess(r.fake.lines.index('test_dot_storage name="storage.bin"'), r.fake.lines.index("test component=all"))
+        self.assertLess(r.fake.lines.index(f'test_dot_storage name="storage.bin" sha="{self.SHA_S}"'),
+                        r.fake.lines.index("test component=all"))
         self.assertIn("welcome_install", res["blocks"])
         self.assertIn("storage_install", res["blocks"])
         self.assert_grammar(r)

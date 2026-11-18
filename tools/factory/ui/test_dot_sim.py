@@ -239,6 +239,12 @@ class Scenario:
                            installs one after the other, in the order armed.
     @param install_gap_s   Seconds between one install's last record and the
                            next one's `started` (0 on the bench: same instant).
+    @param have            The images already on the Kode, byte for byte ("welcome",
+                           "storage"): asked with sha=, they answer present=yes
+                           and are not written; the others answer present=no
+                           and are written.
+    @param sha_refused     True: a kodeOS without sha= (before r3): the key is
+                           refused with `>err code=3 msg=sha`.
     @param haptic_name     The name the Kode gives its vibration row.
     @param run_refused     True: `test component=all` answers `>err` at once
                            (the run never reaches the camera's end).
@@ -252,7 +258,8 @@ class Scenario:
                  rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
-                 rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None):
+                 rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
+                 sha_refused=False):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -269,6 +276,8 @@ class Scenario:
         self.install = install
         self.install_s = install_s
         self.install_gap_s = install_gap_s
+        self.have = set(have)
+        self.sha_refused = sha_refused
         self.haptic_name = haptic_name
         self.run_refused = run_refused
         self.rfid_late_clone = rfid_late_clone
@@ -655,7 +664,13 @@ class FakeKode:
         self.answer([f"file_sha name={name} sha256={sha} size=1048576"], delay=0.2)
 
     def install_image(self, kind, a):
-        self.answer([f"{kind} ok=1"])
+        if "sha" in a and self.sc.sha_refused:
+            self.answer([], ">err code=3 msg=sha")
+            return
+        if a.get("sha") and kind in self.sc.have:
+            self.answer([f"{kind} armed=none present=yes ms=310"])
+            return
+        self.answer([f"{kind} armed={a.get('name')}" + (" present=no ms=4" if "sha" in a else "")])
         now = self.now()
         start = 0.5
         if self.install_free is not None:

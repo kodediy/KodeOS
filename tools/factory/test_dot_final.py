@@ -1146,14 +1146,36 @@ class Station:
         if bad:
             self.installs = {}
             raise Abort("the station's microSD does not hold the right image: " + ", ".join(bad))
+        want = {k: sha for k, (_, sha) in self.sd_images().items()}
         for key in list(self.installs):
             job = self.installs[key]
+            t0 = CLOCK.monotonic()
+            # The Kode hashes what it already holds (the Welcome app by name, the whole
+            # storage partition) and skips the write only when the bytes are the
+            # microSD's, the file whose SHA-256 was checked above. A repeated Kode then
+            # writes no flash: no 150 ms block erases under the microSD, NFC and RFID.
+            have = f" sha={quote(want[key])}" + (f" project={quote(WELCOME_PROJECT)}" if key == "welcome" else "")
             try:
-                self.link.cmd(f"{SD_IMAGES[key]} name={quote(job['file'])}")
+                try:
+                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(job['file'])}{have}", 10.0)
+                except CommandError as e:
+                    # A kodeOS without sha= refuses the key: the order of before. Said in
+                    # the log, so a skip that never fires does not go unseen.
+                    self.log(f"{key}: the Kode did not take sha= ({e.term or 'no answer'}); installing as before", "warn")
+                    recs = self.link.cmd(f"{SD_IMAGES[key]} name={quote(job['file'])}")
             except CommandError as e:
                 del self.installs[key]
                 self.add(key, FAIL, f"the Kode did not take the install of {job['file']}: {e.term or 'no answer'}",
                          f"{key}=installed", 0.0, values=[])
+                continue
+            got = next((fields(r) for r in recs if r.startswith(key + " ")), {})
+            if got.get("present") == "yes":
+                del self.installs[key]
+                secs = CLOCK.monotonic() - t0
+                self.blocks[key + "_install"] = 0.0
+                self.add(key, PASS, f"already on the Kode: its bytes have the SHA-256 of {job['file']}; "
+                         f"not written (hash {got.get('ms', '?')} ms)", f"{key}=installed", secs,
+                         values=[value("present", 1)])
 
     def install_record(self, f, r):
         """A `welcome=` or `storage=` record: started, then installed, failed or refused."""
