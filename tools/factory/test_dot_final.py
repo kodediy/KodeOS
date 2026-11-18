@@ -95,7 +95,7 @@ C5_LINK_PAUSE_S = 0.5
 RUN_BUDGET_S = 300             # the whole run, camera and operator included
 POLL_PERIOD_S = 0.15
 POLL_TIMEOUT_S = 5.0
-CAMERA_EXPECTED_S = 8          # the page's "do not touch" countdown
+CAMERA_EXPECTED_S = 15         # the page's "do not touch" countdown: the rows before the camera and the camera (~14.6 s)
 STATION_FAULT = "station: "    # a row the station could not measure says so first
 OPERATOR_LIMIT_S = 20          # the Kode gives each button and touch step this long
 # The rear pads' limits, from the station's bench (e5_test.py),

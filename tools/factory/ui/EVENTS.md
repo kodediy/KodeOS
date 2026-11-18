@@ -56,15 +56,15 @@ The point the operator has reached. `text` is meant to be shown large.
 
 ```json
 {"type":"phase","name":"place","text":"Put the Kode in the nest","t":1793260000.1}
-{"type":"phase","name":"camera","text":"DO NOT TOUCH: the camera is looking at the screen","limit_s":8,"t":1793260004.0}
+{"type":"phase","name":"camera","text":"DO NOT TOUCH: the camera is looking at the screen","limit_s":15,"t":1793260004.0}
 {"type":"phase","name":"buttons","text":"Press the button that lights up","t":1793260012.0}
 {"type":"phase","name":"touch","text":"Touch the circle that lights up","t":1793260040.0}
 {"type":"phase","name":"rest","text":"Finishing the automatic tests","t":1793260050.0}
 {"type":"phase","name":"result","text":"Result: ALL GOOD","result":"pass","t":1793260060.0}
 ```
 
-`camera.limit_s` is how long the camera is expected to look, for the
-"do not touch" countdown. `result.result` is `pass` or `fail`.
+`camera.limit_s` is how long the rows before the camera and the camera are
+expected to take, for the "do not touch" countdown. `result.result` is `pass` or `fail`.
 
 ## `operator`
 
