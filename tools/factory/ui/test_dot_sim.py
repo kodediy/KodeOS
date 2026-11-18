@@ -248,6 +248,8 @@ class Scenario:
     @param nfc_truncated   How many `nfc_write`s, the first ones longer than the
                            tag's text, leave it cut to that text's length and
                            say ok (d3_p3 on the bench, 17-nov: "KODE1R8").
+    @param nfc_read_fails  How many `nfc_read`s, the first ones, find the tag
+                           and fail on a transient read ("carries no NDEF message").
     @param haptic_name     The name the Kode gives its vibration row.
     @param run_refused     True: `test component=all` answers `>err` at once
                            (the run never reaches the camera's end).
@@ -262,7 +264,7 @@ class Scenario:
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
                  rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
-                 sha_refused=False, nfc_truncated=0):
+                 sha_refused=False, nfc_truncated=0, nfc_read_fails=0):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -282,6 +284,7 @@ class Scenario:
         self.have = set(have)
         self.sha_refused = sha_refused
         self.nfc_truncated = nfc_truncated
+        self.nfc_read_fails = nfc_read_fails
         self.haptic_name = haptic_name
         self.run_refused = run_refused
         self.rfid_late_clone = rfid_late_clone
@@ -560,6 +563,7 @@ class FakeKode:
         self.rfid_clones = 0
         self.nfc_writes = 0
         self.nfc_cuts = 0
+        self.nfc_reads = 0
         self.rfid_busy_until = None
 
     # ---- the pyserial surface --------------------------------------------
@@ -880,6 +884,12 @@ class FakeKode:
     def v_nfc_read(self, a):
         if self.sc.case in ("fail", "nfc") or self.tag_text is None:
             self.answer(["nfc=tag state=none"], '>err code=4 msg="no tag in the window"', delay=3.0)
+            return
+        self.nfc_reads += 1
+        if self.nfc_reads <= self.sc.nfc_read_fails:
+            self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=1 model="Ultralight / NTAG (Type-2)"'],
+                        '>err code=1 msg="opened, but carries no NDEF message - write one with nfc_write first"',
+                        delay=1.1)
             return
         self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=2 model="NTAG213"',
                      f"nfc=ndef len={len(self.tag_text) + 7} text={quote(self.tag_text)}"], delay=0.6)

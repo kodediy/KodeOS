@@ -337,6 +337,21 @@ class TestNfc(Base):
         self.assertEqual(len(r.sent("nfc_write")), 3)
         self.assertEqual(len(r.sent("nfc_read")), 2)
 
+    def test_a_read_back_that_fails_once_is_written_and_read_once_more(self):
+        r = self.run_case(sim.Scenario(nfc_read_fails=1))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "PASS", nfc)
+        self.assertEqual(self.nfc_value(nfc, "write_retries"), 1)
+        self.assertEqual(len(r.sent("nfc_write")), 3)
+        self.assertEqual(len(r.sent("nfc_read")), 2)
+
+    def test_a_read_back_that_fails_twice_fails_the_kode_after_one_more_write(self):
+        r = self.run_case(sim.Scenario(nfc_read_fails=2))
+        nfc = r.results()["steps"]["nfc"]
+        self.assertEqual(nfc["status"], "FAIL", nfc)
+        self.assertEqual(len(r.sent("nfc_write")), 3)
+        self.assertEqual(len(r.sent("nfc_read")), 2)
+
     def test_the_serial_is_written_after_another_text(self):
         r = self.run_case(sim.Scenario())
         texts = [fields(ln.partition(" ")[2])["text"] for ln in r.sent("nfc_write")]
