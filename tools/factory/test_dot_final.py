@@ -199,6 +199,11 @@ INSTALL_ENDS = ("installed", "failed", "refused")   # the last record of an inst
 INSTALL_WAIT_S = 40.0          # how long after the run the RFID write waits for an install the Kode has not started
 INSTALL_LIMIT_S = 120.0        # how long after its start an install may go on before it has failed
 FACTORY_RESET = ("factory_reset", "Factory reset", "record")   # a step only once a PASS is sent
+APPS_LEFT = ("apps_left", "Apps the Kode leaves with")           # a step only after the factory reset of a PASS
+# The app a Kode leaves the station with, alone in its apps region after the
+# factory reset of a PASS (the kodeOS build's CONFIG_KODEOS_WELCOME_APP).
+WELCOME_PROJECT = "onboarding"
+APP_LIST_TIMEOUT_S = 5.0
 CERTIFICATE = ("certificate", "Certificate", "record")        # a step only before a PASS, where one is issued
 CERTIFICATE_RANGE = "factory-link issues it and the C5 keeps it"
 
@@ -710,6 +715,20 @@ class Station:
         return ends the program with no report (nothing is known of the Kode,
         or its kodeOS cannot run the station)."""
         a, cfg = self.a, self.cfg
+        # A factory run needs the settings that make its PASS mean what it says:
+        # the kodeOS every Kode must run, and both images the Kode installs from
+        # the microSD (E1 no longer writes them). Without them a Kode would pass
+        # with any kodeOS, with no Welcome or with no Kody pack. A bench run
+        # goes on without them.
+        if not self.bench:
+            missing = [k for k in SD_IMAGES if k not in self.sd_images()]
+            missing = [f"sd_images.{k}" for k in missing]
+            if not (cfg.get("expect") or {}).get("kodeos"):
+                missing.append("expect.kodeos")
+            if missing:
+                self.log(f"the station's settings ({self.config_path}) lack " + ", ".join(missing)
+                         + ": a factory run is refused", "error")
+                return EXIT_NO_REPORT
         if not port_present(a.port):
             usb_s = USB_WAIT_OVERRIDE_S if USB_WAIT_OVERRIDE_S is not None else cfg["place"]["usb_s"]
             if not self.wait_usb(a.port, usb_s):
@@ -2113,7 +2132,35 @@ class Station:
         self.begin(FACTORY_RESET[0])
         self.add(FACTORY_RESET[0], PASS, "done; ship mode armed for the unplug", "the factory reset completes",
                  CLOCK.monotonic() - t1, values=[], name=name)
-        return PASS
+        return self.apps_left()
+
+    def apps_left(self):
+        """After the factory reset of a PASS: the apps region holds the Welcome app
+        and nothing else, at the version the station's settings name when they
+        name one. A PASS only when `app_list` says so; otherwise the Kode is
+        already reset and is not locked."""
+        t0 = CLOCK.monotonic()
+        self.begin(APPS_LEFT[0])
+        want_v = ((self.cfg.get("sd_images") or {}).get("welcome") or {}).get("version")
+        why = ""
+        try:
+            apps = [fields(r) for r in self.link.cmd("app_list", APP_LIST_TIMEOUT_S) if r.startswith("name=")]
+        except CommandError as e:
+            apps, why = None, e.term or "no answer"
+        names = sorted(f.get("name", "?") for f in (apps or []))
+        ok = apps is not None and names == [WELCOME_PROJECT]
+        if ok and want_v:
+            ok = apps[0].get("version") == str(want_v)
+        if apps is None:
+            text = f"app_list: {why}"
+        else:
+            text = "apps: " + (", ".join(f"{f.get('name')} {f.get('version')}" for f in apps) or "none")
+        rng = f"only {WELCOME_PROJECT}" + (f" {want_v}" if want_v else "")
+        self.add(APPS_LEFT[0], PASS if ok else FAIL, text, rng, CLOCK.monotonic() - t0,
+                 values=[value("apps", ",".join(names))], name=APPS_LEFT[1])
+        if ok:
+            return PASS
+        return FAIL
 
     def put_down(self, verdict):
         """A PASS is locked; a bench Kode is given back. A FAIL keeps its

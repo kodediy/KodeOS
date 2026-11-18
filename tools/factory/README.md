@@ -8,8 +8,9 @@ the test, or change the program.
 The Kode does the measuring; the computer decides. The program speaks the
 console's `test_dot_*` verbs, which only a kodeOS built with the station's
 service answers: a Kode without them is refused before anything is written.
-A PASS runs the Kode's factory reset and then locks the station verbs on that
-Kode, before the verdict is published: a lock the Kode does not confirm turns
+A PASS runs the Kode's factory reset, checks with `app_list` that the Kode
+leaves with the Welcome app alone (`Apps the Kode leaves with`), and then
+locks the station verbs on that Kode, before the verdict is published: a lock the Kode does not confirm turns
 the run into a FAIL of its own (`lock: failed`). A FAIL leaves the Kode's
 verdict screen up and erases nothing.
 
@@ -40,14 +41,16 @@ verdict screen up and erases nothing.
    `python3 tools/factory/test_dot_final.py --discover`. It lists the networks
    the Kode hears and writes the channels of the two named ones.
 4. Set `expect.kodeos` to the version the Kodes of this lot must run, as `info`
-   prints it. A Kode with another one fails its first step. `null` accepts any.
+   prints it. A Kode with another one fails its first step. A factory run
+   refuses to start without it (and without both `sd_images`); a bench run
+   (`--operator-sim`, `--no-write`, `--no-place`) accepts any kodeOS.
 
-5. Set `sd_images` when the Kodes of this lot get their Welcome and Kody's
-   pack from the station's microSD (the card in the Kode's slot):
+5. Set `sd_images`: the Kodes get their Welcome and Kody's pack from the
+   station's microSD (the card in the Kode's slot):
 
    ```json
    "sd_images": {
-     "welcome": {"file": "onboarding.bin", "sha256": "<64 hex digits>"},
+     "welcome": {"file": "onboarding.bin", "sha256": "<64 hex digits>", "version": "<optional>"},
      "storage": {"file": "storage.bin", "sha256": "<64 hex digits>"}
    }
    ```
@@ -57,13 +60,16 @@ verdict screen up and erases nothing.
    Kode to install it (`test_dot_welcome`, `test_dot_storage`). A file that is
    missing or has another hash is the station's fault, not the Kode's: the
    row is NO VERDICT (`station: the station's microSD does not hold the right
-   image`), nothing is installed and the run stops. Each key is optional;
-   with no `sd_images` (or `null`) nothing is installed. The Kode's
+   image`), nothing is installed and the run stops. A factory run needs both
+   keys; a bench run with no `sd_images` (or `null`) installs nothing. When
+   `welcome.version` is set, the Welcome left after the factory reset of a
+   PASS must be at that version too. The Kode's
    `welcome=` and `storage=` records (`started`, then `installed`, `failed` or
    `refused`) decide one row each, `Welcome from the microSD` and `Kody's pack
    from the microSD`: a failed or refused install, or one with no last record,
-   fails the Kode. The RFID write waits for the installs; the NFC step, the
-   pads and the radio do not. The factory reset of a PASS runs only after
+   fails the Kode. The RFID write waits for an install the Kode started until
+   it ends (120 s from its start at most), and for one it has not started 40 s
+   after the run; the NFC step, the pads and the radio do not wait. The factory reset of a PASS runs only after
    both rows passed. Their times are the `welcome_install` and
    `storage_install` blocks. A Kode that gets its images this way must leave
    the programming station (E1) without the apps and storage images.

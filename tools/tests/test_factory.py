@@ -233,6 +233,37 @@ class TestFullPass(Base):
                                 if p.suffix in (".csv", ".html") or p.name.startswith("2")), [])
 
 
+class TestAppsLeft(Base):
+    """After the factory reset of a PASS, the Kode leaves with the Welcome alone."""
+
+    def test_a_pass_checks_the_apps_after_the_reset_and_before_the_lock(self):
+        r = self.run_case(sim.Scenario("pass"))
+        res = r.results()
+        self.assertEqual(res["verdict"], "PASS", r.stdout[-2000:])
+        self.assertEqual(res["steps"]["apps_left"]["status"], "PASS")
+        lines = r.fake.lines
+        self.assertLess(lines.index("test_dot_result verdict=pass"), lines.index("app_list"))
+        self.assertLess(lines.index("app_list"), lines.index("test_dot_lock confirm=on"))
+
+    def test_another_app_left_on_the_kode_fails_it_unlocked(self):
+        r = self.run_case(sim.Scenario("pass", apps=[("onboarding", sim.WELCOME_VERSION), ("kodecraft", "1.0.0")]))
+        res = r.results()
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertEqual(res["steps"]["apps_left"]["status"], "FAIL")
+        self.assertIn("kodecraft", res["steps"]["apps_left"]["measured"])
+        self.assertEqual(r.sent("test_dot_lock"), [])
+
+    def test_no_welcome_or_another_version_fails_it(self):
+        for apps in ([], [("onboarding", "0.0.4")]):
+            with self.subTest(apps=apps):
+                res = self.run_case(sim.Scenario("pass", apps=apps)).results()
+                self.assertEqual((res["verdict"], res["steps"]["apps_left"]["status"]), ("FAIL", "FAIL"))
+
+    def test_the_bench_does_not_ask(self):
+        r = self.run_case(sim.Scenario("pass"), ["--no-place"])
+        self.assertEqual(r.sent("app_list"), [])
+
+
 class TestExpectedVersion(Base):
 
     def run_expecting(self, version):
@@ -549,7 +580,7 @@ class TestSdImages(Base):
     SHA_W = "a" * 64
     SHA_S = "b" * 64
 
-    def run_images(self, files=None, install="installed", only=None, install_s=3.0, args=(), case="pass",
+    def run_images(self, files=None, install="installed", install_s=3.0, args=(), case="pass",
                    install_gap_s=0.0, run_refused=False):
         sc = sim.Scenario(case, sd_files={"onboarding.bin": self.SHA_W, "storage.bin": self.SHA_S}
                           if files is None else files, install=install, install_s=install_s,
@@ -559,14 +590,42 @@ class TestSdImages(Base):
         cfg = json.loads(r.cfg.read_text())
         images = {"welcome": {"file": "onboarding.bin", "sha256": self.SHA_W},
                   "storage": {"file": "storage.bin", "sha256": self.SHA_S}}
-        cfg["sd_images"] = {k: v for k, v in images.items() if only is None or k in only}
+        cfg["sd_images"] = images
         r.cfg.write_text(json.dumps(cfg))
         return r.go()
 
-    def test_no_sd_images_key_installs_nothing(self):
-        r = self.run_case(sim.Scenario("pass"))
+    def run_without_images(self, args=()):
+        r = Run(sim.Scenario("pass"), args)
+        self.addCleanup(r.cleanup)
+        cfg = json.loads(r.cfg.read_text())
+        cfg["sd_images"] = None
+        r.cfg.write_text(json.dumps(cfg))
+        return r.go()
+
+    def test_no_sd_images_key_installs_nothing_on_the_bench(self):
+        r = self.run_without_images(["--no-place"])
         self.assertEqual(r.sent("file_sha") + r.sent("test_dot_welcome") + r.sent("test_dot_storage"), [])
         self.assertNotIn("welcome", r.results()["steps"])
+        self.assertEqual(r.results()["verdict"], "BENCH PASS")
+
+    def test_a_factory_run_without_both_images_or_the_kodeos_is_refused(self):
+        for what in ("sd_images", "welcome", "storage", "expect"):
+            with self.subTest(what=what):
+                r = Run(sim.Scenario("pass"))
+                self.addCleanup(r.cleanup)
+                cfg = json.loads(r.cfg.read_text())
+                if what == "sd_images":
+                    cfg["sd_images"] = None
+                elif what == "expect":
+                    cfg["expect"] = {"kodeos": None}
+                else:
+                    del cfg["sd_images"][what]
+                r.cfg.write_text(json.dumps(cfg))
+                r.go()
+                self.assertEqual(r.rc, final.EXIT_NO_REPORT, r.stdout[-2000:])
+                self.assertEqual(r.fake.lines, [])          # the Kode is not even spoken to
+                self.assertEqual(r.folders(), [])
+                self.assertIn("a factory run is refused", r.stdout)
 
     def test_matching_images_are_installed_and_the_pass_waits_for_them(self):
         r = self.run_images()
@@ -628,7 +687,7 @@ class TestSdImages(Base):
         self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
 
     def test_a_missing_image_is_the_stations_fault_too(self):
-        r = self.run_images(files={"storage.bin": self.SHA_S}, only=["welcome"])
+        r = self.run_images(files={"storage.bin": self.SHA_S})
         res = r.results()
         self.assertEqual((res["verdict"], res["steps"]["welcome"]["status"]), ("NO VERDICT", "NO VERDICT"))
         self.assertEqual(r.sent("test_dot_welcome"), [])
@@ -636,7 +695,7 @@ class TestSdImages(Base):
     def test_a_failed_or_refused_install_fails_the_kode(self):
         for word in ("failed", "refused"):
             with self.subTest(word=word):
-                r = self.run_images(install=word, only=["welcome"])
+                r = self.run_images(install=word)
                 res = r.results()
                 self.assertEqual(res["verdict"], "FAIL")
                 self.assertEqual(res["steps"]["welcome"]["status"], "FAIL")
@@ -644,9 +703,13 @@ class TestSdImages(Base):
                 self.assertNotIn("test_dot_result verdict=pass", r.fake.lines)
 
     def test_an_install_with_no_last_record_does_not_pass(self):
-        r = self.run_images(install="silent", only=["storage"])
+        r = self.run_images(install="silent")
         res = r.results()
-        self.assertEqual((res["verdict"], res["steps"]["storage"]["status"]), ("FAIL", "TIMEOUT"))
+        self.assertEqual((res["verdict"], res["steps"]["welcome"]["status"]), ("FAIL", "TIMEOUT"))
+        # The Kode runs the installs one after the other: the pack behind a Welcome
+        # that never ends never starts.
+        self.assertEqual(res["steps"]["storage"]["status"], "TIMEOUT")
+        self.assertIn("never started", res["steps"]["storage"]["measured"])
 
 
 class TestBenchFlags(Base):

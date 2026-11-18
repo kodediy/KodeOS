@@ -68,6 +68,12 @@ SERIAL = "KODE1TEST00001D"
 MAC_P4 = "38:44:be:07:e6:54"
 WINDOW = "704,628"
 
+# What the fake's microSD holds and the station's settings name, so a factory
+# run (which needs both images and the expected kodeOS) goes through.
+SD_FILES = {"onboarding.bin": "1" * 64, "storage.bin": "2" * 64}
+WELCOME_VERSION = "0.0.5"
+KODEOS_RUNNING = "00.00.26"
+
 INFO = [
     f'serial={SERIAL} product="KODE-DOT" board="1.0"',
     f"mac_p4={MAC_P4}",
@@ -227,6 +233,7 @@ class Scenario:
     @param install         What `test_dot_welcome` and `test_dot_storage` end
                            with: "installed", "failed", "refused" or "silent"
                            (no last record).
+    @param apps            What `app_list` gives: [(name, version)].
     @param install_s       Seconds from `started` to the last record, or
                            {"welcome": s, "storage": s}. The Kode runs the
                            installs one after the other, in the order armed.
@@ -245,7 +252,7 @@ class Scenario:
                  rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
-                 rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0):
+                 rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -257,7 +264,8 @@ class Scenario:
         self.rfid_dead_write = rfid_dead_write
         self.pads_charger = pads_charger
         self.boost_late = boost_late
-        self.sd_files = dict(sd_files or {})
+        self.sd_files = dict(SD_FILES if sd_files is None else sd_files)
+        self.apps = list(apps if apps is not None else [("onboarding", WELCOME_VERSION)])
         self.install = install
         self.install_s = install_s
         self.install_gap_s = install_gap_s
@@ -663,6 +671,10 @@ class FakeKode:
     def v_test_dot_storage(self, a):
         self.install_image("storage", a)
 
+    def v_app_list(self, a):
+        self.answer([f'name="{n}" version={v} size_kb=2048 category="other" display="{n}"' for n, v in self.sc.apps],
+                    delay=0.05)
+
     def v_test_dot_info(self, a):
         self.answer([f"test_dot state={self.mode} locked={int(self.locked_now)} run={self.run_state} "
                      "psram_free=27853504 j3=free"])
@@ -935,6 +947,10 @@ def seed_config(path, template):
     if not path.exists():
         cfg = json.loads(Path(template).read_text())
         cfg["wifi"]["channel_24"], cfg["wifi"]["channel_5"] = 2, 48
+        cfg["expect"] = {"kodeos": KODEOS_RUNNING}
+        cfg["sd_images"] = {"welcome": {"file": "onboarding.bin", "sha256": SD_FILES["onboarding.bin"],
+                                        "version": WELCOME_VERSION},
+                            "storage": {"file": "storage.bin", "sha256": SD_FILES["storage.bin"]}}
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(cfg, indent=2) + "\n")
 
