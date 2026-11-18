@@ -10932,15 +10932,18 @@ static bool name_is_bin(const char *name)
 }
 
 /**
- * @brief Whether entries[@p i] may be an app: a .bin, and neither kodeOS's
- *        own image nor the C5's.
+ * @brief Whether entries[@p i] may be an app: a .bin that is not empty, and
+ *        neither kodeOS's own image nor the C5's.
  *
  * A pill is a promise to boot an app. GUI_OS_IMAGE is kodeOS: the About
  * sheet's Update writes it into kodeOS's own slot, and opening it from the
  * launcher would install the operating system as an app. GUI_C5_IMAGE is the
- * radio coprocessor's firmware, built for another chip. So neither is a row,
- * on either medium, nor a question to the manifest chain. Whether any other
- * .bin is built for this chip at all its name cannot say.
+ * radio coprocessor's firmware, built for another chip. A file of 0 bytes
+ * holds no image at all, and AO_Storage refuses its manifest with the same
+ * KODE_DENIED it answers when busy, so asking would only be refused
+ * GUI_DESC_TRIES times on every listing. So none of them is a row, on either
+ * medium, nor a question to the manifest chain. Whether any other .bin is
+ * built for this chip at all its name cannot say.
  *
  * @param me The AO.
  * @param i  Index into me->entries[].
@@ -10950,7 +10953,7 @@ static bool gui_entry_is_app(Gui const * const me, uint8_t i)
 {
     /* The system's own images, by name: never a row. */
     static const char *const SYSTEM_IMAGES[] = { GUI_OS_IMAGE, GUI_C5_IMAGE };
-    bool app = name_is_bin(me->entries[i].name);
+    bool app = name_is_bin(me->entries[i].name) && (0U < me->entries[i].size);
 
     for ( uint32_t k = 0U;
          app && ((sizeof(SYSTEM_IMAGES) / sizeof(SYSTEM_IMAGES[0])) > k);
