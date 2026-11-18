@@ -547,13 +547,31 @@ class TestFraming(Base):
         self.assertTrue(framing["measured"].startswith("station: the fixture's camera is off centre, recalibrate"),
                         framing["measured"])
         self.assertNotIn("FAIL", [s["status"] for s in res["steps"].values()])
-        # The other camera rows judge as ever.
-        for i in ("cam_pixels", "cam_lines", "cam_zones", "cam_colour"):
-            self.assertEqual(res["steps"][i]["status"], "PASS", i)
+        # The rows judged on the window's photo are the station's too, even the ones the
+        # Kode failed (the cut band reads as a dark zone and a wrong colour); the LED judges.
+        for i in ("cam_straight", "cam_pixels", "cam_lines", "cam_zones", "cam_colour"):
+            row = res["steps"][i]
+            self.assertEqual(row["status"], "NO VERDICT", i)
+            self.assertTrue(row["measured"].startswith("station: the screen's judged band is not inside"), i)
+        self.assertIn("which said FAIL", res["steps"]["cam_zones"]["measured"])
+        self.assertIn("which said FAIL", res["steps"]["cam_colour"]["measured"])
+        self.assertEqual(res["steps"]["led"]["status"], "PASS")
         # The operator reads it as the station's.
         words, kind = reports.phrases(dict(framing, id="cam_framing"))
         self.assertEqual(kind, "station")
         self.assertIn("recalibrate", words[0])
+
+    def test_the_led_still_fails_a_kode_with_the_band_outside(self):
+        r = self.run_case(sim.Scenario(case="camera_off", led_result="fail"))
+        res = r.results()
+        self.assertEqual(res["steps"]["led"]["status"], "FAIL")
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertEqual([i for i, v in res["steps"].items() if v["status"] == "FAIL"], ["led"])
+
+    def test_with_the_band_inside_a_screen_row_still_fails_the_kode(self):
+        r = self.run_case(sim.Scenario(case="fail"))
+        self.assertEqual(r.results()["steps"]["cam_framing"]["status"], "PASS")
+        self.assertEqual(r.results()["steps"]["cam_pixels"]["status"], "FAIL")
 
     def test_a_framing_fail_from_the_kode_is_never_a_fail(self):
         # A Kode whose window was already centred and the band still out: no recentre, NO VERDICT.

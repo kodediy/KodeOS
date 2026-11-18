@@ -288,7 +288,10 @@ class Scenario:
     @param offset_mm       (dx, dy): the screen's centre from the camera array's,
                            mm, as the placement and the framing say it.
     @param scale           The fixture camera's sensor px per panel px: above ~2.38
-                           the judged band fits no window.
+                           the judged band fits no window. A band outside the
+                           window makes cam_zones and cam_colour fail.
+    @param led_result      What the LED's record says: it looks in the whole field,
+                           not in the window.
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
@@ -300,7 +303,7 @@ class Scenario:
                  sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False,
                  boost_falls_s=None, sd_rereads=None, tones=((1535, -7), (1957, -28)),
                  haptic_on=(284.0, 282.9, 277.3), expratio="1.00", led_flux=(25259, 73720, 104989),
-                 kode_logs=True, has_bright=True, offset_mm=None, scale=None):
+                 kode_logs=True, has_bright=True, offset_mm=None, scale=None, led_result="pass"):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -339,6 +342,7 @@ class Scenario:
             offset_mm = (OFFSET_MM[0], OFFSET_MM[1] + 3.0) if case in ("off_centre", "camera_off") else OFFSET_MM
         self.offset_mm = tuple(offset_mm)
         self.scale = scale if scale is not None else (2.45 if case == "camera_off" else SCALE)
+        self.led_result = led_result
         self.win = WINDOW              # the camera window the last placement asked for
         self.sensor_win = WINDOW       # the one the camera opened with, as it woke
 
@@ -416,7 +420,9 @@ class Scenario:
             pixels,
             "test=cam_lines result=pass lines=0 x=0 y0=0 y1=0 row_y=0 level=-0.042 hlevel=-0.030 "
             "max_level=-0.20 wlevel=-0.010,-0.017 whlevel=-0.044,-0.023",
-            'test=cam_zones result=pass zones=0 min_ratio=1.00 limit_ratio=0.86 bright=0 at=""',
+            # A band cut by the window reads as a dark zone (bench, 2 of 62 runs with inside=0).
+            (f'test=cam_zones result={"pass" if inside else "fail"} zones={0 if inside else 1} '
+             f'min_ratio={"1.00" if inside else "0.41"} limit_ratio=0.86 bright=0 at=""'),
         ]
 
     def run_line(self):
@@ -426,11 +432,12 @@ class Scenario:
         t += [(9.0, x) for x in self.camera()]
         t += [(11.0, "colour_info dark=0.0,1.6,0.0 white=143.0,152.1,146.5 grey=0.3598,0.3140,0.3262 "
                      "red=0.9478,0.0000,0.0522 green=0.0000,1.0000,0.0000 blue=0.0006,0.1053,0.8941"),
-              (11.0, "test=cam_colour result=pass dist_grey=0.0528 dist_red=0.0240 dist_green=0.0000 "
+              (11.0, f"test=cam_colour result={'pass' if self.framing() else 'fail'} dist_grey=0.0528 "
+                     "dist_red=0.0240 dist_green=0.0000 "
                      f"dist_blue=0.0112 wchroma=0.022 ripple=0.023 expratio={self.expratio} tol=0.250 retakes=0")]
         t += [(11.1, x[2:]) for x in blob_lines("colours", make_colours())]
         r, g, b = self.led_flux
-        t += [(11.9, f"test=led result=pass flux_red={r} dist_red=0.41 flux_green={g} dist_green=0.63 "
+        t += [(11.9, f"test=led result={self.led_result} flux_red={r} dist_red=0.41 flux_green={g} dist_green=0.63 "
                      f"flux_blue={b} dist_blue=0.52 at=556,108 min_flux=4000 max_dist=0.8"),
               (12.0, "timing=camera photos_ms=4301 analysis_ms=2214 led_ms=1664 total_ms=9115")]
         return t

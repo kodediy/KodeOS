@@ -216,6 +216,9 @@ CERTIFICATE_RANGE = "factory-link issues it and the C5 keeps it"
 certify = None
 ORDER = list(STEPS)
 CAM_IDS = ["cam_framing", "cam_straight", "cam_pixels", "cam_lines", "cam_zones", "cam_colour"]
+# The rows judged on the window's photo: with the band outside it they are the station's.
+# The LED is looked for in the whole field and judges whatever the window.
+BAND_ROWS = CAM_IDS[1:]
 RADIO_IDS = ["c5", "wifi_24", "wifi_5", "ble_rx"]
 PADS_IDS = ["pads_charge", "pads_delivery", "pads_gnd", "pads_loop"]
 # The Kode's rows, in the order a run gives them (sd and imu with the camera,
@@ -1543,6 +1546,7 @@ class Station:
                 self.blocks[b] = round(float(tm[k]) / 1000, 2)
         imgs = self.save_cam_blobs(s.cam)
         loc = imgs.get("location")
+        band_out = False
         for i in CAM_IDS:
             if i not in s.begun:
                 s.begun.add(i)
@@ -1569,6 +1573,11 @@ class Station:
                 vals.append(value(k, val, unit))
             if i == "cam_framing":
                 st, meas = self.framing(f, st, meas, vals)
+                band_out = st == NOVERDICT and meas.startswith(STATION_FAULT)
+            elif i in BAND_ROWS and band_out:
+                meas = (STATION_FAULT + "the screen's judged band is not inside the camera window (recalibrate the "
+                        f"station): this row does not judge the Kode, which said {st}; " + meas)
+                st = NOVERDICT
             pics = []
             if i == "cam_pixels":
                 pics = [b for k, b in imgs.items() if k.startswith(("dead_", "on_"))]
