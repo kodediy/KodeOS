@@ -59,9 +59,14 @@ def good_bat(byte, boost):
 class FakeLink:
     """The station verbs of a Kode with the station's relays and ADC behind it."""
 
-    def __init__(self, volt, bat, relays_ok=True, fail_on=None, loop=GOOD_LOOP):
+    def __init__(self, volt, bat, relays_ok=True, fail_on=None, loop=GOOD_LOOP, falls_after=None):
         self.volt, self.bat, self.relays_ok, self.fail_on, self.loop = volt, bat, relays_ok, fail_on, loop
         self.byte, self.boost, self.log, self.writes = 0xFF, False, [], []
+        self.falls_after = falls_after    # A0 readings with the boost on before it stops under the load
+        self.boost_reads = 0
+
+    def boosting(self):
+        return self.boost and (self.falls_after is None or self.boost_reads <= self.falls_after)
 
     def err(self, line, term):
         raise final.CommandError(line, term)
@@ -81,7 +86,7 @@ class FakeLink:
         if verb == "bat_info":
             if self.fail_on == "bat_info_delivery" and self.boost:
                 self.err(line, None)
-            return [self.bat(self.byte, self.boost)]
+            return [self.bat(self.byte, self.boosting())]
         if verb == "test_dot_relays":
             if not self.relays_ok:
                 self.err(line, ">err code=4 msg=station_i2c")
@@ -94,7 +99,9 @@ class FakeLink:
             return [f"relays state=0x{b:02X} ok=1"]
         if verb == "test_dot_adc":
             ch = int(a["ch"])
-            v = self.volt(self.byte, self.boost, ch)
+            if self.boost and ch == 0:
+                self.boost_reads += 1
+            v = self.volt(self.byte, self.boosting(), ch)
             return [f"adc ch={ch} mv={int(round(v * 1000 / (1 if ch == 1 else 2)))}"]
         raise AssertionError(f"unexpected line {line}")
 
@@ -105,14 +112,14 @@ class Pads(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="test-dot-pads-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def run_block(self, link):
+    def run_block(self, link, sleep=lambda s: None):
         a = argparse.Namespace(events=False, out=str(self.tmp), config=str(self.tmp / "station.json"),
                                operator_sim=False, no_write=False, no_place=False, port="-", discover=False,
                                no_open=True)
         st = final.Station(a)
         st.link, st.outdir = link, self.tmp
         with contextlib.redirect_stdout(io.StringIO()):
-            st.pads_block(lambda s: None)
+            st.pads_block(sleep)
         return {r["id"]: r for r in st.results}
 
     @staticmethod
@@ -186,6 +193,35 @@ class Pads(unittest.TestCase):
         self.assertGreater(i_off, link.log.index("test_dot_boost state=on"))
         self.assertLess(i_off, max(i for i, c in enumerate(link.log) if c == "test_dot_relays state=0xFE"))
         self.assertEqual(link.writes[-3:], [0xFC, 0xFE, 0xFF])
+        self.assertFalse(link.boost)
+        self.assertEqual(link.byte, 0xFF)
+
+    def test_delivery_is_read_again_before_the_boost_goes_off(self):
+        link = FakeLink(good_volt, good_bat)
+        waits = []
+
+        def sleep(s):
+            waits.append((len(link.log), s))
+        r = self.run_block(link, sleep)
+        d = r["pads_delivery"]
+        self.assertEqual(d["status"], "PASS", d)
+        on = link.log.index("test_dot_boost state=on")
+        off = link.log.index("test_dot_boost state=off")
+        self.assertEqual(link.log[on:off].count("test_dot_adc ch=0"), 2)
+        self.assertEqual(link.log[off - 2:off], ["test_dot_adc ch=0", "bat_info"])
+        waited = sum(s for at, s in waits if on < at <= off)
+        self.assertGreaterEqual(waited, final.DELIVERY_LATE_S - 0.05)
+        self.assertAlmostEqual(self.vals(d)["a0_late_v"], 4.64, 2)
+        self.assertEqual(self.vals(d)["current_late_ma"], -1150)
+
+    def test_a_boost_that_falls_after_the_first_reading_fails(self):
+        link = FakeLink(good_volt, good_bat, falls_after=1)
+        r = self.run_block(link)
+        d = r["pads_delivery"]
+        self.assertEqual(d["status"], "FAIL", d)
+        self.assertIn("A0=0.0 V", d["measured"])
+        self.assertIn("after the boost on", d["measured"])
+        self.assertIn("'boost': 'off'", d["detail"].splitlines()[1])
         self.assertFalse(link.boost)
         self.assertEqual(link.byte, 0xFF)
 

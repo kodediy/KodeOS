@@ -259,6 +259,9 @@ class Scenario:
     @param boost_late      True: `test_dot_boost state=on` answers on=0 with
                            the boost on, as a record taken before the
                            charger's next poll does.
+    @param boost_falls_s   Seconds after `test_dot_boost state=on` at which the
+                           boost stops under the load (None: it holds): A0
+                           and the gauge's current then read as with it off.
     """
 
     def __init__(self, case="pass", has_test_dot=True, operator="recorded",
@@ -267,7 +270,8 @@ class Scenario:
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
                  install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
                  rfid_late_clone=False, rfid_busy_s=1.0, nfc_write_fails=0, apps=None, have=(),
-                 sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False):
+                 sha_refused=False, nfc_truncated=0, nfc_read_fails=0, disarm_refused=False,
+                 boost_falls_s=None):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -279,6 +283,7 @@ class Scenario:
         self.rfid_dead_write = rfid_dead_write
         self.pads_charger = pads_charger
         self.boost_late = boost_late
+        self.boost_falls_s = boost_falls_s
         self.sd_files = dict(SD_FILES if sd_files is None else sd_files)
         self.apps = list(apps if apps is not None else [("onboarding", WELCOME_VERSION)])
         self.install = install
@@ -554,6 +559,8 @@ class FakeKode:
         self.mode = "dormant"         # test_dot_info's state=: dormant or awake (waking and ending are instants here)
         self.relays = 0xFF
         self.boost = False
+        self.boost_at = None          # when the boost was asked for
+        self.sent_at = []             # [(time, line)]: every line the host sent, when it arrived
         self.tag_text = None
         self.tag_id = self.sc.rfid_tag
         self.ring = []                # [(due, seq, record)], sorted: what the poll hands over
@@ -601,6 +608,7 @@ class FakeKode:
             line = raw.decode(errors="replace").strip("\r")
             if line:
                 self.lines.append(line)
+                self.sent_at.append((self.now(), line))
                 if self.now() >= self.ready_at:
                     self.handle(line)
         return len(data)
@@ -831,9 +839,16 @@ class FakeKode:
         self.relays = b | 0x08
         self.answer([f"relays state=0x{b:02X} ok=1"])
 
+    def boosting(self):
+        """The boost on and still holding the load."""
+        if not self.boost:
+            return False
+        falls = self.sc.boost_falls_s
+        return falls is None or self.now() - self.boost_at < falls
+
     def volts(self, ch):
         if self.relays == 0xFC:
-            return {0: 4.64 if self.boost else 0.0, 1: 1.63, 2: 0.0, 3: 5.03}[ch]
+            return {0: 4.64 if self.boosting() else 0.0, 1: 1.63, 2: 0.0, 3: 5.03}[ch]
         return GOOD_VOLTS.get((self.relays, ch), 0.0)
 
     def v_test_dot_adc(self, a):
@@ -843,6 +858,7 @@ class FakeKode:
 
     def v_test_dot_boost(self, a):
         self.boost = a.get("state") == "on"
+        self.boost_at = self.now()
         cur = -1150 if self.boost else -20
         said = self.boost and not self.sc.boost_late       # late: the record still shows the charger before
         self.answer([f"boost on={1 if said else 0} fault=0x00 current_ma={cur}"], delay=0.3)
@@ -864,8 +880,9 @@ class FakeKode:
             else:
                 rec = "vbat_mv=4000 vbus_mv=4550 vbus=on boost=off current_ma=514 soc=80 charging=1 fault=0"
         elif self.relays == 0xFC:
-            rec = (f"vbat_mv=3900 vbus_mv=0 vbus=off boost={'on' if self.boost else 'off'} "
-                   f"current_ma={-1150 if self.boost else -20} soc=80 charging=0 fault=0")
+            on = self.boosting()
+            rec = (f"vbat_mv=3900 vbus_mv=0 vbus=off boost={'on' if on else 'off'} "
+                   f"current_ma={-1150 if on else -20} soc=80 charging=0 fault=0")
         else:
             rec = "vbat_mv=4000 vbus_mv=4900 vbus=on boost=off current_ma=516 soc=80 charging=1 fault=0"
         self.answer([rec], delay=0.05)

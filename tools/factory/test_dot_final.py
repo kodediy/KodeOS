@@ -282,6 +282,7 @@ CHARGE_CURRENT_STEP_S = 0.5
 CHARGE_DONE = "3"              # `bat_info charging=`: the BQ25896's charge-termination state
 DELIVERY_SETTLE_S = 0.5
 BOOST_SETTLE_S = 0.6
+DELIVERY_LATE_S = 2.5      # the second reading of the boost, this long after it is asked for, just before it is switched off
 LOOP_COUNT = 20
 ADC_DIRECT_CH = 1          # A1 is wired straight; the others sit behind a /2 divider
 
@@ -1890,6 +1891,7 @@ class Station:
                 f"A0 < {DELIVERY_IDLE_MAX_V:.1f} V without the boost",
                 t0, [value("a0_no_boost_v", s0, "V")])
             return
+        t_on = CLOCK.monotonic()
         b = pads.boost_on()
         sleep(BOOST_SETTLE_S)
         e0 = pads.adc(0)
@@ -1911,19 +1913,44 @@ class Station:
             bad.append(f"boost on={b.get('on')} and bat_info boost={f2.get('boost')}")
         if not fault_ok(b.get("fault", "?")):
             bad.append(f"fault={b.get('fault')}")
+        late = ""
+        late_vals = []
+        detail = str(f2)
+        if not bad:
+            # The same A0 and current again with the load still on, just before the
+            # boost is switched off: a boost that holds at first and falls under the
+            # load fails here. The wait takes no hold, so the install goes on through it.
+            sleep(max(0.0, DELIVERY_LATE_S - (CLOCK.monotonic() - t_on)))
+            t_late = CLOCK.monotonic() - t_on
+            e1 = pads.adc(0)
+            f3, _, cur3 = pads.bat()
+            detail += "\n" + str(f3)
+            if not DELIVERY_A0_MIN_V <= e1 <= DELIVERY_A0_MAX_V:
+                bad.append(f"A0={e1} V {t_late:.1f} s after the boost on ({DELIVERY_A0_MIN_V:.1f} to "
+                           f"{DELIVERY_A0_MAX_V:.2f})")
+            if cur3 is None or not DELIVERY_CURRENT_MIN_MA <= cur3 <= DELIVERY_CURRENT_MAX_MA:
+                bad.append(f"gauge: current_ma={cur3} {t_late:.1f} s after the boost on (discharge expected from "
+                           f"{DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA}, negative)")
+            cur3_text = ""
+            if cur3 is not None:
+                cur3_text = cur3
+            late = f", then A0={e1} V {cur3_text} mA at {t_late:.1f} s"
+            late_vals = [value("a0_late_v", e1, "V"), value("current_late_ma", cur3_text, "mA"),
+                         value("t_late", round(t_late, 2), "s")]
         restored = pads.boost_off()
         if not restored:
             bad.append("the boost did not confirm off (and kodeOS's 0.5 A back)")
         vals = [value("a0_no_boost_v", s0, "V"), value("a0_v", e0, "V"),
                 value("vbus_mv", vbus2 if vbus2 is not None else "", "mV"),
                 value("current_ma", cur if cur is not None else "", "mA"), value("fault", b.get("fault", "")),
-                value("boost_off", "yes" if restored else "NO")]
+                value("boost_off", "yes" if restored else "NO")] + late_vals
         fin("pads_delivery", FAIL if bad else PASS,
-            f"A0={e0} V boost={1 if boost_seen else 0} fault={b.get('fault')} limit 1.2 A, off={'yes' if restored else 'NO'}"
-            + ("; " + ", ".join(bad) if bad else ""),
+            f"A0={e0} V{late} boost={1 if boost_seen else 0} fault={b.get('fault')} limit 1.2 A, "
+            f"off={'yes' if restored else 'NO'}" + ("; " + ", ".join(bad) if bad else ""),
             f"A0 {DELIVERY_A0_MIN_V:.1f} to {DELIVERY_A0_MAX_V:.2f} V with the boost on (limit 1.2 A), no fault and "
-            f"a gauge current from {DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA} mA",
-            t0, vals, detail=str(f2))
+            f"a gauge current from {DELIVERY_CURRENT_MAX_MA} to {DELIVERY_CURRENT_MIN_MA} mA, the same again "
+            f"{DELIVERY_LATE_S:.1f} s after the boost on",
+            t0, vals, detail=detail)
 
     # ---- the radio -----------------------------------------------------------
     def radio_block(self):

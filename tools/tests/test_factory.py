@@ -523,6 +523,46 @@ class TestRelays(Base):
         st = r.results()["steps"]["pads_delivery"]
         self.assertEqual(st["status"], "PASS", st)
 
+    @staticmethod
+    def boost_times(r):
+        """When the boost went on and off, and the A0 readings in between."""
+        on = next(t for t, ln in r.fake.sent_at if ln == "test_dot_boost state=on")
+        off = next(t for t, ln in r.fake.sent_at if ln == "test_dot_boost state=off")
+        a0 = [t for t, ln in r.fake.sent_at if ln == "test_dot_adc ch=0" and on < t < off]
+        return on, off, a0
+
+    def test_the_delivery_row_reads_the_boost_again_before_it_switches_it_off(self):
+        r = self.run_case(sim.Scenario("pass"))
+        st = r.results()["steps"]["pads_delivery"]
+        self.assertEqual(st["status"], "PASS", st)
+        on, off, a0 = self.boost_times(r)
+        self.assertEqual(len(a0), 2, a0)
+        self.assertGreaterEqual(a0[1] - on, final.DELIVERY_LATE_S)
+        bat = [t for t, ln in r.fake.sent_at if ln == "bat_info" and a0[1] < t < off]
+        self.assertEqual(len(bat), 1)
+        vals = {v["name"]: v["value"] for v in st["values"]}
+        self.assertAlmostEqual(vals["a0_late_v"], 4.64, 2)
+        self.assertEqual(vals["current_late_ma"], -1150)
+        self.assertGreaterEqual(vals["t_late"], final.DELIVERY_LATE_S)
+        self.assertIn("then A0=4.64 V -1150 mA at 2.5 s", st["measured"])
+
+    def test_a_boost_that_falls_under_the_load_fails_at_the_second_reading(self):
+        r = self.run_case(sim.Scenario("pass", boost_falls_s=1.5))
+        st = r.results()["steps"]["pads_delivery"]
+        self.assertEqual(st["status"], "FAIL", st)
+        self.assertIn("A0=0.0 V 2.5 s after the boost on", st["measured"])
+        self.assertIn("current_ma=-20 2.5 s after the boost on", st["measured"])
+        self.assertFalse(r.fake.boost)
+
+    def test_a_boost_that_fails_at_the_first_reading_is_not_waited_for(self):
+        r = self.run_case(sim.Scenario("pass", boost_falls_s=0.1))
+        st = r.results()["steps"]["pads_delivery"]
+        self.assertEqual(st["status"], "FAIL", st)
+        on, off, a0 = self.boost_times(r)
+        self.assertEqual(len(a0), 1, a0)
+        self.assertLess(off - on, final.DELIVERY_LATE_S)
+        self.assertNotIn("a0_late_v", [v["name"] for v in st["values"]])
+
 
 class TestRefusal(Base):
 
