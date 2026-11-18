@@ -13,6 +13,9 @@ Writes, from the animations the apocrifa compiles:
                                     decision 0016 of the apocrifa, in the clock's ink
                                     instead of its white), and <scene>_pk.
 
+The apocrifa outlines nine scenes and leaves the clock's in colour. reloj_bn is made here
+as its nine were made there: the same trazo.py, unchanged, run on reloj_dormido.
+
 <scene>_pk is the one file the apocrifa does not have, because it wakes on one press:
 the first press at Rest shows Kody's blue and face in colour with the rest of the scene
 still outlined. It is the apocrifa's own propuestas/escenas/herramientas/
@@ -46,7 +49,7 @@ SCENES = [
     ("desayuno", "escena_desayuno", 135), ("taller", "escena_taller", 135),
     ("lluvia", "escena_lluvia", 135), ("playa", "escena_playa", 135), ("reloj", "reloj", 45),
 ]
-OUTLINED = [s for s, _, _ in SCENES if s != "reloj"]  # the apocrifa has no reloj_bn
+THEIRS = [s for s, _, _ in SCENES if s != "reloj"]  # the apocrifa has no reloj_bn: trazo.py makes it here
 JOKES = ("tren", "parque", "camping", "azotea", "madrugada")  # SETS' .chiste
 BLACK = {"#131313": "#000000"}
 # The outline at Rest is drawn in the ink of the clock above it (KUI_COLOR_TEXT_ON_BG), not
@@ -92,6 +95,13 @@ def dormido(apo, kody, scene):
     if not p.exists():
         p = kody / "AnimacionesKody/03-lottie" / f"kody_{scene}_dormido.json"
     return json.loads(p.read_text())
+
+
+def outline(trazo, doc):
+    """<scene>_dormido outlined by the apocrifa's own tool: Kody still, white line on black."""
+    trazo.congelar_kody(doc["layers"][0]["shapes"])
+    trazo.pintar_trazo(doc)
+    return doc
 
 
 def ink(kodygen, doc):
@@ -154,10 +164,8 @@ def main():
         return a
 
     # ---- the outlines cannot drift from the apocrifa's
-    for s in OUTLINED:
-        doc = dormido(apo, kody, s)
-        trazo.congelar_kody(doc["layers"][0]["shapes"])
-        trazo.pintar_trazo(doc)
+    for s in THEIRS:
+        doc = outline(trazo, dormido(apo, kody, s))
         theirs = json.loads(compiled(apo, f"escena_{s}_bn"))
         if json.dumps(canon(doc), sort_keys=True) != json.dumps(canon(theirs), sort_keys=True):
             sys.exit(f"kody_apocrifa: trazo.py does not give the apocrifa's escena_{s}_bn back")
@@ -206,22 +214,23 @@ def main():
     blobs, table = [], []
     for s, _, _ in SCENES:
         family = "502" if s == "reloj" else "288"
-        row = {"sleep": f"{s}_duerme", "rest": None, "peek": None}
+        row = {"sleep": f"{s}_duerme", "rest": f"{s}_bn", "peek": f"{s}_pk"}
         # At the press he is already closing his eyes, without the stretch
         # that opens the animation (f0 to f26 of its 80), and quicker.
         duerme = json.loads(compiled(apo, f"{s}_duerme"))
         duerme["ip"] = (duerme["op"] * SLEEP_FROM_PCT) // 100
         duerme["fr"] = SLEEP_FPS
         docs = [("sleep", f"{s}_duerme", duerme)]
-        if s in OUTLINED:
-            row["rest"], row["peek"] = f"{s}_bn", f"{s}_pk"
+        if s in THEIRS:
             bn = json.loads(compiled(apo, f"escena_{s}_bn"))
-            ink(kodygen, bn)
-            docs.append(("rest", f"{s}_bn", bn))
-            pk = dormido(apo, kody, s)
-            trazo.congelar_kody(pk["layers"][0]["shapes"])
-            colour_postura(trazo, kodygen, pk)
-            docs.append(("peek", f"{s}_pk", pk))
+        else:
+            bn = outline(trazo, dormido(apo, kody, s))
+        ink(kodygen, bn)
+        docs.append(("rest", f"{s}_bn", bn))
+        pk = dormido(apo, kody, s)
+        trazo.congelar_kody(pk["layers"][0]["shapes"])
+        colour_postura(trazo, kodygen, pk)
+        docs.append(("peek", f"{s}_pk", pk))
         for _, name, doc in docs:
             found = kodygen.lint(name, doc)
             if found:
@@ -245,8 +254,7 @@ def main():
                "kgui_kody_rest_of() alone but sits with the data it points at */")
     out.append("static const struct { const char *scene; kgui_kody_rest_t rest; } s_scenes[] = {")
     for s, r in table:
-        ref = lambda k: f"&a_{r[k]}" if r[k] else "NULL"
-        out.append(f'    {{ "{s}", {{ {ref("sleep")}, {ref("rest")}, {ref("peek")} }} }},')
+        out.append(f'    {{ "{s}", {{ &a_{r["sleep"]}, &a_{r["rest"]}, &a_{r["peek"]} }} }},')
     out += ["};", "",
             "const kgui_kody_rest_t *kgui_kody_rest_of(const char *scene)", "{",
             "    const kgui_kody_rest_t *r = NULL;", "",

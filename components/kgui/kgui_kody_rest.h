@@ -15,8 +15,8 @@ extern "C" {
 /** @brief One scene's animations for Rest. */
 typedef struct {
     const kui_kody_anim_t *sleep;  /**< <scene>_duerme: he falls asleep, in colour. */
-    const kui_kody_anim_t *rest;   /**< <scene>_bn: asleep, outline on black in the clock's ink; NULL for the clock's. */
-    const kui_kody_anim_t *peek;   /**< <scene>_pk: the same with his blue and face in colour; NULL likewise. */
+    const kui_kody_anim_t *rest;   /**< <scene>_bn: asleep, outline on black in the clock's ink. */
+    const kui_kody_anim_t *peek;   /**< <scene>_pk: the same with his blue and face in colour. */
 } kgui_kody_rest_t;
 
 /**

@@ -8,7 +8,7 @@ set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdk/components/kbsp/sdkconfig.
 
 # kodeOS's version; `-DPROJECT_VER=...` on the command line overrides it.
 if(NOT DEFINED PROJECT_VER)
-    set(PROJECT_VER "0.1.3")
+    set(PROJECT_VER "0.1.4")
 endif()
 
 # The chip, set before project() or ESP-IDF guesses esp32 and caches it.
