@@ -14313,9 +14313,9 @@ static void gui_evict_end(Gui * const me, AppEvictEndEvt const * const e)
     else
     {
         /* Room is made and nobody is asked (it loads, and that
-         * is it). AO_AppMgr evicts the apps the card holds a copy of; when
-         * one it must evict has none yet, nothing is written and the
-         * install fails as busy (KFAIL_BUSY). */
+         * is it). AO_AppMgr evicts the apps the card holds a copy of; one
+         * it must evict that has none yet is copied first, with the write
+         * said at 0 % while it is, and the install goes on by itself. */
         KLOG_N(TAG, "install: %u app(s) make room for %s", (unsigned)e->victims,
                me->write_name);
         gui_install_write(me);
@@ -22044,12 +22044,13 @@ static void gui_failure_fill(Gui * const me)
 {
     int8_t const row = gui_sheet_card_row(me);
     const GuiWriteWords * const words = gui_write_words(me->write_what);
-    /* Nothing was written and nothing is damaged: an app this install
-     * would remove has no copy on the card yet, and AO_AppMgr is making it.
-     * The title stays the write's; Try again is the answer. */
+    /* Nothing was written and nothing is damaged: AO_AppMgr copies to the
+     * card an app this install would remove before it writes, and the card
+     * stayed busy with something else for the whole of its wait. The title
+     * stays the write's; Try again is the answer. */
     static const char * const BUSY_WHY[3] = {
-        "Nothing changed.", "An app this one replaces",
-        "is still being copied.",
+        "Nothing changed.", "The SD card was busy.",
+        "Try again in a moment.",
     };
     const char * const *why = words->why;
     char                detail[GUI_SYS_DETAIL_MAX];

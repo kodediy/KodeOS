@@ -62,7 +62,8 @@ ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # bug that cost an afternoon.
 ERASE = "\r\x1b[K"
 
-READY_TIMEOUT = 12.0   # covers the region work before >|ready; one retry after
+READY_TIMEOUT = 12.0   # covers the region work before >|ready; one retry after.
+                       # Counted again from every >|wait the board says first.
 CLOSE_TIMEOUT = 30.0   # CRC + image verify + directory commit after the bytes
 C5_CLOSE_IDLE = 45.0   # install --dst c5: silence this long after the bytes means the
                        # update died; the link's bring-up alone is ~10 s quiet
@@ -374,6 +375,28 @@ def do_cmd(board, args):
     print("ok")
 
 
+def collect_ready(board):
+    """Records until `>|ready` or a terminator. Returns (records, line).
+
+    Before it takes the wire the board may have to copy to the card an app
+    the image evicts, and it says `>|wait` at once and every second of that:
+    each one starts READY_TIMEOUT again, so a copy of any length is waited
+    for and a board that has gone quiet is still noticed. `line` is None when
+    the board went quiet.
+    """
+    records = []
+    told = False
+    while True:
+        got, line = board.collect(
+            READY_TIMEOUT, stop=lambda r: r.startswith("ready") or r == "wait")
+        records += [r for r in got if r != "wait"]
+        if line != ">|wait":
+            return records, line
+        if not told:
+            print("   the board copies an app this one evicts to the card first")
+            told = True
+
+
 def stream_payload(board, data, cmd, what, verbose=False,
                    close_timeout=None, close_idle=False):
     """Speak the payload verbs' wire conversation and send `data`.
@@ -421,8 +444,7 @@ def stream_payload(board, data, cmd, what, verbose=False,
     line = None
     for attempt in (1, 2):
         board.send_line(cmd)
-        records, line = board.collect(READY_TIMEOUT,
-                                      stop=lambda r: r.startswith("ready"))
+        records, line = collect_ready(board)
         for rec in records:
             if rec.startswith("evicted"):
                 print(f"   {rec}")

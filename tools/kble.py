@@ -128,6 +128,7 @@ BOARD_PAIR_S = 30.0
 PAIR_WAIT_S = BOARD_PAIR_S + 5.0
 
 CHUNK = 4096          # what the board asks for in `>|ready chunk=`
+READY_TIMEOUT = 15.0  # how long the ready may take, counted again from every `>|wait`
 
 # The hello between the two halves: `kble <version> attach|detach` one way,
 # `kble <version> ok|busy|stale` back. Bump it when the wire changes.
@@ -782,10 +783,22 @@ def stream(link, cmd, data, what):
     """
     link.send(cmd)
 
-    got, ready = link.wait_for(
-        lambda l: l.startswith(">|ready") or is_terminator(l), 15.0)
-    for l in got:
-        show(l)
+    # Before it takes the wire the board may copy to the card an app the image
+    # evicts, and it says `>|wait` at once and every second of that: each one
+    # starts the wait for the ready again.
+    told = False
+    while True:
+        got, ready = link.wait_for(
+            lambda l: l.startswith((">|ready", ">|wait")) or is_terminator(l),
+            READY_TIMEOUT)
+        for l in got:
+            if not l.startswith(">|wait"):
+                show(l)
+        if ready is None or not ready.startswith(">|wait"):
+            break
+        if not told:
+            print("   the board copies an app this one evicts to the card first")
+            told = True
     if ready is None:
         die(f"{what}: the board never answered the request")
     if is_terminator(ready):
