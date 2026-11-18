@@ -211,6 +211,11 @@ class Scenario:
                            Kode could not keep).
     @param rfid_tag        The ID the station's tag holds before the run.
     @param rfid_dead_write True: `rfid_write` changes nothing and says so.
+    @param rfid_late_clone True: the first `rfid_write` answers `match=no`
+                           past its deadline (3.1 s, rep_3 on the bench) and
+                           leaves the reader busy for rfid_busy_s more: every
+                           rfid verb meanwhile is refused at once.
+    @param rfid_busy_s     How long the reader stays busy after that clone.
     @param pads_charger    What the charger says with the 5 V on the pads:
                            "charging" (current at once), "slow" (current from
                            the fourth `bat_info`), "full" (no current, charge
@@ -237,7 +242,8 @@ class Scenario:
                  photo_missing=None, photo_bad_crc=None, serial=SERIAL, lock_refused=False,
                  rfid_tag=None, rfid_dead_write=False, pads_charger="charging",
                  boost_late=False, sd_files=None, install="installed", install_s=3.0,
-                 install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False):
+                 install_gap_s=0.0, haptic_name="haptic_pat", run_refused=False,
+                 rfid_late_clone=False, rfid_busy_s=1.0):
         self.case = case
         self.has_test_dot = has_test_dot
         self.operator = operator
@@ -255,6 +261,8 @@ class Scenario:
         self.install_gap_s = install_gap_s
         self.haptic_name = haptic_name
         self.run_refused = run_refused
+        self.rfid_late_clone = rfid_late_clone
+        self.rfid_busy_s = rfid_busy_s
 
     # ---- placement ---------------------------------------------------------
     def place(self):
@@ -518,6 +526,8 @@ class FakeKode:
         self.photo_asks = {}
         self.photo_sends = {}
         self.install_free = None      # when the install armed last ends: the next one starts then
+        self.rfid_clones = 0
+        self.rfid_busy_until = None
 
     # ---- the pyserial surface --------------------------------------------
     def open(self):
@@ -820,7 +830,21 @@ class FakeKode:
         self.answer(['nfc=tag uid=04A1B2C3D4E5F6 atqa=0x0044 sak=0x00 type=2 model="NTAG213"',
                      f"nfc=ndef len={len(self.tag_text) + 7} text={quote(self.tag_text)}"], delay=0.6)
 
+    def rfid_busy(self):
+        """True, with the refusal said, while the reader is still taken."""
+        if self.rfid_busy_until is not None and self.now() < self.rfid_busy_until:
+            self.answer([], '>err code=3 msg="rfid busy or not fitted"', delay=0.001)
+            return True
+        return False
+
     def v_rfid_write(self, a):
+        if self.rfid_busy():
+            return
+        self.rfid_clones += 1
+        if self.sc.rfid_late_clone and self.rfid_clones == 1:
+            self.answer(["rfid=clone match=no"], '>err code=4 msg="clone not verified"', delay=3.09)
+            self.rfid_busy_until = self.now() + (3.09 + self.sc.rfid_busy_s) / self.speed
+            return
         if self.sc.rfid_dead_write:
             self.answer([f"rfid=clone id={quote(a.get('id'))} match=no"], delay=1.5)
             return
@@ -828,6 +852,8 @@ class FakeKode:
         self.answer([f"rfid=clone id={quote(self.tag_id)} match=yes"], delay=1.5)
 
     def v_rfid_read(self, a):
+        if self.rfid_busy():
+            return
         if self.tag_id is None:
             self.answer(["rfid=tag state=none"], '>err code=4 msg="no tag in the window"', delay=3.0)
             return

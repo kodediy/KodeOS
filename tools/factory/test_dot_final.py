@@ -220,9 +220,18 @@ BACKGROUND = ["pads", "nfc", "rfid", "radio"]     # the PC's work beside the ope
 OPTIONAL = set()
 # What the NFC step writes before the serial, so the serial is a real write.
 NFC_OTHER_TEXT = "KODE E5"
-# Times the RFID step writes an ID before giving it up: one clone in about thirty
-# is not read back by the Kode on the bench, and the next one is.
-RFID_WRITE_TRIES = 2
+# Times the RFID step writes an ID before giving it up: about one clone in
+# sixteen is not read back by the Kode on the bench, the misses come in bursts
+# now and then, and two IDs are written per run.
+RFID_WRITE_TRIES = 3
+# A clone answered past its deadline keeps the Kode's reader until its worker
+# reports, and every rfid verb meanwhile is refused at once with this code and
+# word. That refusal is not a try: it is asked again RFID_BUSY_PAUSE_S apart,
+# for RFID_BUSY_S from the step's first one at most (a reader that is not
+# fitted answers the same, for good).
+RFID_BUSY_CODE = 3
+RFID_BUSY_S = 3.0
+RFID_BUSY_PAUSE_S = 0.2
 
 PASS, FAIL, TIMEOUT, NOVERDICT, NOTRUN = "PASS", "FAIL", "TIMEOUT", "NO VERDICT", "NOT RUN"
 EVENT_STATE = {NOVERDICT: "NOVERDICT", NOTRUN: "NOT_RUN"}
@@ -1452,6 +1461,29 @@ class Station:
             now = CLOCK.monotonic()
 
     # ---- NFC and RFID ------------------------------------------------------
+    def rfid_ask(self, line, timeout, busy):
+        """One rfid verb. A `busy` refusal is asked again while the step's busy
+        time lasts; `busy` (a dict) keeps the first refusal's time and the count.
+        @return (records, logs); raises the last CommandError."""
+        while True:
+            self.operator_sim_pump()               # the bench operator's release must not wait for this step
+            try:
+                got = self.link.exchange(line, timeout)
+                busy["last"] = False
+                return got
+            except CommandError as e:
+                if not (e.code == RFID_BUSY_CODE and "busy" in e.msg):
+                    busy["last"] = False
+                    raise
+                now = CLOCK.monotonic()
+                busy["last"] = True
+                busy["n"] += 1
+                if busy["t0"] is None:
+                    busy["t0"] = now
+                if now - busy["t0"] >= RFID_BUSY_S:
+                    raise
+                self.sleep_pump(RFID_BUSY_PAUSE_S)
+
     def rfid_step(self):
         """RFID 125 kHz: the ID from the Kode's MAC written into the station's
         T5577 and read back; PASS only when what is read is what was written."""
@@ -1462,6 +1494,7 @@ class Station:
         write = not self.a.no_write
         want = rfid_id_of(self.info["mac"])
         tag, tw, tr, wrote = None, None, None, False
+        busy = dict(t0=None, n=0, last=False)
         if write and want:
             t1 = CLOCK.monotonic()
             # The tag may already hold this Kode's ID (the same Kode, back at the
@@ -1472,9 +1505,8 @@ class Station:
             for ident in (rfid_other(want), want):
                 done = False
                 for _ in range(RFID_WRITE_TRIES):          # a clone the Kode could not read back is written again
-                    self.operator_sim_pump()               # the bench operator's release must not wait for this step
                     try:
-                        wr, _ = self.link.exchange(f"rfid_write id={quote(ident)}", 60.0)
+                        wr, _ = self.rfid_ask(f"rfid_write id={quote(ident)}", 60.0, busy)
                         det.append(" ".join(wr))
                         done = any(fields(r).get("match") == "yes" for r in wr)
                     except CommandError as e:
@@ -1485,10 +1517,9 @@ class Station:
             wrote = all(both)
             tw = CLOCK.monotonic() - t1
         for _ in range(3):
-            self.operator_sim_pump()
             t2 = CLOCK.monotonic()
             try:
-                recs = self.link.cmd("rfid_read ms=3000", 15.0)
+                recs = self.rfid_ask("rfid_read ms=3000", 15.0, busy)[0]
             except CommandError as e:
                 det.append(str(e))
                 continue
@@ -1498,8 +1529,11 @@ class Station:
                 tag, tr = m, CLOCK.monotonic() - t2
                 break
         read = (tag or {}).get("id", "").upper()
+        nothing = "nothing"
+        if busy["last"]:
+            nothing = f"nothing: the Kode's reader stayed busy for {RFID_BUSY_S:.0f} s"
         if write and want:
-            info = f"written {want}; read {read or 'nothing'}"
+            info = f"written {want}; read {read or nothing}"
             if tw is not None and tr is not None:
                 info += f"; write {tw:.1f} s (checked by the Kode: {'yes' if wrote else 'no'}), read {tr:.1f} s"
             # The Kode's own check of its writes counts too: without it the tag
@@ -1514,7 +1548,7 @@ class Station:
         status = PASS if valid else (TIMEOUT if st == TIMEOUT and not tag else FAIL)
         vals = [value("protocol", "EM4100"), value("id_written", want or ""), value("id_read", read),
                 value("t_write", round(tw, 2) if tw is not None else 0, "s"),
-                value("t_read", round(tr, 2) if tr is not None else 0, "s")]
+                value("t_read", round(tr, 2) if tr is not None else 0, "s"), value("busy_refusals", busy["n"])]
         self.add("rfid", status, (info or "no ID") + f"; kodeOS row test=rfid: {st}",
                  "read = written (a 5-byte ID from the Kode's MAC)", CLOCK.monotonic() - t0,
                  detail="\n".join(det)[-REPORT_DETAIL_CHARS:], values=vals)

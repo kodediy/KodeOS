@@ -293,6 +293,30 @@ class TestRfidWrite(Base):
         self.assertEqual(r.sent("test_dot_result"), ["test_dot_result verdict=fail"])
 
 
+    def test_a_busy_reader_is_waited_for_and_does_not_use_up_the_tries(self):
+        # rep_3: a clone answered past its deadline, then every rfid verb was
+        # refused as busy within 9 ms, and a good Kode failed.
+        r = self.run_case(sim.Scenario(rfid_late_clone=True, rfid_busy_s=1.0))
+        rfid = r.results()["steps"]["rfid"]
+        self.assertEqual(rfid["status"], "PASS", rfid)
+        busy = next(v["value"] for v in rfid["values"] if v["name"] == "busy_refusals")
+        self.assertGreater(busy, 0)
+        ids = [fields(ln.partition(" ")[2])["id"] for ln in r.sent("rfid_write")]
+        self.assertEqual(ids[-1], final.rfid_id_of(r.results()["info"]["mac"]))
+
+    def test_a_reader_that_stays_busy_fails_as_busy_within_its_bound(self):
+        r = self.run_case(sim.Scenario(rfid_late_clone=True, rfid_busy_s=999.0))
+        rfid = r.results()["steps"]["rfid"]
+        self.assertEqual(rfid["status"], "FAIL", rfid)
+        self.assertIn("stayed busy", rfid["measured"])
+        self.assertLess(rfid["secs"], 3.1 + final.RFID_BUSY_S + 2.0, rfid["secs"])
+
+    def test_a_clone_not_read_back_is_written_up_to_three_times(self):
+        r = self.run_case(sim.Scenario(rfid_dead_write=True))
+        self.assertEqual(len(r.sent("rfid_write")), 2 * final.RFID_WRITE_TRIES)
+        self.assertEqual(final.RFID_WRITE_TRIES, 3)
+
+
 class TestPhotos(Base):
 
     def test_missing_photo_is_asked_again_up_to_three_times(self):
