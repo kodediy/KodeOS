@@ -70,8 +70,8 @@ LV_FONT_DECLARE(kgui_font_figure_128);
 #define KGUI_SYS_ASK_X        20    /**< The left of a question's title and body. */
 #define KGUI_SYS_ASK_W        370   /**< ...and their width. */
 #define KGUI_SYS_ASK_GAP      14    /**< From the title's foot to the body. */
-#define KGUI_SYS_ASK_TITLE_LINES 2  /**< Lines a question's title may take: the rest is dotted. */
-#define KGUI_SYS_ASK_BODY_LINES  3  /**< Lines a question's body may take. */
+#define KGUI_SYS_ASK_TITLE_N  2     /**< Lines a question's title may take: the rest is dotted. */
+#define KGUI_SYS_ASK_BODY_N   3     /**< Lines a question's body may take. */
 #define KGUI_SYS_FIGURE_NONE  255U  /**< The share the figure shows when it shows none. */
 
 /** @brief The frame's objects. */
@@ -80,7 +80,6 @@ typedef struct {
     lv_obj_t   *blank;    /**< The disc of an app with no look. */
     lv_obj_t   *blank_img;/**< The apps glyph on it. */
     lv_obj_t   *glyph;    /**< A glyph, 96 px. */
-    lv_obj_t   *word;     /**< A word as the protagonist. */
     lv_obj_t   *pile;     /**< The red battery. */
     lv_obj_t   *code;     /**< A pairing's code. */
     lv_obj_t   *figure;   /**< A write's share. */
@@ -146,14 +145,6 @@ void kgui_sys_app(kgui_sys_t *s, const kgui_icon_spec_t *look);
  * @param ink What it is drawn in.
  */
 void kgui_sys_glyph(kgui_sys_t *s, const lv_image_dsc_t *img, lv_color_t ink);
-
-/**
- * @brief The protagonist is a word, in the display face.
- *
- * @param s    The frame.
- * @param text The word.
- */
-void kgui_sys_word(kgui_sys_t *s, const char *text);
 
 /**
  * @brief The protagonist is the red battery, nearly empty.
@@ -226,8 +217,8 @@ void kgui_sys_origin(int32_t *cx, int32_t *cy, int32_t *size);
 /**
  * @brief A card that asks or tells: a title and a body in the display and body faces.
  *
- * The title is up to KGUI_SYS_ASK_TITLE_LINES lines of the display face; the
- * body is up to KGUI_SYS_ASK_BODY_LINES lines of the body face, muted. With a
+ * The title is up to KGUI_SYS_ASK_TITLE_N lines of the display face; the
+ * body is up to KGUI_SYS_ASK_BODY_N lines of the body face, muted. With a
  * room (@p bottom past @p top) the block is centred in it, the same air
  * above and below, and a block taller than the room starts at its top; with
  * KGUI_SYS_ROOM_NONE the title stands at @p top. The protagonist the caller
@@ -250,7 +241,7 @@ void kgui_sys_ask(kgui_sys_t *s, int32_t top, int32_t bottom, const char *title,
  * @param card The card of the sheet.
  * @return The button; NULL when LVGL had no room.
  */
-lv_obj_t *kgui_sys_keep_make(lv_obj_t *card);
+lv_obj_t *kgui_sys_keep_make(const lv_obj_t *card);
 
 /**
  * @brief Dress the sheet's two buttons as a pair: two pills of

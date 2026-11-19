@@ -127,15 +127,30 @@ static lv_obj_t *dt_page(void)
 }
 
 /**
- * @brief A click on a pill: the owner decides what it is worth.
+ * @brief A click on a left pill: the owner decides what it is worth.
  *
- * @param e The event; its user data says which pill.
+ * @param e The event.
  */
-static void dt_on_click(lv_event_t *e)
+static void dt_on_click_left(lv_event_t *e)
 {
+    (void)e;
     if ( NULL != s_dt.tap )
     {
-        s_dt.tap((kgui_details_pill_t)(uintptr_t)lv_event_get_user_data(e));
+        s_dt.tap(KGUI_DETAILS_PILL_LEFT);
+    }
+}
+
+/**
+ * @brief A click on a right pill: the owner decides what it is worth.
+ *
+ * @param e The event.
+ */
+static void dt_on_click_right(lv_event_t *e)
+{
+    (void)e;
+    if ( NULL != s_dt.tap )
+    {
+        s_dt.tap(KGUI_DETAILS_PILL_RIGHT);
     }
 }
 
@@ -165,7 +180,14 @@ static lv_obj_t *dt_pill(lv_obj_t *parent, kgui_details_pill_t which, const char
         lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(pill, KUI_COLOR_REST, LV_STATE_PRESSED);
         lv_obj_add_style(pill, &kui_style_ring, LV_STATE_CHECKED);
-        (void)lv_obj_add_event_cb(pill, &dt_on_click, LV_EVENT_CLICKED, (void *)(uintptr_t)which);
+        if ( KGUI_DETAILS_PILL_LEFT == which )
+        {
+            (void)lv_obj_add_event_cb(pill, &dt_on_click_left, LV_EVENT_CLICKED, NULL);
+        }
+        else
+        {
+            (void)lv_obj_add_event_cb(pill, &dt_on_click_right, LV_EVENT_CLICKED, NULL);
+        }
         if ( NULL != txt )
         {
             lv_obj_set_style_text_font(txt, KGUI_SYS_PAIR_FONT, 0);
@@ -550,9 +572,9 @@ void kgui_details_ask(const char *name)
 
         lv_text_get_size(&size, title, &kui_font_display_40, 0, 0, KGUI_SYS_ASK_W, LV_TEXT_FLAG_NONE);
         rows = (size.y + (line / 2)) / line;
-        if ( KGUI_SYS_ASK_TITLE_LINES < rows )
+        if ( KGUI_SYS_ASK_TITLE_N < rows )
         {
-            rows = KGUI_SYS_ASK_TITLE_LINES;
+            rows = KGUI_SYS_ASK_TITLE_N;
         }
         if ( 1 > rows )
         {
@@ -602,8 +624,8 @@ bool kgui_details_origin(int32_t *cx, int32_t *cy, int32_t *size)
 
 void kgui_details_ring(bool shown)
 {
-    lv_obj_t *left  = s_dt.pill_open;
-    lv_obj_t *right = s_dt.pill;
+    lv_obj_t const *left  = s_dt.pill_open;
+    lv_obj_t const *right = s_dt.pill;
 
     s_dt.ring = shown;
     if ( s_dt.on_ask )

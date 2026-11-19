@@ -13,12 +13,6 @@
 #define DT_BYTES_KB    1024U                  /**< Bytes in a KB. */
 #define DT_BYTES_MB    (1024U * 1024U)        /**< Bytes in a MB. */
 #define DT_TENTHS      10U                    /**< Tenths in a whole. */
-#define DT_MONTH_LEN   3U                     /**< Letters of a month in the compiler's date. */
-#define DT_DAY_AT      4U                     /**< Where the day begins in `Nov  2 2026`. */
-#define DT_DAY_LEN     2U                     /**< Characters the day takes, a space padding a single digit. */
-#define DT_YEAR_AT     7U                     /**< Where the year begins. */
-#define DT_YEAR_LEN    4U                     /**< Digits of the year. */
-#define DT_DATE_LEN    11U                    /**< The length of the compiler's date. */
 #define DT_SEP         " \xC2\xB7 "           /**< Between the version and the category: a middle dot, one line in the caption face. */
 #define DT_RM_LEFT     "Some files could not be removed" /**< A Remove that left a file or a folder behind. */
 #define DT_RM_BUSY     "Busy. Try again"      /**< A Remove refused by a busy owner. */
@@ -34,17 +28,6 @@
 static bool dtx_digit(char c)
 {
     return ('0' <= c) && ('9' >= c);
-}
-
-/**
- * @brief Whether a character is a letter.
- *
- * @param c The character.
- * @return true for A to Z and a to z.
- */
-static bool dtx_alpha(char c)
-{
-    return (('A' <= c) && ('Z' >= c)) || (('a' <= c) && ('z' >= c));
 }
 
 /**
@@ -97,41 +80,6 @@ void kgui_dtext_size(uint32_t bytes, char *out, size_t cap)
     }
 }
 
-void kgui_dtext_date(const char *raw, char *out, size_t cap)
-{
-    if ( (NULL == out) || (0U == cap) )
-    {
-        return;
-    }
-    out[0] = '\0';
-    if ( (NULL == raw) || (strlen(raw) != DT_DATE_LEN) )
-    {
-        return;
-    }
-    bool const day_ok = ((' ' == raw[DT_DAY_AT]) || dtx_digit(raw[DT_DAY_AT]))
-                        && dtx_digit(raw[DT_DAY_AT + 1U]);
-    bool const year_ok = dtx_digit(raw[DT_YEAR_AT]) && dtx_digit(raw[DT_YEAR_AT + 1U])
-                         && dtx_digit(raw[DT_YEAR_AT + 2U]) && dtx_digit(raw[DT_YEAR_AT + 3U]);
-    bool const seps_ok = (' ' == raw[DT_MONTH_LEN]) && (' ' == raw[DT_YEAR_AT - 1U])
-                         && dtx_alpha(raw[0]) && dtx_alpha(raw[1]) && dtx_alpha(raw[2]);
-
-    if ( day_ok && year_ok && seps_ok )
-    {
-        const char *day     = &raw[DT_DAY_AT];
-        size_t      day_len = DT_DAY_LEN;
-
-        if ( ' ' == day[0] )
-        {
-            ++day;
-            day_len = 1U;
-        }
-        (void)snprintf(out, cap, "%.*s %.*s %.*s",
-                       (int)day_len, day,
-                       (int)DT_MONTH_LEN, raw,
-                       (int)DT_YEAR_LEN, &raw[DT_YEAR_AT]);
-    }
-}
-
 /**
  * @brief Append a part of the details' line, with its separator.
  *
@@ -157,9 +105,6 @@ static void dtx_join(char *out, size_t cap, const char *part)
 
 void kgui_dtext_version(const char *version, char *out, size_t cap)
 {
-    size_t n = 0U;
-    bool   lead = true;
-
     if ( (NULL == out) || (0U == cap) )
     {
         return;
@@ -167,22 +112,26 @@ void kgui_dtext_version(const char *version, char *out, size_t cap)
     out[0] = '\0';
     if ( dtx_known(version) )
     {
-        if ( ('v' == version[0]) || ('V' == version[0]) )
-        {
-            ++version;
-        }
-        for ( ; ('\0' != *version) && ((n + 1U) < cap); ++version )
-        {
-            char const c = *version;
+        size_t      n    = 0U;
+        const char *at   = version;
+        bool        lead = true;
 
-            if ( lead && ('0' == c) && dtx_digit(version[1]) )
+        if ( ('v' == at[0]) || ('V' == at[0]) )
+        {
+            ++at;
+        }
+        for ( size_t i = 0U; ('\0' != at[i]) && ((n + 1U) < cap); ++i )
+        {
+            char const c    = at[i];
+            bool const skip = lead && ('0' == c) && dtx_digit(at[i + 1U]);
+
+            /* A zero ahead of another digit of its group goes. */
+            if ( !skip )
             {
-                /* A zero ahead of another digit of its group goes. */
-                continue;
+                out[n] = c;
+                ++n;
+                lead = ('.' == c);
             }
-            lead = ('.' == c);
-            out[n] = c;
-            ++n;
         }
         out[n] = '\0';
     }

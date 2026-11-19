@@ -1086,7 +1086,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_LONG_PRESS_MS   KODE_BUTTON_HOLD_MS                  /**< A finger that stays on an app's row, or on the Wi-Fi or Bluetooth circle, this long, within KUI_GESTURE_TAP_PX of where it landed and with no claim, opens its details or its page: the time TOP held takes. */
 #define GUI_REMOVE_MARGIN_MS 5000U                               /**< What the Removing card waits past AO_AppMgr's own bound on AO_Storage. */
 #define GUI_REMOVE_WAIT_MS  (APPMGR_WIPE_MS + GUI_REMOVE_MARGIN_MS) /**< The longest the Removing card waits for AO_AppMgr to say the erase ended. */
-#define GUI_REMOVE_GUARD_MS 400U                                 /**< The question before Remove ignores its pill this long after it is written: a tap or a TOP release that opened or followed it is not an answer. */
+#define GUI_REMOVE_GUARD_MS 400U                                 /**< The question before Delete ignores its pill this long after it is written: a tap or a TOP release that opened or followed it is not an answer. */
 #define GUI_PCT_FULL        100                              /**< One hundred percent: a level, a share of the glass. */
 
 /** @brief The auto-lock time of a board with nothing stored, in seconds: two
@@ -1171,7 +1171,7 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
  * auto-lock), and home from the sheets; the Wi-Fi,
  * Bluetooth, Battery, Screen, About and Power off sheets, the list of
  * auto-lock times, and the details; the Opening card's three
- * roads, with the edge closing, and Didn't open; and the
+ * roads, with the edge closing, and the failure card; and the
  * empty launcher - duda's first play, the QR and back by the top button and
  * by a tap on Kody, the 20 s comeback, and all four players holding a model
  * at once - none of them deeper than the hour's changes with their looks.
@@ -1712,7 +1712,6 @@ typedef enum {
     GUI_ACT_SECONDARY,     /**< An answer beside it: Light Grey.            */
     GUI_ACT_TERTIARY,      /**< One to keep out of the way: the muted dark. */
     GUI_ACT_DANGER,        /**< An ending: Danger red.                      */
-    GUI_ACT_DISABLED,      /**< One that cannot act now: the resting grey.  */
     GUI_ACT_NEUTRAL        /**< The left of a pair, which does nothing: Light Grey. */
 } GuiActRole;
 
@@ -1793,7 +1792,6 @@ typedef struct {
     uint32_t size;
     uint32_t seq;
     uint32_t offset;       /**< Where its image sits in the apps region: what boot_app_offset() answers with. */
-    char     date[KODE_APP_DATE_MAX]; /**< When its image was built, as the compiler wrote it; "" when the image does not say. */
     char     display[KODE_APP_DISPLAY_MAX];
     char     category[KODE_APP_CATEGORY_MAX];
     GuiFace  face;          /**< What the row draws; see GuiFace. */
@@ -2165,6 +2163,8 @@ typedef struct {
     bool          upd_user;                 /**< The update card was asked for from About, not offered at boot. */
     bool          forget_ble;               /**< The forget question is about every paired device, not a network. */
     char          forget_name[GUI_SSID_BYTES]; /**< The network the forget question names. */
+    bool          os_named;                 /**< gui_os_install() named the kodeOS write on the glass: write_name is its title. */
+    bool          pair_done;                /**< The pair on the glass was answered by a leaving pill: a second tap is ignored. */
     bool          pair_on;                  /**< The card on the glass answers with a pair of pills (gui_sheet_pair()). */
     uint8_t       pair_focus;               /**< Which pill of the pair holds the focus: GUI_PAIR_LEFT or GUI_PAIR_RIGHT. */
     uint8_t       rs_step;                  /**< The step that stopped it (FactoryResetRspEvt.step). */
@@ -5798,9 +5798,9 @@ static bool ui_build(Gui * const me)
             }
             else
             {
-                lv_obj_add_event_cb(keep, &on_sheet_keep_clicked, LV_EVENT_CLICKED, NULL);
+                (void)lv_obj_add_event_cb(keep, &on_sheet_keep_clicked, LV_EVENT_CLICKED, NULL);
                 lv_obj_set_scroll_on_focus(keep, false);
-                lv_obj_add_event_cb(keep, &on_sheet_action_pressed, LV_EVENT_PRESSED, NULL);
+                (void)lv_obj_add_event_cb(keep, &on_sheet_action_pressed, LV_EVENT_PRESSED, NULL);
             }
             /* And the one weight kui_sheet.c cannot name: line1 under
              * LV_STATE_USER_1 is the headline of a sheet that has one. */
@@ -12873,7 +12873,7 @@ static void gui_launch_selection(Gui * const me, const char *source)
     }
 
 
-    /* WHICH ROW THE CARD IS ABOUT: the card that rises (Opening, Didn't open)
+    /* WHICH ROW THE CARD IS ABOUT: the card that rises (Opening, the failure)
      * wears the row's own face, so it is recognisably the row that was
      * pressed. */
     me->sheet_row  = me->sel_idx;
@@ -12922,7 +12922,7 @@ static void gui_launch_selection(Gui * const me, const char *source)
  * either model answers - which happens WHILE a card is up, because a write
  * changes the directory and both lists are asked again. So the number is
  * checked before it is read, and the three sheets that are about a row each
- * have their own answer to it losing one: Opening and Didn't open fall back
+ * have their own answer to it losing one: Opening and the failure fall back
  * to the shape a console-started write already uses - the k on the accent
  * disc and the name the report carried - and the details say the row has
  * gone, with no button. None of them leaves by itself.
@@ -14668,8 +14668,15 @@ static void gui_sheet_taken_over(Gui * const me, GuiSheet was)
     if ( (GUI_SHEET_UPDATE == was) && (GUI_SHEET_UPDATE != me->sheet)
         && (GUI_SHEET_OPENING != me->sheet) )
     {
-        KLOG_N(TAG, "update: the card gave its place to %s; offered again at the next boot",
-               gui_sheet_kind_name(me->sheet));
+        if ( me->upd_user )
+        {
+            KLOG_N(TAG, "update: the card gave its place to %s", gui_sheet_kind_name(me->sheet));
+        }
+        else
+        {
+            KLOG_N(TAG, "update: the card gave its place to %s; offered again at the next boot",
+                   gui_sheet_kind_name(me->sheet));
+        }
     }
     gui_launch_end();
     gui_syscard_arrive(me, was);
@@ -15463,7 +15470,7 @@ static void gui_show_write(Gui * const me, const AppProgressEvt *p)
     {
         /* The update card named it with its version; a write nobody asked
          * for here is plain kodeOS. */
-        if ( strncmp(me->write_name, KGUI_OSREL_CARD_WORD, sizeof(KGUI_OSREL_CARD_WORD) - 1U) != 0 )
+        if ( !me->os_named )
         {
             (void)snprintf(me->write_name, sizeof(me->write_name), "%s", KGUI_OSREL_CARD_WORD);
         }
@@ -15471,11 +15478,13 @@ static void gui_show_write(Gui * const me, const AppProgressEvt *p)
     }
     else if ( (uint8_t)KWRITE_C5 == p->what )
     {
+        me->os_named = false;
         (void)snprintf(me->write_name, sizeof(me->write_name), "Radio");
         me->sheet_row = -1;
     }
     else
     {
+        me->os_named = false;
         gui_write_display_name(me, me->write_name, sizeof(me->write_name),
                                p->file);
     }
@@ -15530,6 +15539,7 @@ static void gui_show_fail(Gui * const me)
     me->open_hold = false;
     me->run_after = false;
     me->closing   = false;
+    me->os_named  = false;
     if ( (GUI_SHEET_RESETTING == me->sheet) && me->rs_busy )
     {
         /* The factory reset's own install step failed: the lock is the
@@ -19874,10 +19884,6 @@ static lv_color_t gui_action_ground(GuiActRole role)
     {
         ground = KUI_COLOR_DANGER;
     }
-    else if ( GUI_ACT_DISABLED == role )
-    {
-        ground = KUI_COLOR_REST;
-    }
     else if ( GUI_ACT_NEUTRAL == role )
     {
         ground = KUI_COLOR_TEXT_ON_BG;
@@ -20305,8 +20311,18 @@ static void gui_sheet_pair(Gui * const me, const char *keep_word, GuiActRole kee
 
     if ( (NULL == row) || (NULL == btn) || (NULL == keep) || (NULL == text) || (NULL == ktext) )
     {
-        KLOG_W(TAG, "the sheet has no pair of buttons to answer with");
-        gui_sheet_action(me, act_word, act_role);
+        if ( GUI_ACT_DANGER == act_role )
+        {
+            /* A destructive question with no Keep beside it is not asked:
+             * the red pill alone, and focused, would be the only answer. */
+            KLOG_E(TAG, "the sheet has no pair of buttons; the question is not asked");
+            gui_sheet_close(me);
+        }
+        else
+        {
+            KLOG_W(TAG, "the sheet has no pair of buttons to answer with");
+            gui_sheet_action(me, act_word, act_role);
+        }
         return;
     }
     lv_color_t const keep_ground = gui_action_ground(keep_role);
@@ -20329,7 +20345,8 @@ static void gui_sheet_pair(Gui * const me, const char *keep_word, GuiActRole kee
     }
     lv_obj_set_hidden(btn, false);
     lv_obj_set_hidden(row, false);
-    me->pair_on = true;
+    me->pair_on   = true;
+    me->pair_done = false;
     gui_pair_focus(me, (uint8_t)GUI_PAIR_LEFT);
 }
 
@@ -20373,6 +20390,12 @@ static void gui_pair_focus(Gui * const me, uint8_t which)
  */
 static void gui_sheet_keep_act(Gui * const me)
 {
+    if ( me->pair_done )
+    {
+        KLOG_D(TAG, "sheet: the card is already leaving; this answer is ignored");
+        return;
+    }
+    me->pair_done = true;
     (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
     KLOG_D(TAG, "sheet: the left pill keeps; the card closes");
     gui_sheet_close(me);
@@ -22207,8 +22230,7 @@ static bool gui_failure_retries(Gui const * const me)
  */
 static void gui_fail_title(Gui const * const me, const char *name, char *out, size_t cap)
 {
-    const char *verb = "open";
-    bool const  known = (NULL != name) && ('\0' != name[0]);
+    bool const known = (NULL != name) && ('\0' != name[0]);
 
     if ( (uint8_t)KWRITE_OS == me->write_what )
     {
@@ -22220,6 +22242,8 @@ static void gui_fail_title(Gui const * const me, const char *name, char *out, si
     }
     else
     {
+        const char *verb = "open";
+
         if ( (uint8_t)KWRITE_APP == me->write_what )
         {
             verb = "install";
@@ -24741,6 +24765,12 @@ static void gui_forget_fill(Gui * const me)
  */
 static void gui_forget_go(Gui * const me)
 {
+    if ( me->pair_done )
+    {
+        KLOG_D(TAG, "forget: the card is already leaving; this answer is ignored");
+        return;
+    }
+    me->pair_done = true;
     if ( me->forget_ble )
     {
 #if CONFIG_KODEOS_BLE
@@ -25358,8 +25388,10 @@ static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r)
         gui_os_failed(me, KGUI_OSREL_FAILED, "no answer from the service");
     }
     gui_update_follow(me);
-    if ( GUI_SHEET_ABOUT == me->sheet )
+    if ( (GUI_SHEET_ABOUT == me->sheet) || (GUI_SHEET_UPDATE == me->sheet) )
     {
+        /* The update card names the release it would install: a new answer
+         * is written on it at once. */
         gui_sheet_refill(me);
     }
 }
@@ -25389,12 +25421,10 @@ static kgui_osrel_row_t gui_os_row(Gui const * const me)
  * with AO_Boot's switch and a restart into it, which is what the Opening card
  * says. The card rises first, at 0 %, about no row and wearing the k, and
  * the image is asked for once it has (gui_write_ask()): AO_AppMgr's reports
- * then fill it.
+ * then fill it. The name the card wears is kodeOS and the version when it is
+ * known: the release the service named, and plain kodeOS for the card's image.
  *
  * @param me   The AO.
- * The name the card wears is kodeOS and the version when it is known: the
- * release the service named, and plain kodeOS for the card's image.
- *
  * @param from GUI_ASK_OS for the card's kodeos.bin, GUI_ASK_OS_NET for the
  *             release the service named.
  */
@@ -25413,6 +25443,7 @@ static void gui_os_install(Gui * const me, GuiAsk from)
         kgui_dtext_version(gui_os_version(me), version, sizeof(version));
     }
     kgui_osrel_card_title(version, me->write_name, sizeof(me->write_name));
+    me->os_named = true;
     gui_write_ask(me, from, "");
     gui_sheet_open_kind(me, GUI_SHEET_OPENING);
 }
@@ -26849,7 +26880,7 @@ static bool gui_sheet_open_taken(Gui * const me, QEvt const * const e,
  * (gui_sheet_open_taken(), gui_sheet_fill_again_as()).
  *
  * sheet_row is the launcher row the card is about, and only the details,
- * Opening, Didn't open and the stopped card are about one, each
+ * Opening, the failure and the stopped card are about one, each
  * with its row set by whoever asked for it (gui_launch_selection(), gui_opening_show(), gui_stopped_fill()): every
  * other kind is about no row, so a settings page, a list or a pairing card
  * puts it back to -1 rather than carrying the last details' along - into
@@ -36881,7 +36912,6 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 slot->size   = entry->size;
                 slot->seq    = entry->seq;
                 slot->offset = entry->offset;
-                (void)snprintf(slot->date, sizeof(slot->date), "%s", entry->build_date);
                 (void)snprintf(slot->display, sizeof(slot->display), "%s", entry->display);
                 (void)snprintf(slot->category, sizeof(slot->category), "%s", entry->category);
                 /* An installed app has everything but the folder already:

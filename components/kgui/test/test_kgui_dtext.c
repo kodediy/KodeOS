@@ -67,11 +67,8 @@ void test_dtext_null_and_empty_buffers(void)
     char out[4] = { 'x', 'x', 'x', 'x' };
 
     kgui_dtext_size(1U * MB, NULL, 0U);
-    kgui_dtext_date("Nov  2 2026", NULL, 0U);
     kgui_dtext_meta("games", "1.0", "1 KB", NULL, 0U);
     kgui_dtext_size(1U * MB, out, 0U);
-    TEST_ASSERT_EQUAL_CHAR('x', out[0]);
-    kgui_dtext_date("Nov  2 2026", out, 0U);
     TEST_ASSERT_EQUAL_CHAR('x', out[0]);
     kgui_dtext_meta("games", "1.0", "1 KB", out, 0U);
     TEST_ASSERT_EQUAL_CHAR('x', out[0]);
@@ -84,32 +81,6 @@ void test_dtext_meta_longest_fits(void)
     kgui_dtext_meta("abcdefghijklmno", "123456789012345", "4096.0 MB", out, sizeof(out));
     TEST_ASSERT_EQUAL_STRING("Abcdefghijklmno \xC2\xB7 123456789012345 \xC2\xB7 4096.0 MB", out);
     TEST_ASSERT_LESS_THAN_UINT32(sizeof(out), strlen(out));
-}
-
-void test_dtext_date_day_first(void)
-{
-    char out[KGUI_DTEXT_DATE_MAX];
-
-    kgui_dtext_date("Nov  2 2026", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("2 Nov 2026", out);
-    kgui_dtext_date("Oct 28 2026", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("28 Oct 2026", out);
-    kgui_dtext_date("Nov 12 2026", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("12 Nov 2026", out);
-}
-
-void test_dtext_date_unknown_is_empty(void)
-{
-    char out[KGUI_DTEXT_DATE_MAX];
-
-    kgui_dtext_date("", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
-    kgui_dtext_date(NULL, out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
-    kgui_dtext_date("2026-11-02", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
-    kgui_dtext_date("Nov  2 20x6", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
 }
 
 void test_dtext_meta_parts(void)
@@ -171,8 +142,6 @@ int main(void)
     RUN_TEST(test_dtext_size_limits);
     RUN_TEST(test_dtext_null_and_empty_buffers);
     RUN_TEST(test_dtext_meta_longest_fits);
-    RUN_TEST(test_dtext_date_day_first);
-    RUN_TEST(test_dtext_date_unknown_is_empty);
     RUN_TEST(test_dtext_meta_parts);
     RUN_TEST(test_dtext_meta_version_has_no_leading_zeros);
     RUN_TEST(test_dtext_meta_fits_a_small_buffer);

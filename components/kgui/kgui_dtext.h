@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /**
  * @file kgui_dtext.h
- * @brief The words of an app's details: its size, its build date and the line under its name.
+ * @brief The words of an app's details: its size and the line under its name.
  */
 #ifndef KGUI_DTEXT_H
 #define KGUI_DTEXT_H
@@ -15,7 +15,6 @@ extern "C" {
 #endif
 
 #define KGUI_DTEXT_SIZE_MAX 12U  /**< A size's words, terminator included: "4096.0 MB". */
-#define KGUI_DTEXT_DATE_MAX 16U  /**< A date's words, terminator included: "28 Oct 2026". */
 #define KGUI_DTEXT_META_MAX 64U  /**< The line under the name, terminator included: a 15 character category, a 15 character version and a size, with two " · " of 4 bytes each between. */
 #define KGUI_DTEXT_DELETE_BODY "It's deleted with its files." /**< The body of the question before Delete. */
 
@@ -30,19 +29,6 @@ extern "C" {
  * @param cap   Its size.
  */
 void kgui_dtext_size(uint32_t bytes, char *out, size_t cap);
-
-/**
- * @brief Say a build date the way the compiler wrote it, day first.
- *
- * `Nov  2 2026` (the compiler's __DATE__: three letters, a day padded with a
- * space, four digits) becomes `2 Nov 2026`. Anything else, and an empty
- * string, gives "".
- *
- * @param raw The date as AppEntryEvt carries it; may be NULL.
- * @param out Receives the words, terminated.
- * @param cap Its size.
- */
-void kgui_dtext_date(const char *raw, char *out, size_t cap);
 
 /**
  * @brief Say a version without its `v` and without the leading zeros of each

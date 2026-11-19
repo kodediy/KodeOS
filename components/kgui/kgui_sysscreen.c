@@ -98,7 +98,6 @@ static void sys_prot_off(kgui_sys_t *s)
     lv_obj_set_hidden(s->icon.disc, true);
     lv_obj_set_hidden(s->blank, true);
     lv_obj_set_hidden(s->glyph, true);
-    lv_obj_set_hidden(s->word, true);
     lv_obj_set_hidden(s->pile, true);
     lv_obj_set_hidden(s->code, true);
 }
@@ -156,8 +155,6 @@ bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card)
                               KGUI_SYS_PROT_Y - (KGUI_SYS_DISC / 2), KGUI_SYS_DISC, KGUI_SYS_DISC);
         s->glyph = lv_image_create(card);
         s->pile  = sys_pile_make(card);
-        s->word  = sys_label(card, &kui_font_display_40, KUI_COLOR_TEXT_ON_BG,
-                             KGUI_SYS_PROT_Y - ((int32_t)lv_font_get_line_height(&kui_font_display_40) / 2));
         s->code   = sys_label(card, &kui_font_code_80, KUI_COLOR_TEXT_ON_BG, KGUI_SYS_CODE_Y);
         s->figure = sys_label(card, &kgui_font_figure_128, KUI_COLOR_TEXT_ON_BG, KGUI_SYS_FIGURE_Y);
         s->unit   = sys_label(card, &kui_font_display_40, KUI_COLOR_TEXT_MUTED, 0);
@@ -165,7 +162,7 @@ bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card)
         s->second = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_SECOND_Y);
         s->detail = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_TEXT_Y);
         s->note   = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_NOTE_Y);
-        if ( (NULL != s->blank) && (NULL != s->glyph) && (NULL != s->pile) && (NULL != s->word)
+        if ( (NULL != s->blank) && (NULL != s->glyph) && (NULL != s->pile)
              && (NULL != s->code) && (NULL != s->figure) && (NULL != s->unit) && (NULL != s->name)
              && (NULL != s->second) && (NULL != s->detail) && (NULL != s->note) )
         {
@@ -276,22 +273,13 @@ void kgui_sys_lift(kgui_sys_t *s, int32_t dy)
 {
     if ( s->made )
     {
-        lv_obj_t * const parts[] = { s->icon.disc, s->blank, s->glyph, s->word, s->figure, s->unit,
+        lv_obj_t * const parts[] = { s->icon.disc, s->blank, s->glyph, s->figure, s->unit,
                                    s->name, s->second };
 
         for ( size_t i = 0U; (sizeof(parts) / sizeof(parts[0])) > i; ++i )
         {
             lv_obj_set_style_translate_y(parts[i], dy, LV_PART_MAIN);
         }
-    }
-}
-
-void kgui_sys_word(kgui_sys_t *s, const char *text)
-{
-    if ( s->made )
-    {
-        sys_prot_off(s);
-        sys_say(s->word, text);
     }
 }
 
@@ -387,9 +375,9 @@ void kgui_sys_ask(kgui_sys_t *s, int32_t top, int32_t bottom, const char *title,
 
             lv_text_get_size(&said, title, &kui_font_display_40, 0, 0, KGUI_SYS_ASK_W, LV_TEXT_FLAG_NONE);
             rows = (said.y + (line / 2)) / line;
-            if ( KGUI_SYS_ASK_TITLE_LINES < rows )
+            if ( KGUI_SYS_ASK_TITLE_N < rows )
             {
-                rows = KGUI_SYS_ASK_TITLE_LINES;
+                rows = KGUI_SYS_ASK_TITLE_N;
             }
             if ( 1 > rows )
             {
@@ -404,9 +392,9 @@ void kgui_sys_ask(kgui_sys_t *s, int32_t top, int32_t bottom, const char *title,
 
             lv_text_get_size(&said, body, &kui_font_body, 0, 0, KGUI_SYS_ASK_W, LV_TEXT_FLAG_NONE);
             body_h = said.y;
-            if ( (KGUI_SYS_ASK_BODY_LINES * body_line) < body_h )
+            if ( (KGUI_SYS_ASK_BODY_N * body_line) < body_h )
             {
-                body_h = KGUI_SYS_ASK_BODY_LINES * body_line;
+                body_h = KGUI_SYS_ASK_BODY_N * body_line;
             }
             if ( has_title )
             {
@@ -427,7 +415,7 @@ void kgui_sys_ask(kgui_sys_t *s, int32_t top, int32_t bottom, const char *title,
         sys_say(s->name, title);
         lv_obj_set_x(s->detail, KGUI_SYS_ASK_X);
         lv_obj_set_width(s->detail, KGUI_SYS_ASK_W);
-        lv_obj_set_height(s->detail, KGUI_SYS_ASK_BODY_LINES * body_line);
+        lv_obj_set_height(s->detail, KGUI_SYS_ASK_BODY_N * body_line);
         lv_obj_set_y(s->detail, at);
         sys_say(s->detail, body);
     }
@@ -543,7 +531,7 @@ void kgui_sys_origin(int32_t *cx, int32_t *cy, int32_t *size)
     *size = KGUI_SYS_DISC;
 }
 
-lv_obj_t *kgui_sys_keep_make(lv_obj_t *card)
+lv_obj_t *kgui_sys_keep_make(const lv_obj_t *card)
 {
     lv_obj_t * const row = lv_obj_find_by_name(card, "actions");
     lv_obj_t *btn = NULL;
