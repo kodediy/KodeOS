@@ -16,8 +16,8 @@ extern "C" {
 
 #define KGUI_DTEXT_SIZE_MAX 12U  /**< A size's words, terminator included: "4096.0 MB". */
 #define KGUI_DTEXT_DATE_MAX 16U  /**< A date's words, terminator included: "28 Oct 2026". */
-#define KGUI_DTEXT_META_MAX 40U  /**< The line under the name, terminator included: "v", a 15 character version, the 4 bytes of " · " and a 15 character category. */
-#define KGUI_DTEXT_CAPTION_MAX 64U  /**< The caption of the question before Remove, terminator included. */
+#define KGUI_DTEXT_META_MAX 64U  /**< The line under the name, terminator included: a 15 character category, a 15 character version and a size, with two " · " of 4 bytes each between. */
+#define KGUI_DTEXT_DELETE_BODY "It's deleted with its files." /**< The body of the question before Delete. */
 
 /**
  * @brief Say a size: whole KB under 1 MB, MB with one decimal from there.
@@ -45,31 +45,30 @@ void kgui_dtext_size(uint32_t bytes, char *out, size_t cap);
 void kgui_dtext_date(const char *raw, char *out, size_t cap);
 
 /**
- * @brief The line under the app's name: `v<version> · <Category>`.
+ * @brief Say a version without its `v` and without the leading zeros of each
+ *        group: `00.07.05` is `0.7.5`.
  *
- * Each part is left out when it is not known, with its dot. A version
- * that already begins with a `v` or a `V` is not given a second one, and the
- * category's first letter is made a capital.
+ * @param version The version as the system has it; may be NULL.
+ * @param out     Receives the words, terminated.
+ * @param cap     Its size.
+ */
+void kgui_dtext_version(const char *version, char *out, size_t cap);
+
+/**
+ * @brief The line under the app's name: `<Category> · <version> · <size>`.
  *
- * @param version  The version as the system has it; may be NULL or "".
+ * Each part is left out when it is not known, with its dot. The version
+ * loses a leading `v` or `V` and the leading zeros of each of its groups
+ * (`00.07.05` is `0.7.5`), and the category's first letter is made a capital.
+ *
  * @param category The group's title (kgui_group_title()); may be NULL or "".
+ * @param version  The version as the system has it; may be NULL or "".
+ * @param size     The size's words (kgui_dtext_size()); may be NULL or "".
  * @param out      Receives the words, terminated.
  * @param cap      Its size.
  */
-void kgui_dtext_meta(const char *version, const char *category, char *out, size_t cap);
-
-/**
- * @brief The caption of the question before Remove: what leaves the Dot.
- *
- * One line for an app with no file of its own on a medium; a second line when
- * the list shows a file of the app, on the card or on the internal partition,
- * since Remove deletes those too.
- *
- * @param files true when a listed file is the app's.
- * @param out   Receives the words, terminated.
- * @param cap   Its size; KGUI_DTEXT_CAPTION_MAX holds the longest.
- */
-void kgui_dtext_remove_caption(bool files, char *out, size_t cap);
+void kgui_dtext_meta(const char *category, const char *version, const char *size, char *out,
+                     size_t cap);
 
 /**
  * @brief What the launcher says when a Remove did not take everything.

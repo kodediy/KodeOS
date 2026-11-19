@@ -14,43 +14,33 @@
 #include "kgui_dtext.h"
 #include "kgui_icon.h"
 #include "kgui_list.h"
+#include "kgui_sysscreen.h"
 
 /* ---- Layout, in the card's own rows ----------------------------------------- */
 
 #define DT_W            ((int32_t)KBSP_LCD_H_RES)  /**< The card is as wide as the glass. */
-#define DT_SIDE         48                         /**< Where the name, the version and the words begin and end, from the glass's edge. */
-#define DT_TEXT_W       (DT_W - (2 * DT_SIDE))     /**< The widest a line on the details may be: 314. */
-#define DT_DISC_Y       24                         /**< The icon disc's top. */
-#define DT_NAME_GAP     8                          /**< From the disc's foot to the name. */
-#define DT_GAP          12                         /**< Between the header, the words and the panel. */
-#define DT_DESC_LINES   3                          /**< Most lines the words may take (52 characters fill three); what does not fit is cut with dots. */
-#define DT_PANEL_W      KUI_PILL_W                 /**< The panel of rows: as wide as a full pill, 346. */
-#define DT_PANEL_X      ((DT_W - DT_PANEL_W) / 2)  /**< ...and its left, 32. */
-#define DT_PANEL_R      24                         /**< ...and its corners. */
-#define DT_PANEL_PAD    20                         /**< From the panel's edge to a row's words. */
-#define DT_ROW_LABEL_W  100                        /**< The width of a row's label ("Size", "Built"); its value takes the rest of the panel. */
-#define DT_ROW_H        44                         /**< A row's height, and the pitch between two. */
-#define DT_ROWS_MAX     2U                         /**< Rows: Size and Built. */
-#define DT_SEP_PCT      12U                        /**< How much of the ink the rule between two rows keeps. */
-#define DT_FOOT         440                        /**< Where the page must end when there is no pill, clear of the glass's corners. */
-#define DT_PILL_H       72                         /**< The question's pill's height. */
-#define DT_INFO_PILL_W  160                        /**< The details' Remove pill: a sheet's one answer button. */
-#define DT_INFO_PILL_H  60                         /**< ...and its height. */
-#define DT_INFO_PILL_Y  412                        /**< ...and its top, held to the foot whatever stands above it. */
-#define DT_ASK_PILL_W   374                        /**< The question's pill. */
-#define DT_ASK_PILL_X   18                         /**< ...and its left. */
-#define DT_ASK_PILL_Y   370                        /**< ...and its top. */
-#define DT_ASK_TITLE_Y  226                        /**< The question's title, when it takes one line. */
-#define DT_ASK_TITLE_W  KUI_PILL_W                 /**< ...and the width it wraps in. */
-#define DT_ASK_GAP      14                         /**< From the title's foot to the caption. */
-#define DT_ASK_LINES    2                          /**< Lines the title may take. */
+#define DT_SIDE         48                         /**< Where the name and the words begin and end, from the glass's edge. */
+#define DT_TEXT_W       (DT_W - (2 * DT_SIDE))     /**< The widest a line of the description may be: 314. */
+#define DT_DISC_GAP     8                          /**< From the disc's foot to the name. */
+#define DT_GAP          12                         /**< Between the header and the words. */
+#define DT_TOP_MIN      24                         /**< Where the page may begin at the earliest. */
+#define DT_ROOM_TOP     40                         /**< Where the room for the details' block begins. */
+#define DT_ROOM_AIR     24                         /**< Air kept between the block and the pills. */
+#define DT_DESC_LINES   3                          /**< Most lines the words may take; what does not fit is cut at a whole word with dots. */
+#define DT_DESC_MAX     64U                        /**< Room for the description, a cut one and its dots. */
+#define DT_DOTS         "..."                      /**< What a cut description ends with. */
+#define DT_PILL_X_LEFT  ((DT_W - ((2 * KGUI_SYS_PAIR_W) + KGUI_SYS_PAIR_GAP)) / 2) /**< The left pill of a pair: 24. */
+#define DT_PILL_X_RIGHT (DT_PILL_X_LEFT + KGUI_SYS_PAIR_W + KGUI_SYS_PAIR_GAP)     /**< ...and the right one: 213. */
+#define DT_PILL_X_ALONE ((DT_W - KGUI_SYS_PAIR_W) / 2)                           /**< A pill that stands alone: centred. */
 #define DT_WAIT_GLYPH_Y 126                        /**< The wait's glyph's top (drawn at DT_WAIT_PX, centred on the same middle). */
 #define DT_WAIT_PX      96                         /**< The wait's glyph, in pixels. */
 #define DT_WAIT_SRC_PX  64                         /**< ...and the apps glyph's own size. */
 #define DT_WAIT_TITLE_Y 226                        /**< The wait's title. */
 #define DT_WAIT_NAME_Y  280                        /**< The wait's name. */
-#define DT_PILL_WORD    "Remove"                   /**< The pill's word. */
-#define DT_ASK_TITLE_A  "Remove "                  /**< The question's title before the name. */
+#define DT_WORD_OPEN    "Open"                     /**< The details' left pill. */
+#define DT_WORD_DELETE  "Delete"                   /**< The right pill of both pages. */
+#define DT_WORD_KEEP    "Keep"                     /**< The question's left pill. */
+#define DT_ASK_TITLE_A  "Delete "                  /**< The question's title before the name. */
 #define DT_ASK_TITLE_B  "?"                        /**< ...and after it. */
 #define DT_ASK_TITLE_MAX 64U                       /**< Room for the question's title: the words, a 31 character name and the mark. */
 #define DT_WAIT_TITLE   "Removing"                 /**< The wait's title. */
@@ -58,6 +48,11 @@
 /** What the pages are made of. */
 typedef struct {
     bool        open;                 /**< Everything below is built. */
+    bool        ring;                 /**< The focus ring shows: a button is the input in use. */
+    bool        on_ask;               /**< The question's page is the one up (else the details'). */
+    bool        has_left;             /**< The page up shows its left pill. */
+    bool        has_right;            /**< ...and its right pill. */
+    kgui_details_pill_t focus;        /**< The pill that holds the focus. */
     lv_obj_t   *card;                 /**< The sheet's card; not owned. */
     lv_obj_t   *handle;               /**< The kit's handle, hidden while the pages stand; not owned. */
     lv_obj_t   *kit_disc;             /**< The kit's header disc, hidden while the pages stand; not owned. */
@@ -66,16 +61,14 @@ typedef struct {
     lv_obj_t   *wait;                 /**< The wait's page. */
     lv_obj_t   *disc;                 /**< The icon disc. */
     lv_obj_t   *name;                 /**< The app's name. */
-    lv_obj_t   *meta;                 /**< The version and the category, under the name. */
-    lv_obj_t   *panel;                /**< The dark panel the rows stand on. */
-    lv_obj_t   *row_label[DT_ROWS_MAX]; /**< The rows' labels. */
-    lv_obj_t   *row_value[DT_ROWS_MAX]; /**< ...and their values. */
-    lv_obj_t   *row_rule[DT_ROWS_MAX];  /**< ...and the rules under them. */
+    lv_obj_t   *meta;                 /**< The category, the version and the size, under the name. */
     lv_obj_t   *desc;                 /**< The app's own words. */
-    lv_obj_t   *pill;                 /**< The details' red pill. */
+    lv_obj_t   *pill_open;            /**< The details' Open pill. */
+    lv_obj_t   *pill;                 /**< The details' red Delete pill. */
     lv_obj_t   *ask_title;            /**< The question's title. */
     lv_obj_t   *ask_caption;          /**< ...and its caption. */
-    lv_obj_t   *ask_pill;             /**< ...and its red pill. */
+    lv_obj_t   *ask_keep;             /**< ...and its Keep pill. */
+    lv_obj_t   *ask_pill;             /**< ...and its red Delete pill. */
     lv_obj_t   *wait_glyph;           /**< The wait's glyph. */
     lv_obj_t   *wait_title;           /**< ...its title. */
     lv_obj_t   *wait_name;            /**< ...and the app's name. */
@@ -136,30 +129,30 @@ static lv_obj_t *dt_page(void)
 /**
  * @brief A click on a pill: the owner decides what it is worth.
  *
- * @param e The event.
+ * @param e The event; its user data says which pill.
  */
 static void dt_on_click(lv_event_t *e)
 {
-    (void)e;
     if ( NULL != s_dt.tap )
     {
-        s_dt.tap();
+        s_dt.tap((kgui_details_pill_t)(uintptr_t)lv_event_get_user_data(e));
     }
 }
 
 /**
- * @brief A red pill with its word.
+ * @brief A pill of a pair, with its word.
  *
  * @param parent Its page.
- * @param x Its left.
- * @param y Its top.
- * @param w Its width.
- * @param h Its height.
+ * @param which  Which of the two it is.
+ * @param word   Its word.
+ * @param ground What it is filled with.
+ * @param ink    The colour of its word.
  * @return The pill, or NULL.
  */
-static lv_obj_t *dt_pill(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int32_t h)
+static lv_obj_t *dt_pill(lv_obj_t *parent, kgui_details_pill_t which, const char *word,
+                         lv_color_t ground, lv_color_t ink)
 {
-    lv_obj_t *const pill = kgui_plain(parent, x, y, w, h);
+    lv_obj_t *const pill = kgui_plain(parent, 0, KGUI_SYS_PILL_Y, KGUI_SYS_PAIR_W, KGUI_SYS_PILL_H);
 
     if ( NULL != pill )
     {
@@ -168,16 +161,16 @@ static lv_obj_t *dt_pill(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int3
         lv_obj_set_clickable(pill, true);
         lv_obj_set_scroll_on_focus(pill, false);
         lv_obj_set_style_radius(pill, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(pill, KUI_COLOR_DANGER, 0);
+        lv_obj_set_style_bg_color(pill, ground, 0);
         lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(pill, KUI_COLOR_REST, LV_STATE_PRESSED);
         lv_obj_add_style(pill, &kui_style_ring, LV_STATE_CHECKED);
-        (void)lv_obj_add_event_cb(pill, &dt_on_click, LV_EVENT_CLICKED, NULL);
+        (void)lv_obj_add_event_cb(pill, &dt_on_click, LV_EVENT_CLICKED, (void *)(uintptr_t)which);
         if ( NULL != txt )
         {
-            lv_obj_set_style_text_font(txt, &kui_font_name, 0);
-            lv_obj_set_style_text_color(txt, KUI_COLOR_TEXT_ON_BG, 0);
-            lv_label_set_text_static(txt, DT_PILL_WORD);
+            lv_obj_set_style_text_font(txt, KGUI_SYS_PAIR_FONT, 0);
+            lv_obj_set_style_text_color(txt, ink, 0);
+            lv_label_set_text_static(txt, word);
             lv_obj_center(txt);
             lv_obj_set_clickable(txt, false);
         }
@@ -192,55 +185,26 @@ static lv_obj_t *dt_pill(lv_obj_t *parent, int32_t x, int32_t y, int32_t w, int3
  */
 static bool dt_build_info(void)
 {
-    int32_t const value_x = DT_PANEL_PAD + DT_ROW_LABEL_W;
-    int32_t const value_w = DT_PANEL_W - DT_PANEL_PAD - value_x;
-
     s_dt.info = dt_page();
     if ( NULL == s_dt.info )
     {
         return false;
     }
-    s_dt.disc = kgui_list_disc_make(s_dt.info, (DT_W - KGUI_DETAILS_DISC_PX) / 2, DT_DISC_Y,
+    s_dt.disc = kgui_list_disc_make(s_dt.info, (DT_W - KGUI_DETAILS_DISC_PX) / 2, DT_TOP_MIN,
                                     KGUI_DETAILS_DISC_PX);
     s_dt.name = dt_label(s_dt.info, &kui_font_title, KUI_COLOR_TEXT_ON_BG,
                          LV_TEXT_ALIGN_CENTER, DT_SIDE, DT_TEXT_W);
     /* The body's face: nothing on the glass is under 28 px (the apocrifa's). */
     s_dt.meta = dt_label(s_dt.info, &kui_font_body, KUI_COLOR_TEXT_MUTED,
-                         LV_TEXT_ALIGN_CENTER, DT_SIDE, DT_TEXT_W);
+                         LV_TEXT_ALIGN_CENTER, KGUI_SYS_TEXT_X, KGUI_SYS_TEXT_W);
     s_dt.desc = dt_label(s_dt.info, &kui_font_body, KUI_COLOR_TEXT_ON_BG,
                          LV_TEXT_ALIGN_CENTER, DT_SIDE, DT_TEXT_W);
-    s_dt.panel = kgui_plain(s_dt.info, DT_PANEL_X, 0, DT_PANEL_W, DT_ROW_H);
-    s_dt.pill = dt_pill(s_dt.info, (DT_W - DT_INFO_PILL_W) / 2, DT_INFO_PILL_Y,
-                        DT_INFO_PILL_W, DT_INFO_PILL_H);
-    bool ok = (NULL != s_dt.disc) && (NULL != s_dt.name) && (NULL != s_dt.meta)
-              && (NULL != s_dt.desc) && (NULL != s_dt.panel) && (NULL != s_dt.pill);
-
-    if ( NULL == s_dt.panel )
-    {
-        return false;
-    }
-    lv_obj_set_style_radius(s_dt.panel, DT_PANEL_R, 0);
-    lv_obj_set_style_bg_color(s_dt.panel, KUI_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(s_dt.panel, LV_OPA_COVER, 0);
-    lv_obj_set_hidden(s_dt.panel, true);
-    for ( uint32_t i = 0U; DT_ROWS_MAX > i; ++i )
-    {
-        s_dt.row_label[i] = dt_label(s_dt.panel, &kui_font_body, KUI_COLOR_TEXT_MUTED,
-                                     LV_TEXT_ALIGN_LEFT, DT_PANEL_PAD, DT_ROW_LABEL_W);
-        s_dt.row_value[i] = dt_label(s_dt.panel, &kui_font_name, KUI_COLOR_TEXT_ON_BG,
-                                     LV_TEXT_ALIGN_RIGHT, value_x, value_w);
-        s_dt.row_rule[i]  = kgui_plain(s_dt.panel, DT_PANEL_PAD, 0,
-                                       DT_PANEL_W - (2 * DT_PANEL_PAD), 1);
-        ok = ok && (NULL != s_dt.row_label[i]) && (NULL != s_dt.row_value[i])
-             && (NULL != s_dt.row_rule[i]);
-        if ( NULL != s_dt.row_rule[i] )
-        {
-            lv_obj_set_style_bg_color(s_dt.row_rule[i], KUI_COLOR_TEXT_ON_BG, 0);
-            lv_obj_set_style_bg_opa(s_dt.row_rule[i], KUI_OPA_PCT(DT_SEP_PCT), 0);
-            lv_obj_set_hidden(s_dt.row_rule[i], true);
-        }
-    }
-    return ok;
+    s_dt.pill_open = dt_pill(s_dt.info, KGUI_DETAILS_PILL_LEFT, DT_WORD_OPEN, KUI_COLOR_ACTION,
+                             KUI_COLOR_TEXT);
+    s_dt.pill = dt_pill(s_dt.info, KGUI_DETAILS_PILL_RIGHT, DT_WORD_DELETE, KUI_COLOR_DANGER,
+                        KUI_COLOR_TEXT_ON_BG);
+    return (NULL != s_dt.disc) && (NULL != s_dt.name) && (NULL != s_dt.meta)
+           && (NULL != s_dt.desc) && (NULL != s_dt.pill_open) && (NULL != s_dt.pill);
 }
 
 /**
@@ -257,18 +221,22 @@ static bool dt_build_ask(void)
         return false;
     }
     s_dt.ask_title = dt_label(s_dt.ask, &kui_font_display_40, KUI_COLOR_TEXT_ON_BG,
-                              LV_TEXT_ALIGN_CENTER, (DT_W - DT_ASK_TITLE_W) / 2, DT_ASK_TITLE_W);
+                              LV_TEXT_ALIGN_CENTER, KGUI_SYS_ASK_X, KGUI_SYS_ASK_W);
     s_dt.ask_caption = dt_label(s_dt.ask, &kui_font_body, KUI_COLOR_TEXT_MUTED,
-                                LV_TEXT_ALIGN_CENTER, (DT_W - DT_ASK_TITLE_W) / 2, DT_ASK_TITLE_W);
-    s_dt.ask_pill = dt_pill(s_dt.ask, DT_ASK_PILL_X, DT_ASK_PILL_Y, DT_ASK_PILL_W, DT_PILL_H);
+                                LV_TEXT_ALIGN_CENTER, KGUI_SYS_ASK_X, KGUI_SYS_ASK_W);
+    s_dt.ask_keep = dt_pill(s_dt.ask, KGUI_DETAILS_PILL_LEFT, DT_WORD_KEEP, KUI_COLOR_TEXT_ON_BG,
+                            KUI_COLOR_TEXT);
+    s_dt.ask_pill = dt_pill(s_dt.ask, KGUI_DETAILS_PILL_RIGHT, DT_WORD_DELETE, KUI_COLOR_DANGER,
+                            KUI_COLOR_TEXT_ON_BG);
     s_dt.wait_title = dt_label(s_dt.wait, &kui_font_display_40, KUI_COLOR_TEXT_ON_BG,
                                LV_TEXT_ALIGN_CENTER, 0, DT_W);
     s_dt.wait_name = dt_label(s_dt.wait, &kui_font_body, KUI_COLOR_TEXT_MUTED,
                               LV_TEXT_ALIGN_CENTER, DT_SIDE, DT_TEXT_W);
     s_dt.wait_glyph = lv_image_create(s_dt.wait);
     bool const ok = (NULL != s_dt.ask_title) && (NULL != s_dt.ask_caption)
-                    && (NULL != s_dt.ask_pill) && (NULL != s_dt.wait_title)
-                    && (NULL != s_dt.wait_name) && (NULL != s_dt.wait_glyph);
+                    && (NULL != s_dt.ask_keep) && (NULL != s_dt.ask_pill)
+                    && (NULL != s_dt.wait_title) && (NULL != s_dt.wait_name)
+                    && (NULL != s_dt.wait_glyph);
 
     if ( NULL != s_dt.ask_title )
     {
@@ -280,9 +248,10 @@ static bool dt_build_ask(void)
         lv_label_set_long_mode(s_dt.ask_caption, LV_LABEL_LONG_MODE_WRAP);
         lv_obj_set_hidden(s_dt.ask_caption, false);
     }
-    if ( NULL != s_dt.ask_pill )
+    if ( (NULL != s_dt.ask_keep) && (NULL != s_dt.ask_pill) )
     {
-        lv_obj_set_hidden(s_dt.ask_pill, false);
+        lv_obj_set_x(s_dt.ask_keep, DT_PILL_X_LEFT);
+        lv_obj_set_x(s_dt.ask_pill, DT_PILL_X_RIGHT);
     }
     if ( NULL != s_dt.wait_title )
     {
@@ -421,35 +390,84 @@ static const char *dt_text(const char *text)
 }
 
 /**
- * @brief Put one row at its place on the panel, or leave it out.
+ * @brief Put the pills of the page that is up where they stand: both of a
+ *        pair, or the one there is, centred.
  *
- * The rule is drawn on the row's top, so the first row shown has none.
+ * The focus goes to the left pill, or to the only one.
  *
- * @param slot  Which place, 0-based, counting the rows that show.
- * @param which The row's own index.
- * @param label Its label.
- * @param value Its value; "" or NULL leaves the row out.
- * @return true when the row shows.
+ * @param left  The left pill.
+ * @param right The right pill.
+ * @param show_left  Whether the left pill shows.
+ * @param show_right Whether the right pill shows.
  */
-static bool dt_row(uint32_t slot, uint32_t which, const char *label, const char *value)
+static void dt_pills_place(lv_obj_t *left, lv_obj_t *right, bool show_left, bool show_right)
 {
-    bool const shows = dt_known(value);
-
-    if ( shows )
+    if ( show_left && show_right )
     {
-        int32_t const y = (int32_t)slot * DT_ROW_H;
-        int32_t const h = (int32_t)lv_font_get_line_height(&kui_font_body);
-
-        lv_label_set_text(s_dt.row_label[which], label);
-        lv_label_set_text(s_dt.row_value[which], value);
-        lv_obj_set_y(s_dt.row_label[which], y + ((DT_ROW_H - h) / 2));
-        lv_obj_set_y(s_dt.row_value[which], y + ((DT_ROW_H - h) / 2));
-        lv_obj_set_y(s_dt.row_rule[which], y);
+        lv_obj_set_x(left, DT_PILL_X_LEFT);
+        lv_obj_set_x(right, DT_PILL_X_RIGHT);
     }
-    lv_obj_set_hidden(s_dt.row_label[which], !shows);
-    lv_obj_set_hidden(s_dt.row_value[which], !shows);
-    lv_obj_set_hidden(s_dt.row_rule[which], (!shows) || (0U == slot));
-    return shows;
+    else
+    {
+        lv_obj_set_x(left, DT_PILL_X_ALONE);
+        lv_obj_set_x(right, DT_PILL_X_ALONE);
+    }
+    lv_obj_set_hidden(left, !show_left);
+    lv_obj_set_hidden(right, !show_right);
+    s_dt.has_left  = show_left;
+    s_dt.has_right = show_right;
+    s_dt.focus     = KGUI_DETAILS_PILL_LEFT;
+    if ( !show_left )
+    {
+        s_dt.focus = KGUI_DETAILS_PILL_RIGHT;
+    }
+    kgui_details_ring(s_dt.ring);
+}
+
+/**
+ * @brief The description as it is shown: whole when it fits in DT_DESC_LINES
+ *        lines, else cut at the last whole word that leaves room for the dots.
+ *
+ * @param text What the app says of itself.
+ * @param out  Receives the words, terminated.
+ * @param cap  Its size.
+ * @return The number of lines the words take.
+ */
+static int32_t dt_words_fit(const char *text, char *out, size_t cap)
+{
+    int32_t const body = (int32_t)lv_font_get_line_height(&kui_font_body);
+    lv_point_t    said;
+    size_t        end;
+
+    (void)snprintf(out, cap, "%s", text);
+    lv_text_get_size(&said, out, &kui_font_body, 0, 0, DT_TEXT_W, LV_TEXT_FLAG_NONE);
+    end = strlen(out);
+    while ( ((DT_DESC_LINES * body) < (said.y + (body / 2))) && (0U < end) )
+    {
+        /* Back to the end of the word before the last one. */
+        while ( (0U < end) && (' ' != out[end - 1U]) )
+        {
+            --end;
+        }
+        while ( (0U < end) && (' ' == out[end - 1U]) )
+        {
+            --end;
+        }
+        out[end] = '\0';
+        while ( (0U < end) && ((',' == out[end - 1U]) || (';' == out[end - 1U])
+                               || (':' == out[end - 1U])) )
+        {
+            --end;
+            out[end] = '\0';
+        }
+        (void)snprintf(&out[end], cap - end, DT_DOTS);
+        lv_text_get_size(&said, out, &kui_font_body, 0, 0, DT_TEXT_W, LV_TEXT_FLAG_NONE);
+        if ( (DT_DESC_LINES * body) < (said.y + (body / 2)) )
+        {
+            out[end] = '\0';
+        }
+    }
+    return (said.y + (body / 2)) / body;
 }
 
 void kgui_details_info(const kgui_details_spec_t *spec)
@@ -459,17 +477,40 @@ void kgui_details_info(const kgui_details_spec_t *spec)
         return;
     }
     dt_hide_all();
+    s_dt.on_ask = false;
     kgui_list_disc_dress(s_dt.disc, KGUI_DETAILS_DISC_PX, spec->ground, spec->pic, spec->mono,
                          NULL, spec->glyph, spec->glyph_scale, spec->ink);
 
-    /* Who: the name, and the version and category under it when known. */
-    int32_t const body = (int32_t)lv_font_get_line_height(&kui_font_body);
-    int32_t       y    = DT_DISC_Y + KGUI_DETAILS_DISC_PX + DT_NAME_GAP;
+    /* The block (the disc, the name, one line of facts and the words) is
+     * centred in the room over the pills, so a page with no description has
+     * no hole under it. */
+    int32_t const body     = (int32_t)lv_font_get_line_height(&kui_font_body);
+    int32_t const title    = (int32_t)lv_font_get_line_height(&kui_font_title);
+    char          words[DT_DESC_MAX];
+    int32_t       lines    = 0;
+    int32_t       block    = KGUI_DETAILS_DISC_PX + DT_DISC_GAP + title;
+    int32_t       y;
 
+    if ( dt_known(spec->meta) )
+    {
+        block += body;
+    }
+    if ( dt_known(spec->description) )
+    {
+        lines = dt_words_fit(spec->description, words, sizeof(words));
+        block += DT_GAP + (lines * body);
+    }
+    y = DT_ROOM_TOP + (((KGUI_SYS_PILL_Y - DT_ROOM_AIR - DT_ROOM_TOP) - block) / 2);
+    if ( DT_TOP_MIN > y )
+    {
+        y = DT_TOP_MIN;
+    }
+    lv_obj_set_y(s_dt.disc, y);
+    y += KGUI_DETAILS_DISC_PX + DT_DISC_GAP;
     lv_label_set_text(s_dt.name, dt_text(spec->name));
     lv_obj_set_y(s_dt.name, y);
     lv_obj_set_hidden(s_dt.name, false);
-    y += (int32_t)lv_font_get_line_height(&kui_font_title);
+    y += title;
     if ( dt_known(spec->meta) )
     {
         lv_label_set_text(s_dt.meta, spec->meta);
@@ -477,124 +518,56 @@ void kgui_details_info(const kgui_details_spec_t *spec)
         y += body;
     }
     lv_obj_set_hidden(s_dt.meta, !dt_known(spec->meta));
-    y += DT_GAP;
-
-    /* The facts, counted first: the words take what room the panel leaves. */
-    uint32_t shown = 0U;
-
-    if ( dt_row(shown, 0U, "Size", spec->size) )
-    {
-        ++shown;
-    }
-    if ( dt_row(shown, 1U, "Built", spec->built) )
-    {
-        ++shown;
-    }
-    int32_t const panel_h = (int32_t)shown * DT_ROW_H;
-    int32_t       foot    = DT_FOOT;
-
-    if ( spec->removable )
-    {
-        foot = DT_INFO_PILL_Y - DT_GAP;
-    }
-    if ( 0U < shown )
-    {
-        foot -= panel_h + DT_GAP;
-    }
-
-    /* What it says of itself: as many lines as the room holds, one at least
-     * and DT_DESC_LINES at most. */
     if ( dt_known(spec->description) )
     {
-        int32_t lines = (foot - y) / body;
-
-        if ( DT_DESC_LINES < lines )
-        {
-            lines = DT_DESC_LINES;
-        }
-        if ( 1 > lines )
-        {
-            lines = 1;
-        }
-        lv_point_t said;
-        int32_t    said_lines;
-
-        /* The words take the lines they need, not the most they may. */
-        lv_text_get_size(&said, spec->description, &kui_font_body, 0, 0, DT_TEXT_W,
-                         LV_TEXT_FLAG_NONE);
-        said_lines = (said.y + (body / 2)) / body;
-        if ( said_lines < lines )
-        {
-            lines = said_lines;
-        }
-        if ( 1 > lines )
-        {
-            lines = 1;
-        }
-        lv_label_set_text(s_dt.desc, spec->description);
+        y += DT_GAP;
+        lv_label_set_text(s_dt.desc, words);
         lv_obj_set_size(s_dt.desc, DT_TEXT_W, lines * body);
         lv_obj_set_y(s_dt.desc, y);
-        y += (lines * body) + DT_GAP;
     }
     lv_obj_set_hidden(s_dt.desc, !dt_known(spec->description));
-
-    /* The facts, under whatever stands above them. */
-    if ( 0U < shown )
-    {
-        lv_obj_set_y(s_dt.panel, y);
-        lv_obj_set_height(s_dt.panel, panel_h);
-    }
-    lv_obj_set_hidden(s_dt.panel, 0U == shown);
-    lv_obj_set_hidden(s_dt.pill, !spec->removable);
+    dt_pills_place(s_dt.pill_open, s_dt.pill, spec->openable, spec->removable);
     lv_obj_set_hidden(s_dt.info, false);
 }
 
-void kgui_details_ask(const char *name, bool files)
+void kgui_details_ask(const char *name)
 {
     if ( !s_dt.open )
     {
         return;
     }
     dt_hide_all();
+    s_dt.on_ask = true;
     char title[DT_ASK_TITLE_MAX];
-    char caption[KGUI_DTEXT_CAPTION_MAX];
 
     (void)snprintf(title, sizeof(title), DT_ASK_TITLE_A "%s" DT_ASK_TITLE_B, dt_text(name));
-    kgui_dtext_remove_caption(files, caption, sizeof(caption));
     {
         int32_t const line = (int32_t)lv_font_get_line_height(&kui_font_display_40);
         lv_point_t    size;
         lv_point_t    said;
         int32_t       rows;
-        int32_t       top;
-        int32_t       foot;
+        int32_t       top = KGUI_SYS_ASK_Y;
 
-        lv_text_get_size(&size, title, &kui_font_display_40, 0, 0, DT_ASK_TITLE_W, LV_TEXT_FLAG_NONE);
+        lv_text_get_size(&size, title, &kui_font_display_40, 0, 0, KGUI_SYS_ASK_W, LV_TEXT_FLAG_NONE);
         rows = (size.y + (line / 2)) / line;
-        if ( DT_ASK_LINES < rows )
+        if ( KGUI_SYS_ASK_TITLE_LINES < rows )
         {
-            rows = DT_ASK_LINES;
+            rows = KGUI_SYS_ASK_TITLE_LINES;
         }
         if ( 1 > rows )
         {
             rows = 1;
         }
-        top = DT_ASK_TITLE_Y - (((rows - 1) * line) / 2);
-        lv_text_get_size(&said, caption, &kui_font_body, 0, 0, DT_ASK_TITLE_W, LV_TEXT_FLAG_NONE);
-        /* A title of two lines over a caption of two would run under the
-         * pill: the block is lifted by what does not fit above it. */
-        foot = top + (rows * line) + DT_ASK_GAP + said.y;
-        if ( (DT_ASK_PILL_Y - DT_ASK_GAP) < foot )
-        {
-            top -= foot - (DT_ASK_PILL_Y - DT_ASK_GAP);
-        }
+        lv_text_get_size(&said, KGUI_DTEXT_DELETE_BODY, &kui_font_body, 0, 0, KGUI_SYS_ASK_W,
+                         LV_TEXT_FLAG_NONE);
         lv_label_set_text(s_dt.ask_title, title);
         lv_obj_set_height(s_dt.ask_title, rows * line);
         lv_obj_set_y(s_dt.ask_title, top);
-        lv_label_set_text(s_dt.ask_caption, caption);
-        lv_obj_set_size(s_dt.ask_caption, DT_ASK_TITLE_W, said.y);
-        lv_obj_set_y(s_dt.ask_caption, top + (rows * line) + DT_ASK_GAP);
+        lv_label_set_text_static(s_dt.ask_caption, KGUI_DTEXT_DELETE_BODY);
+        lv_obj_set_size(s_dt.ask_caption, KGUI_SYS_ASK_W, said.y);
+        lv_obj_set_y(s_dt.ask_caption, top + (rows * line) + KGUI_SYS_ASK_GAP);
     }
+    dt_pills_place(s_dt.ask_keep, s_dt.ask_pill, true, true);
     lv_obj_set_hidden(s_dt.ask, false);
 }
 
@@ -609,15 +582,46 @@ void kgui_details_wait(const char *name)
     lv_obj_set_hidden(s_dt.wait, false);
 }
 
+bool kgui_details_origin(int32_t *cx, int32_t *cy, int32_t *size)
+{
+    bool ok = false;
+
+    if ( s_dt.open && (NULL != s_dt.disc) && (!s_dt.on_ask) )
+    {
+        lv_area_t a;
+
+        lv_obj_update_layout(s_dt.disc);
+        lv_obj_get_coords(s_dt.disc, &a);
+        *size = lv_area_get_width(&a);
+        *cx   = a.x1 + (*size / 2);
+        *cy   = a.y1 + (lv_area_get_height(&a) / 2);
+        ok    = (0 < *size);
+    }
+    return ok;
+}
+
 void kgui_details_ring(bool shown)
 {
-    lv_obj_t *const pills[] = { s_dt.pill, s_dt.ask_pill };
+    lv_obj_t *left  = s_dt.pill_open;
+    lv_obj_t *right = s_dt.pill;
+
+    s_dt.ring = shown;
+    if ( s_dt.on_ask )
+    {
+        left  = s_dt.ask_keep;
+        right = s_dt.ask_pill;
+    }
+    lv_obj_t *const pills[] = { s_dt.pill_open, s_dt.pill, s_dt.ask_keep, s_dt.ask_pill };
 
     for ( size_t i = 0U; (sizeof(pills) / sizeof(pills[0])) > i; ++i )
     {
         if ( NULL != pills[i] )
         {
-            if ( shown )
+            bool const mine = (pills[i] == left) || (pills[i] == right);
+            bool const here = ((pills[i] == left) && (KGUI_DETAILS_PILL_LEFT == s_dt.focus))
+                              || ((pills[i] == right) && (KGUI_DETAILS_PILL_RIGHT == s_dt.focus));
+
+            if ( shown && mine && here )
             {
                 lv_obj_add_state(pills[i], LV_STATE_CHECKED);
             }
@@ -627,4 +631,23 @@ void kgui_details_ring(bool shown)
             }
         }
     }
+}
+
+kgui_details_pill_t kgui_details_focus(void)
+{
+    return s_dt.focus;
+}
+
+bool kgui_details_focus_set(kgui_details_pill_t pill)
+{
+    bool const there = ((KGUI_DETAILS_PILL_LEFT == pill) && s_dt.has_left)
+                       || ((KGUI_DETAILS_PILL_RIGHT == pill) && s_dt.has_right);
+    bool const moved = there && (pill != s_dt.focus);
+
+    if ( moved )
+    {
+        s_dt.focus = pill;
+        kgui_details_ring(s_dt.ring);
+    }
+    return moved;
 }

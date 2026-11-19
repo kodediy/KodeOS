@@ -20,8 +20,6 @@
 #define DT_YEAR_LEN    4U                     /**< Digits of the year. */
 #define DT_DATE_LEN    11U                    /**< The length of the compiler's date. */
 #define DT_SEP         " \xC2\xB7 "           /**< Between the version and the category: a middle dot, one line in the caption face. */
-#define DT_RM_LEAVES   "It leaves the Dot."   /**< The question's caption: its first line. */
-#define DT_RM_FILES    "\nIts files go too."   /**< ...and its second, when a listed file is the app's. */
 #define DT_RM_LEFT     "Some files could not be removed" /**< A Remove that left a file or a folder behind. */
 #define DT_RM_BUSY     "Busy. Try again"      /**< A Remove refused by a busy owner. */
 #define DT_RM_NOTHING  "Nothing to remove"    /**< A Remove that found nothing of that name. */
@@ -134,8 +132,34 @@ void kgui_dtext_date(const char *raw, char *out, size_t cap)
     }
 }
 
-void kgui_dtext_meta(const char *version, const char *category, char *out, size_t cap)
+/**
+ * @brief Append a part of the details' line, with its separator.
+ *
+ * @param out  The line so far.
+ * @param cap  Its size.
+ * @param part What to add; nothing when it is NULL or empty.
+ */
+static void dtx_join(char *out, size_t cap, const char *part)
 {
+    size_t const used = strlen(out);
+
+    if ( dtx_known(part) && (used < cap) )
+    {
+        const char *sep = "";
+
+        if ( 0U < used )
+        {
+            sep = DT_SEP;
+        }
+        (void)snprintf(&out[used], cap - used, "%s%s", sep, part);
+    }
+}
+
+void kgui_dtext_version(const char *version, char *out, size_t cap)
+{
+    size_t n = 0U;
+    bool   lead = true;
+
     if ( (NULL == out) || (0U == cap) )
     {
         return;
@@ -143,49 +167,53 @@ void kgui_dtext_meta(const char *version, const char *category, char *out, size_
     out[0] = '\0';
     if ( dtx_known(version) )
     {
-        const char *prefix = "v";
-
         if ( ('v' == version[0]) || ('V' == version[0]) )
         {
-            prefix = "";
+            ++version;
         }
-        (void)snprintf(out, cap, "%s%s", prefix, version);
-    }
-    if ( dtx_known(category) )
-    {
-        size_t const used = strlen(out);
-        const char  *sep  = "";
-        char         first = category[0];
+        for ( ; ('\0' != *version) && ((n + 1U) < cap); ++version )
+        {
+            char const c = *version;
 
-        if ( 0U < used )
-        {
-            sep = DT_SEP;
+            if ( lead && ('0' == c) && dtx_digit(version[1]) )
+            {
+                /* A zero ahead of another digit of its group goes. */
+                continue;
+            }
+            lead = ('.' == c);
+            out[n] = c;
+            ++n;
         }
-        if ( ('a' <= first) && ('z' >= first) )
-        {
-            first = (char)(first - ('a' - 'A'));
-        }
-        if ( used < cap )
-        {
-            (void)snprintf(&out[used], cap - used, "%s%c%s", sep, first, &category[1]);
-        }
+        out[n] = '\0';
     }
 }
 
-void kgui_dtext_remove_caption(bool files, char *out, size_t cap)
+void kgui_dtext_meta(const char *category, const char *version, const char *size, char *out,
+                     size_t cap)
 {
+    char shown[KGUI_DTEXT_META_MAX];
+    char cat[KGUI_DTEXT_META_MAX];
+
     if ( (NULL == out) || (0U == cap) )
     {
         return;
     }
-    if ( files )
+    out[0] = '\0';
+    cat[0] = '\0';
+    if ( dtx_known(category) )
     {
-        (void)snprintf(out, cap, "%s", DT_RM_LEAVES DT_RM_FILES);
+        char first = category[0];
+
+        if ( ('a' <= first) && ('z' >= first) )
+        {
+            first = (char)(first - ('a' - 'A'));
+        }
+        (void)snprintf(cat, sizeof(cat), "%c%s", first, &category[1]);
     }
-    else
-    {
-        (void)snprintf(out, cap, "%s", DT_RM_LEAVES);
-    }
+    kgui_dtext_version(version, shown, sizeof(shown));
+    dtx_join(out, cap, cat);
+    dtx_join(out, cap, shown);
+    dtx_join(out, cap, size);
 }
 
 const char *kgui_dtext_remove_end(uint8_t status)

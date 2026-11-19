@@ -14,8 +14,6 @@
 #include "kui.h"
 #include "kui_glyphs.h"
 
-LV_FONT_DECLARE(kgui_font_outfit_xb_48);
-
 #define SYS_LINE_COUNT       3U    /**< Lines of detail a card has room for. */
 #define SYS_PILL_X           (((int32_t)KBSP_LCD_H_RES - KGUI_SYS_PILL_ROW_W) / 2) /**< Where the pill's row stands across. */
 #define SYS_GLYPH_FULL       256U  /**< LVGL's scale of an image as it is: 1/256ths. */
@@ -73,6 +71,21 @@ static void sys_say(lv_obj_t *l, const char *text)
             lv_obj_set_hidden(l, false);
         }
     }
+}
+
+/**
+ * @brief Put the name and the detail back in the text column: kgui_sys_ask()
+ *        gives them their own.
+ *
+ * @param s The frame.
+ */
+static void sys_column_back(kgui_sys_t *s)
+{
+    lv_obj_set_x(s->name, KGUI_SYS_TEXT_X);
+    lv_obj_set_width(s->name, KGUI_SYS_TEXT_W);
+    lv_obj_set_x(s->detail, KGUI_SYS_TEXT_X);
+    lv_obj_set_width(s->detail, KGUI_SYS_TEXT_W);
+    lv_obj_set_height(s->detail, (int32_t)SYS_LINE_COUNT * (int32_t)lv_font_get_line_height(&kui_font_body));
 }
 
 /**
@@ -152,11 +165,6 @@ bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card)
         s->second = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_SECOND_Y);
         s->detail = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_TEXT_Y);
         s->note   = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_NOTE_Y);
-        s->message = sys_label(card, &kgui_font_outfit_xb_48, KUI_COLOR_TEXT_ON_BG, 0);
-        if ( NULL != s->message )
-        {
-            lv_label_set_long_mode(s->message, LV_LABEL_LONG_MODE_WRAP);
-        }
         if ( (NULL != s->blank) && (NULL != s->glyph) && (NULL != s->pile) && (NULL != s->word)
              && (NULL != s->code) && (NULL != s->figure) && (NULL != s->unit) && (NULL != s->name)
              && (NULL != s->second) && (NULL != s->detail) && (NULL != s->note) )
@@ -198,13 +206,13 @@ void kgui_sys_clear(kgui_sys_t *s)
     if ( s->made )
     {
         sys_prot_off(s);
+        sys_column_back(s);
         sys_say(s->figure, NULL);
         sys_say(s->name, NULL);
         sys_say(s->second, NULL);
         sys_say(s->detail, NULL);
         sys_say(s->note, NULL);
         sys_say(s->code, NULL);
-        sys_say(s->message, NULL);
         lv_obj_set_hidden(s->unit, true);
         s->shown = (uint8_t)KGUI_SYS_FIGURE_NONE;
         kgui_sys_lift(s, 0);
@@ -274,24 +282,6 @@ void kgui_sys_lift(kgui_sys_t *s, int32_t dy)
         for ( size_t i = 0U; (sizeof(parts) / sizeof(parts[0])) > i; ++i )
         {
             lv_obj_set_style_translate_y(parts[i], dy, LV_PART_MAIN);
-        }
-    }
-}
-
-void kgui_sys_message(kgui_sys_t *s, const char *text)
-{
-    if ( s->made && (NULL != s->message) )
-    {
-        sys_say(s->message, text);
-        if ( (NULL != text) && ('\0' != text[0]) )
-        {
-            int32_t h;
-
-            sys_prot_off(s);
-            lv_obj_update_layout(s->message);
-            h = lv_obj_get_height(s->message);
-            /* In the room over the pill, well clear of it. */
-            lv_obj_set_y(s->message, (KGUI_SYS_PILL_Y - h) / 2);
         }
     }
 }
@@ -374,6 +364,75 @@ void kgui_sys_hero(kgui_sys_t *s, const char *name, const char *second)
     }
 }
 
+void kgui_sys_ask(kgui_sys_t *s, int32_t top, int32_t bottom, const char *title, const char *body)
+{
+    if ( s->made )
+    {
+        int32_t const line      = (int32_t)lv_font_get_line_height(&kui_font_display_40);
+        int32_t const body_line = (int32_t)lv_font_get_line_height(&kui_font_body);
+        bool const    has_title = (NULL != title) && ('\0' != title[0]);
+        bool const    has_body  = (NULL != body) && ('\0' != body[0]);
+        int32_t       rows      = 0;
+        int32_t       block     = 0;
+        int32_t       at        = top;
+
+        sys_say(s->second, NULL);
+        sys_say(s->note, NULL);
+        lv_obj_set_style_text_font(s->name, &kui_font_display_40, LV_PART_MAIN);
+        lv_obj_set_x(s->name, KGUI_SYS_ASK_X);
+        lv_obj_set_width(s->name, KGUI_SYS_ASK_W);
+        if ( has_title )
+        {
+            lv_point_t said;
+
+            lv_text_get_size(&said, title, &kui_font_display_40, 0, 0, KGUI_SYS_ASK_W, LV_TEXT_FLAG_NONE);
+            rows = (said.y + (line / 2)) / line;
+            if ( KGUI_SYS_ASK_TITLE_LINES < rows )
+            {
+                rows = KGUI_SYS_ASK_TITLE_LINES;
+            }
+            if ( 1 > rows )
+            {
+                rows = 1;
+            }
+            block = rows * line;
+        }
+        if ( has_body )
+        {
+            lv_point_t said;
+            int32_t    body_h;
+
+            lv_text_get_size(&said, body, &kui_font_body, 0, 0, KGUI_SYS_ASK_W, LV_TEXT_FLAG_NONE);
+            body_h = said.y;
+            if ( (KGUI_SYS_ASK_BODY_LINES * body_line) < body_h )
+            {
+                body_h = KGUI_SYS_ASK_BODY_LINES * body_line;
+            }
+            if ( has_title )
+            {
+                block += KGUI_SYS_ASK_GAP;
+            }
+            block += body_h;
+        }
+        if ( (bottom > top) && (block < (bottom - top)) )
+        {
+            at = top + (((bottom - top) - block) / 2);
+        }
+        if ( has_title )
+        {
+            lv_obj_set_height(s->name, rows * line);
+            lv_obj_set_y(s->name, at);
+            at += (rows * line) + KGUI_SYS_ASK_GAP;
+        }
+        sys_say(s->name, title);
+        lv_obj_set_x(s->detail, KGUI_SYS_ASK_X);
+        lv_obj_set_width(s->detail, KGUI_SYS_ASK_W);
+        lv_obj_set_height(s->detail, KGUI_SYS_ASK_BODY_LINES * body_line);
+        lv_obj_set_y(s->detail, at);
+        sys_say(s->detail, body);
+    }
+}
+
 /**
  * @brief How tall the card's words are, from the top of the first to the
  *        bottom of the last: each visible line's step to the next, and the
@@ -431,6 +490,7 @@ void kgui_sys_text(kgui_sys_t *s, int32_t top, int32_t bottom, const char *name,
 {
     if ( s->made && (NULL != s->name) )
     {
+        sys_column_back(s);
         lv_obj_set_style_text_font(s->name, &kui_font_title, LV_PART_MAIN);
         lv_obj_set_height(s->name, (int32_t)SYS_NAME_DOTS_MAX * (int32_t)lv_font_get_line_height(&kui_font_title));
     }
@@ -483,14 +543,82 @@ void kgui_sys_origin(int32_t *cx, int32_t *cy, int32_t *size)
     *size = KGUI_SYS_DISC;
 }
 
+lv_obj_t *kgui_sys_keep_make(lv_obj_t *card)
+{
+    lv_obj_t * const row = lv_obj_find_by_name(card, "actions");
+    lv_obj_t *btn = NULL;
+
+    if ( NULL != row )
+    {
+        btn = lv_button_create(row);
+    }
+    if ( NULL != btn )
+    {
+        lv_obj_t * const txt = lv_label_create(btn);
+
+        lv_obj_set_name(btn, "btn_l");
+        lv_obj_set_width(btn, KUI_ACTION_W);
+        lv_obj_set_height(btn, KUI_ACTION_H);
+        lv_obj_add_style(btn, &kui_style_action, 0);
+        lv_obj_add_style(btn, &kui_style_action_pressed, LV_STATE_PRESSED);
+        lv_obj_add_style(btn, &kui_style_action_ring, LV_STATE_CHECKED);
+        /* The first of the row: the left of the pair. */
+        lv_obj_move_to_index(btn, 0);
+        if ( NULL != txt )
+        {
+            lv_obj_set_name(txt, "btn_l_text");
+            lv_obj_set_align(txt, LV_ALIGN_CENTER);
+            lv_label_set_text(txt, "");
+            lv_obj_add_style(txt, &kui_style_action_text, 0);
+        }
+        lv_obj_set_hidden(btn, true);
+    }
+    return btn;
+}
+
+void kgui_sys_pair(const lv_obj_t *card, const char *left, const char *right)
+{
+    lv_obj_t * const row   = lv_obj_find_by_name(card, "actions");
+    lv_obj_t * const btn   = lv_obj_find_by_name(card, "btn");
+    lv_obj_t * const text  = lv_obj_find_by_name(card, "btn_text");
+    lv_obj_t * const keep  = lv_obj_find_by_name(card, "btn_l");
+    lv_obj_t * const ktext = lv_obj_find_by_name(card, "btn_l_text");
+
+    if ( (NULL != row) && (NULL != btn) && (NULL != keep) && (NULL != text) && (NULL != ktext) )
+    {
+        lv_obj_set_style_text_font(text, KGUI_SYS_PAIR_FONT, LV_PART_MAIN);
+        lv_obj_set_style_text_font(ktext, KGUI_SYS_PAIR_FONT, LV_PART_MAIN);
+        lv_label_set_text(text, right);
+        lv_label_set_text(ktext, left);
+        /* The row is the pair's room, with the focus rings: it takes the whole
+         * glass across, and the pair is centred in it. */
+        lv_obj_set_pos(row, 0, KGUI_SYS_PILL_Y - KGUI_SYS_PILL_RING);
+        lv_obj_set_size(row, KGUI_SYS_PAIR_ROW_W, KGUI_SYS_PILL_H + (2 * KGUI_SYS_PILL_RING));
+        lv_obj_set_style_pad_top(row, KGUI_SYS_PILL_RING, LV_PART_MAIN);
+        lv_obj_set_style_pad_column(row, KGUI_SYS_PAIR_GAP, LV_PART_MAIN);
+        lv_obj_set_scrollable(row, false);
+        lv_obj_set_size(btn, KGUI_SYS_PAIR_W, KGUI_SYS_PILL_H);
+        lv_obj_set_size(keep, KGUI_SYS_PAIR_W, KGUI_SYS_PILL_H);
+        lv_obj_set_hidden(keep, false);
+    }
+}
+
 void kgui_sys_pill(const lv_obj_t *card, bool framed, const char *word)
 {
     lv_obj_t * const row  = lv_obj_find_by_name(card, "actions");
     lv_obj_t * const btn  = lv_obj_find_by_name(card, "btn");
     lv_obj_t * const text = lv_obj_find_by_name(card, "btn_text");
+    lv_obj_t * const keep = lv_obj_find_by_name(card, "btn_l");
 
+    if ( NULL != keep )
+    {
+        /* A single answer has no left button. */
+        lv_obj_remove_state(keep, LV_STATE_CHECKED);
+        lv_obj_set_hidden(keep, true);
+    }
     if ( (NULL != row) && (NULL != btn) )
     {
+        lv_obj_set_style_pad_column(row, 0, LV_PART_MAIN);
         if ( framed )
         {
             int32_t w = KGUI_SYS_PILL_W_MIN;

@@ -527,30 +527,32 @@ void test_card_words(void)
     char small[8];
     char charge[KGUI_OSREL_TEXT_MAX];
 
-    kgui_osrel_card_version("0.1.2", text, sizeof(text));
-    TEST_ASSERT_EQUAL_STRING("Version 0.1.2", text);
-    kgui_osrel_card_version("1234.1234.1234", text, sizeof(text));
-    TEST_ASSERT_EQUAL_STRING("Version 1234.1234.1234", text);
-    kgui_osrel_card_version(NULL, text, sizeof(text));
-    TEST_ASSERT_EQUAL_STRING("Version ", text);
-    kgui_osrel_card_version("0.1.2", small, sizeof(small));
-    TEST_ASSERT_EQUAL_STRING("Version", small);
-    kgui_osrel_card_version("0.1.2", NULL, 0U);
+    kgui_osrel_card_title("0.1.6", text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("kodeOS 0.1.6", text);
+    kgui_osrel_card_title("1234.1234.1234", text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("kodeOS 1234.1234.1234", text);
+    kgui_osrel_card_title(NULL, text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("kodeOS", text);
+    kgui_osrel_card_title("", text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("kodeOS", text);
+    kgui_osrel_card_title("0.1.2", small, sizeof(small));
+    TEST_ASSERT_EQUAL_STRING("kodeOS ", small);
+    kgui_osrel_card_title("0.1.2", NULL, 0U);
 
     /* The charge is the module's own threshold, said as a number. */
-    (void)snprintf(charge, sizeof(charge), "Charge to %u %% or\nplug in a cable.",
+    (void)snprintf(charge, sizeof(charge), "Charge to %u%% or plug in.",
                    (unsigned)KGUI_OSREL_MIN_PCT);
-    kgui_osrel_card_why(KGUI_OSREL_CARD_CHARGE, text, sizeof(text));
+    kgui_osrel_card_body(KGUI_OSREL_CARD_CHARGE, text, sizeof(text));
     TEST_ASSERT_EQUAL_STRING(charge, text);
-    TEST_ASSERT_EQUAL_STRING("Charge to 20 % or\nplug in a cable.", text);
-    kgui_osrel_card_why(KGUI_OSREL_CARD_OFFLINE, text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("Charge to 20% or plug in.", text);
+    kgui_osrel_card_body(KGUI_OSREL_CARD_OFFLINE, text, sizeof(text));
     TEST_ASSERT_EQUAL_STRING("Join Wi-Fi to update.", text);
-    kgui_osrel_card_why(KGUI_OSREL_CARD_READY, text, sizeof(text));
-    TEST_ASSERT_EQUAL_STRING("", text);
-    kgui_osrel_card_why(KGUI_OSREL_CARD_CHARGE, NULL, 0U);
+    kgui_osrel_card_body(KGUI_OSREL_CARD_READY, text, sizeof(text));
+    TEST_ASSERT_EQUAL_STRING("A new version is ready.", text);
+    kgui_osrel_card_body(KGUI_OSREL_CARD_CHARGE, NULL, 0U);
 
     TEST_ASSERT_EQUAL_STRING("kodeOS", KGUI_OSREL_CARD_WORD);
-    TEST_ASSERT_EQUAL_STRING("New release available", KGUI_OSREL_CARD_TITLE);
+    TEST_ASSERT_EQUAL_STRING("Later", KGUI_OSREL_CARD_LATER);
     TEST_ASSERT_EQUAL_STRING("Update", KGUI_OSREL_CARD_BUTTON);
 }
 
