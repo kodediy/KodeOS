@@ -108,9 +108,9 @@ bool kgui_crit_waits(bool locked, bool system, bool offer, bool guided, bool par
 #define KGUI_RESET_ROW         "Factory reset"            /**< About's row that asks for it. */
 #define KGUI_RESET_ROW_SUB     "Erase apps and settings"  /**< ...and the line under it. */
 #define KGUI_RESET_ASK         "Factory reset?"           /**< The question's title. */
-#define KGUI_RESET_ASK_SUB     "Apps and settings go"     /**< ...its second line. */
-#define KGUI_RESET_ASK_DETAIL  "So do networks, paired\ndevices and app files.\nThe welcome app stays." /**< ...and what else goes and what stays. */
-#define KGUI_RESET_BUTTON      "Reset"                    /**< The question's one button. */
+#define KGUI_RESET_ASK_DETAIL  "Removes apps, settings, networks and paired devices." /**< ...its body: what goes. */
+#define KGUI_RESET_KEEP        "Keep"                     /**< The question's left pill: nothing is done. */
+#define KGUI_RESET_BUTTON      "Reset"                    /**< The question's right pill: the reset. */
 #define KGUI_RESET_TITLE       "Factory reset"            /**< The wait's title, and the refusal's. */
 #define KGUI_RESET_WAIT_SUB    "Erasing"                  /**< The wait's second line. */
 #define KGUI_RESET_WAIT_DETAIL "The Kode restarts\nwhen it is done."   /**< ...and what comes after it. */

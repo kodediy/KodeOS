@@ -492,22 +492,23 @@ kgui_osrel_card_t kgui_osrel_card(bool linked, bool power)
     return card;
 }
 
-void kgui_osrel_card_version(const char *version, char *out, size_t size)
+void kgui_osrel_card_title(const char *version, char *out, size_t size)
 {
-    const char *ver = "";
-
     if ( (NULL == out) || (0U == size) )
     {
         return;
     }
-    if ( NULL != version )
+    if ( (NULL != version) && ('\0' != version[0]) )
     {
-        ver = version;
+        (void)snprintf(out, size, KGUI_OSREL_CARD_WORD " %s", version);
     }
-    (void)snprintf(out, size, "Version %s", ver);
+    else
+    {
+        (void)snprintf(out, size, "%s", KGUI_OSREL_CARD_WORD);
+    }
 }
 
-void kgui_osrel_card_why(kgui_osrel_card_t card, char *out, size_t size)
+void kgui_osrel_card_body(kgui_osrel_card_t card, char *out, size_t size)
 {
     if ( (NULL == out) || (0U == size) )
     {
@@ -519,11 +520,10 @@ void kgui_osrel_card_why(kgui_osrel_card_t card, char *out, size_t size)
     }
     else if ( KGUI_OSREL_CARD_CHARGE == card )
     {
-        (void)snprintf(out, size, "Charge to %u %% or\nplug in a cable.",
-                       (unsigned)KGUI_OSREL_MIN_PCT);
+        (void)snprintf(out, size, "Charge to %u%% or plug in.", (unsigned)KGUI_OSREL_MIN_PCT);
     }
     else
     {
-        out[0] = '\0';
+        (void)snprintf(out, size, "%s", KGUI_OSREL_CARD_READY_BODY);
     }
 }
