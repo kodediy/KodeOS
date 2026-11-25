@@ -111,6 +111,19 @@ void test_dtext_meta_version_has_no_leading_zeros(void)
     TEST_ASSERT_EQUAL_STRING("0.1.0", out);
 }
 
+/* The longest store category does not fit the line with a version and a size. */
+void test_dtext_meta_says_communication_short(void)
+{
+    char out[KGUI_DTEXT_META_MAX];
+
+    kgui_dtext_meta("Communication", "0.7.5", "1.3 MB", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Comms \xC2\xB7 0.7.5 \xC2\xB7 1.3 MB", out);
+    kgui_dtext_meta("communication", NULL, NULL, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Comms", out);
+    kgui_dtext_meta("Communications", "1.0", NULL, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Communications \xC2\xB7 1.0", out);
+}
+
 void test_dtext_meta_fits_a_small_buffer(void)
 {
     char out[8];
@@ -144,6 +157,7 @@ int main(void)
     RUN_TEST(test_dtext_meta_longest_fits);
     RUN_TEST(test_dtext_meta_parts);
     RUN_TEST(test_dtext_meta_version_has_no_leading_zeros);
+    RUN_TEST(test_dtext_meta_says_communication_short);
     RUN_TEST(test_dtext_meta_fits_a_small_buffer);
     RUN_TEST(test_dtext_remove_end_of_a_whole_erase_has_no_hint);
     RUN_TEST(test_dtext_remove_end_says_what_went_wrong);

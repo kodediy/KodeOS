@@ -14,6 +14,8 @@
 #define DT_BYTES_MB    (1024U * 1024U)        /**< Bytes in a MB. */
 #define DT_TENTHS      10U                    /**< Tenths in a whole. */
 #define DT_SEP         " \xC2\xB7 "           /**< Between the version and the category: a middle dot, one line in the caption face. */
+#define DT_CAT_LONG    "Communication"        /**< The store category too long for the line beside a version and a size. */
+#define DT_CAT_SHORT   "Comms"                /**< What the line says in its place. */
 #define DT_RM_LEFT     "Some files could not be removed" /**< A Remove that left a file or a folder behind. */
 #define DT_RM_BUSY     "Busy. Try again"      /**< A Remove refused by a busy owner. */
 #define DT_RM_NOTHING  "Nothing to remove"    /**< A Remove that found nothing of that name. */
@@ -158,6 +160,10 @@ void kgui_dtext_meta(const char *category, const char *version, const char *size
             first = (char)(first - ('a' - 'A'));
         }
         (void)snprintf(cat, sizeof(cat), "%c%s", first, &category[1]);
+        if ( 0 == strcmp(cat, DT_CAT_LONG) )
+        {
+            (void)snprintf(cat, sizeof(cat), "%s", DT_CAT_SHORT);
+        }
     }
     kgui_dtext_version(version, shown, sizeof(shown));
     dtx_join(out, cap, cat);

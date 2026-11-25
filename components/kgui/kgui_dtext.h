@@ -46,6 +46,7 @@ void kgui_dtext_version(const char *version, char *out, size_t cap);
  * Each part is left out when it is not known, with its dot. The version
  * loses a leading `v` or `V` and the leading zeros of each of its groups
  * (`00.07.05` is `0.7.5`), and the category's first letter is made a capital.
+ * `Communication` is said `Comms`, so the line fits its column.
  *
  * @param category The group's title (kgui_group_title()); may be NULL or "".
  * @param version  The version as the system has it; may be NULL or "".
