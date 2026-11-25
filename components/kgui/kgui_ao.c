@@ -849,13 +849,14 @@ enum {
     GUI_KBD_JOINING     /**< The join was asked for and its answer is awaited; the text is kept for the answer. */
 };
 
-/* How long the keypad waits for the join's answer before it says it could not
- * join: the radio's own wait for an address is 20 s (RADIO_JOIN_MS) and a
- * refused request - the radio was busy with something else - is answered with
- * the state of the network it was already on, which says nothing about this
- * one. Longer than the first by a margin, so a slow join is never called a
- * failure, and short enough that nobody waits for a request that was never
- * taken. A deadline on the wall clock, like every wait here. */
+/* How long the keypad, or a row of the Wi-Fi page, waits for the join's answer
+ * before it says it could not join: the radio's own wait for an address is
+ * 20 s (RADIO_JOIN_MS) and a refused request - the radio was busy with
+ * something else - is answered with the state of the network it was already
+ * on, which says nothing about this one. Longer than the first by a margin,
+ * so a slow join is never called a failure, and short enough that nobody
+ * waits for a request that was never taken. A deadline on the wall clock,
+ * like every wait here. */
 #define GUI_KBD_JOIN_GUARD_MS  30000U
 
 /* What the keypad card says, in the words of the plan's copy. The refusals and
@@ -877,6 +878,7 @@ enum {
 #define GUI_KBD_PASS_MIN     8U                    /**< WPA2 and WPA3 passwords are 8 characters at the least. */
 #define GUI_KBD_NEED_NAME    "Type the name"       /**< Next with nothing typed. */
 #define GUI_KBD_SCANNING     "Scanning, try again" /**< Join while the radio is still looking for networks: it would refuse. */
+#define GUI_WIFI_JOINING     "Joining..."          /**< What a row of the Wi-Fi page says while the join it asked for is out. */
 #endif
 
 /* What kgui keeps across a reboot: the name of the row the launcher last
@@ -2161,12 +2163,14 @@ typedef struct {
     uint8_t       shelf_label_opa;                    /**< The name's own fade, 0 to 255. */
     int32_t       shelf_label_rise;                   /**< How far below its place the name stands as it comes in. */
 
-    /* THE LONG PRESS: the launcher row or the control-centre circle a
-     * finger landed on, and when. A press that stays on it for
-     * GUI_LONG_PRESS_MS without a claim opens the row's details or the
-     * radio's page (gui_long_press_tick()). */
+    /* THE LONG PRESS: the launcher row, the control-centre circle or the
+     * saved network's row a finger landed on, and when. A press that stays on
+     * it for GUI_LONG_PRESS_MS without a claim opens the row's details or the
+     * radio's page, or asks whether to forget the network
+     * (gui_long_press_tick()). */
     int8_t        lp_row;                   /**< The row under the finger; -1 for none. */
     uint8_t       lp_ctl;                   /**< The circle under the finger, Wi-Fi or Bluetooth; GUI_SET_COUNT for none. */
+    int8_t        lp_saved;                 /**< The Wi-Fi page's row of a saved network under the finger; -1 for none. */
     uint32_t      lp_ms;                    /**< When the finger landed on it. */
 
     /* THE DETAILS' ROW, by what it is and what it is called: an index into
@@ -3147,6 +3151,20 @@ typedef struct {
     bool     saved_owed;     /**< AO_Radio had no room for the listing: the
                                *   page's next look asks again.             */
 
+    /* THE JOIN A ROW ASKED FOR. A saved network and an open one are joined
+     * from their row, with no keypad to say how it went: the row says it is
+     * joining, and the page says how it ended (gui_wifi_row_join_end()). Kept
+     * only while the Wi-Fi page is the card. */
+    char     row_join_ssid[GUI_SSID_BYTES];
+                             /**< The network; "" while no answer is awaited. */
+    uint32_t row_join_ms;    /**< When it was asked: one never answered is
+                               *   given up after GUI_KBD_JOIN_GUARD_MS.    */
+    int8_t   row_join_rssi;  /**< How the network was heard then, dBm;
+                               *   KGUI_WIFI_RSSI_NONE when it was not. It
+                               *   words a join that fails.                 */
+    uint16_t row_join_door;  /**< The row's tag, where the ring goes back to
+                               *   from the keypad a wrong password opens.  */
+
     /* THE KEYPAD'S ERRAND (GUI_SHEET_KEYPAD). What it is for is here; what is
      * typed is NOT: that lives in kgui_keyboard.c alone, and is never in this
      * struct, in an event of this AO's, in the log or in `gui_info`. */
@@ -3430,6 +3448,12 @@ static void gui_wifi_fill(Gui * const me);
 static bool gui_wifi_scan_due(Gui const * const me, uint32_t now, bool entering);
 static void gui_wifi_act(Gui * const me, uint8_t idx);
 static void gui_wifi_forget(Gui * const me, uint8_t idx);
+static int8_t gui_wifi_heard(Gui const * const me, const char *ssid);
+static bool gui_wifi_row_joining(Gui const * const me, const char *ssid);
+static void gui_wifi_row_join(Gui * const me, uint8_t idx, const char *ssid, int8_t rssi);
+static bool gui_wifi_row_join_state(Gui * const me, WifiStateEvt const * const w);
+static void gui_wifi_row_join_end(Gui * const me, kgui_join_t how, uint8_t fail);
+static void on_wifi_saved_pressed(lv_event_t *e);
 static void gui_wifi_list_ask(Gui * const me);
 static void gui_wifi_link_row(Gui * const me);
 static void gui_wifi_link_text(Gui const * const me, char *out, size_t cap);
@@ -13613,10 +13637,11 @@ static void on_pill_pressed(lv_event_t *e)
 /**
  * @brief The long press's share of the tick.
  *
- * A finger that has stayed GUI_LONG_PRESS_MS on a launcher row, or on the
- * Wi-Fi or Bluetooth circle, within KUI_GESTURE_TAP_PX of where it landed and
- * with no claim, opens the row's details (a group's row has none) or the
- * radio's page. The recognizer
+ * A finger that has stayed GUI_LONG_PRESS_MS on a launcher row, on the Wi-Fi
+ * or Bluetooth circle, or on a saved network's row of the Wi-Fi page, within
+ * KUI_GESTURE_TAP_PX of where it landed and with no claim, opens the row's
+ * details (a group's row has none) or the radio's page, or asks whether to
+ * forget the network. The recognizer
  * is then restarted blocked: the rest of the press claims nothing, and the
  * release that ends it is no tap anywhere, so it launches nothing, switches
  * no radio and moves no list.
@@ -13626,7 +13651,7 @@ static void on_pill_pressed(lv_event_t *e)
 static void gui_long_press_tick(Gui * const me)
 {
     bool const noted = (0 <= me->lp_row) || (0 <= me->lp_shelf)
-                       || ((uint8_t)GUI_SET_COUNT > me->lp_ctl);
+                       || ((uint8_t)GUI_SET_COUNT > me->lp_ctl) || (0 <= me->lp_saved);
 
     if ( noted && me->touch_pressed )
     {
@@ -13639,6 +13664,7 @@ static void gui_long_press_tick(Gui * const me)
             me->lp_row   = -1;
             me->lp_shelf = -1;
             me->lp_ctl   = (uint8_t)GUI_SET_COUNT;
+            me->lp_saved = -1;
         }
         else if ( (khal_time_ms() - me->lp_ms) >= GUI_LONG_PRESS_MS )
         {
@@ -13677,6 +13703,19 @@ static void gui_long_press_tick(Gui * const me)
                     fired = true;
                 }
             }
+            else if ( 0 <= me->lp_saved )
+            {
+#if CONFIG_KODEOS_WIFI
+                /* A saved network's row: the question the top button held
+                 * on it asks. Another card that took the page's place under
+                 * the finger has the glass. */
+                if ( (GUI_SHEET_WIFI == me->sheet) && !me->sheet_locked )
+                {
+                    gui_wifi_forget(me, (uint8_t)me->lp_saved);
+                    fired = true;
+                }
+#endif
+            }
             else if ( (GUI_SHEET_NONE == me->sheet) && !me->sheet_locked )
             {
                 /* A card that rose under the finger has the glass. */
@@ -13691,6 +13730,7 @@ static void gui_long_press_tick(Gui * const me)
             me->lp_row   = -1;
             me->lp_shelf = -1;
             me->lp_ctl   = (uint8_t)GUI_SET_COUNT;
+            me->lp_saved = -1;
             if ( fired )
             {
                 kui_gesture_press(&me->gest, me->touch_x, me->touch_y, 0U, true);
@@ -13707,6 +13747,7 @@ static void gui_long_press_tick(Gui * const me)
         me->lp_row   = -1;
         me->lp_shelf = -1;
         me->lp_ctl   = (uint8_t)GUI_SET_COUNT;
+        me->lp_saved = -1;
     }
 }
 
@@ -23504,21 +23545,30 @@ static void gui_wifi_fill(Gui * const me)
         {
             continue;   /* it already has the row above */
         }
-        (void)snprintf(s, sizeof(s), "Saved");
-        for ( uint8_t k = 0U; k < me->scan_n; ++k )
+        int8_t const heard = gui_wifi_heard(me, me->saved_ssid[i]);
+
+        if ( gui_wifi_row_joining(me, me->saved_ssid[i]) )
         {
-            if ( strcmp(me->scan_ssid[k], me->saved_ssid[i]) == 0 )
-            {
-                (void)snprintf(s, sizeof(s), "Saved, %d dBm",
-                               (int)me->scan_rssi[k]);
-                break;
-            }
+            (void)snprintf(s, sizeof(s), "%s", GUI_WIFI_JOINING);
         }
-        if ( gui_sheet_row(me, me->saved_ssid[i], s, KUI_COLOR_SURFACE,
-                          &kui_glyph_lock, NULL) != NULL )
+        else if ( (int8_t)KGUI_WIFI_RSSI_NONE == heard )
+        {
+            (void)snprintf(s, sizeof(s), "Saved");
+        }
+        else
+        {
+            (void)snprintf(s, sizeof(s), "Saved, %d dBm", (int)heard);
+        }
+        lv_obj_t * const pill = gui_sheet_row(me, me->saved_ssid[i], s, KUI_COLOR_SURFACE,
+                                              &kui_glyph_lock, NULL);
+
+        if ( NULL != pill )
         {
             me->sheet_tag[me->sheet_n - 1U] =
                 (uint16_t)((uint16_t)GUI_TAG_WIFI_SAVED + (uint16_t)i);
+            /* A finger held on it asks whether to forget the network
+             * (gui_long_press_tick()). */
+            (void)lv_obj_add_event_cb(pill, &on_wifi_saved_pressed, LV_EVENT_PRESSED, NULL);
         }
     }
 
@@ -23544,6 +23594,10 @@ static void gui_wifi_fill(Gui * const me)
          * between two strangers is choosing by it. */
         (void)snprintf(s, sizeof(s), "%s, %d dBm", open ? "Open" : "Password",
                        (int)me->scan_rssi[i]);
+        if ( gui_wifi_row_joining(me, me->scan_ssid[i]) )
+        {
+            (void)snprintf(s, sizeof(s), "%s", GUI_WIFI_JOINING);
+        }
         const void *glyph = &kui_glyph_lock;
 
         if ( open )
@@ -23642,9 +23696,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
         {
             /* An empty password means the stored one, so this covers both
              * the open network and the one the board remembers. */
-            (void)wifi_join_request(me->scan_shown[i], "", true);
-            me->scan_own_join = me->scan_out;
-            KLOG_I(TAG, "joining '%s'", me->scan_shown[i]);
+            gui_wifi_row_join(me, idx, me->scan_shown[i], me->scan_shown_rssi[i]);
         }
     }
     else if ( (uint16_t)GUI_TAG_WIFI_SAVED <= tag )
@@ -23653,9 +23705,8 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
 
         if ( i < me->saved_n )            /* the same stale-row guard */
         {
-            (void)wifi_join_request(me->saved_ssid[i], "", true);
-            me->scan_own_join = me->scan_out;
-            KLOG_I(TAG, "joining '%s'", me->saved_ssid[i]);
+            gui_wifi_row_join(me, idx, me->saved_ssid[i],
+                              gui_wifi_heard(me, me->saved_ssid[i]));
         }
     }
     else if ( (uint16_t)GUI_TAG_WIFI_HIDDEN == tag )
@@ -23675,8 +23726,8 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
 }
 
 /**
- * @brief The top button HELD on one Wi-Fi row: ask whether to forget that
- *        network.
+ * @brief The top button, or a finger, HELD on one Wi-Fi row: ask whether to
+ *        forget that network.
  *
  * The one destructive thing this sheet can do, and the hold is what keeps it
  * away from the press that joins - the same separation the launcher's
@@ -23714,6 +23765,179 @@ static void gui_wifi_forget(Gui * const me, uint8_t idx)
     KLOG_I(TAG, "forget '%s'? asked", me->forget_name);
     (void)kgui_haptic_play(KGUI_HAPTIC_MARK);
     gui_sheet_open_kind(me, GUI_SHEET_FORGET);
+}
+
+/**
+ * @brief A finger landed on a saved network's row: remember it for a long
+ *        press.
+ *
+ * @param e The row's press.
+ */
+static void on_wifi_saved_pressed(lv_event_t *e)
+{
+    lv_obj_t const * const row = lv_event_get_current_target_obj(e);
+
+    l_gui.lp_saved = -1;
+    for ( uint8_t i = 0U; i < l_gui.sheet_n; ++i )
+    {
+        if ( l_gui.sheet_rows[i] == row )
+        {
+            l_gui.lp_saved = (int8_t)i;
+            l_gui.lp_ms    = khal_time_ms();
+        }
+    }
+}
+
+/**
+ * @brief How the page's round heard a network.
+ *
+ * @param me   The AO.
+ * @param ssid The network.
+ * @return Its strength, dBm; KGUI_WIFI_RSSI_NONE when the round did not hear it.
+ */
+static int8_t gui_wifi_heard(Gui const * const me, const char *ssid)
+{
+    int8_t rssi  = (int8_t)KGUI_WIFI_RSSI_NONE;
+    bool   found = false;
+
+    for ( uint8_t k = 0U; (k < me->scan_n) && !found; ++k )
+    {
+        if ( strcmp(me->scan_ssid[k], ssid) == 0 )
+        {
+            rssi  = me->scan_rssi[k];
+            found = true;
+        }
+    }
+    return rssi;
+}
+
+/**
+ * @brief Whether the join a row asked for is out, and is @p ssid's.
+ *
+ * @param me   The AO.
+ * @param ssid A network.
+ * @return true while that network's row waits for its join's answer.
+ */
+static bool gui_wifi_row_joining(Gui const * const me, const char *ssid)
+{
+    return ('\0' != me->row_join_ssid[0]) && (strcmp(me->row_join_ssid, ssid) == 0);
+}
+
+/**
+ * @brief Ask for the join of a row's network, with the password the board
+ *        keeps or with none, and note it for its answer.
+ *
+ * The rows are written again, so this one says it is joining and the row of a
+ * join this one takes the place of says what it is again. How it ended is said
+ * when the radio answers (gui_wifi_row_join_state()). A row whose join is out
+ * asks nothing.
+ *
+ * @param me   The AO.
+ * @param idx  The row.
+ * @param ssid Its network.
+ * @param rssi How the network is heard, dBm; KGUI_WIFI_RSSI_NONE when it is not.
+ */
+static void gui_wifi_row_join(Gui * const me, uint8_t idx, const char *ssid, int8_t rssi)
+{
+    if ( gui_wifi_row_joining(me, ssid) )
+    {
+        /* Its join is out already. */
+    }
+    else if ( wifi_join_request(ssid, "", true) )
+    {
+        (void)snprintf(me->row_join_ssid, sizeof(me->row_join_ssid), "%s", ssid);
+        me->row_join_ms   = khal_time_ms();
+        me->row_join_rssi = rssi;
+        me->row_join_door = me->sheet_tag[idx];
+        me->scan_own_join = me->scan_out;
+        KLOG_I(TAG, "joining '%s'", me->row_join_ssid);
+        gui_sheet_refill(me);
+    }
+    else
+    {
+        /* AO_Radio had no room: nothing is out and nothing will answer. */
+        kgui_hint(GUI_HINT_ROOM_BUSY);
+    }
+}
+
+/**
+ * @brief The join a row asked for has ended: say how.
+ *
+ * Joined is said on the hint line, and the rows put the network where the one
+ * the board is on stands. A failure is said in red, in
+ * kgui_wifi_fail_words()'s words. When it is the password's doing, the one the
+ * board keeps no longer opens the network: the keypad comes up for it, its
+ * name in place, to take the new one.
+ *
+ * @param me   The AO, the Wi-Fi page its card.
+ * @param how  How it ended; never KGUI_JOIN_OUT.
+ * @param fail kdrv_wifi_fail_t of a network that turned the board away.
+ */
+static void gui_wifi_row_join_end(Gui * const me, kgui_join_t how, uint8_t fail)
+{
+    char ssid[GUI_SSID_BYTES];
+
+    (void)snprintf(ssid, sizeof(ssid), "%s", me->row_join_ssid);
+    me->row_join_ssid[0] = '\0';
+    if ( KGUI_JOIN_MADE == how )
+    {
+        KLOG_I(TAG, "joined '%s'", ssid);
+        kgui_hint(GUI_KBD_JOINED);
+    }
+    else
+    {
+        const char *words    = GUI_KBD_REFUSED;
+        bool        password = false;
+
+        if ( KGUI_JOIN_TURNED == how )
+        {
+            words    = kgui_wifi_fail_words(fail, me->row_join_rssi);
+            password = kgui_wifi_fail_is_password(fail, me->row_join_rssi);
+        }
+        KLOG_I(TAG, "join of '%s': %s (%u)", ssid, words, (unsigned)fail);
+        if ( password )
+        {
+            gui_kbd_begin(me, ssid, false, me->row_join_rssi, me->row_join_door);
+        }
+        kgui_hint_alert(words);
+    }
+}
+
+/**
+ * @brief What a Wi-Fi state means to the join a row asked for.
+ *
+ * Read as the keypad reads its own (kgui_wifi_join_read()). The radio going
+ * off ends the wait with nothing to say: the page says the radio is off.
+ *
+ * @param me The AO.
+ * @param w  The state event.
+ * @return true when the wait ended with this state: the rows are written again.
+ */
+static bool gui_wifi_row_join_state(Gui * const me, WifiStateEvt const * const w)
+{
+    bool ended = false;
+
+    if ( '\0' != me->row_join_ssid[0] )
+    {
+        kgui_join_t const how = kgui_wifi_join_read(me->row_join_ssid, w->state, w->ssid,
+                                                    w->joining);
+
+        if ( !me->wifi_on )
+        {
+            me->row_join_ssid[0] = '\0';
+            ended = true;
+        }
+        else if ( KGUI_JOIN_OUT != how )
+        {
+            gui_wifi_row_join_end(me, how, w->fail);
+            ended = true;
+        }
+        else
+        {
+            /* Its answer is still to come. */
+        }
+    }
+    return ended;
 }
 
 /**
@@ -24152,14 +24376,12 @@ static void gui_kbd_failed(Gui * const me, const char *words)
 /**
  * @brief What a Wi-Fi state means to a keypad that is up.
  *
- * The answer to a join is the first state AO_Radio publishes about the network
- * asked for once the join is no longer out (WifiStateEvt's `joining`): an
- * address is the join; the network turning the station away says why, in
+ * The answer to a join is the first state AO_Radio publishes once the join is
+ * no longer out (kgui_wifi_join_read()): an address on the network asked for
+ * is the join; the network turning the station away says why, in
  * kgui_wifi_fail_words()'s words - the password, a network not found or out of
  * range, or another failure; and a join that ended with no network and no
- * address is a timeout or a request the radio did not take. A state published
- * while the join is still out - a strength refresh, a round's end - is not its
- * answer, and a state about another network says nothing about this one.
+ * address is a timeout or a request the radio did not take.
  *
  * The radio going off ends the errand: nothing can be joined. The close is
  * posted, so the errand is cleared with it: a second state queued behind the
@@ -24179,31 +24401,27 @@ static void gui_kbd_wifi_state(Gui * const me, WifiStateEvt const * const w)
         }
         else if ( (uint8_t)GUI_KBD_JOINING == me->kbd_stage )
         {
-            if ( (uint8_t)KDRV_WIFI_GOT_IP == w->state )
+            switch ( kgui_wifi_join_read(me->kbd_ssid, w->state, w->ssid, w->joining) )
             {
-                if ( strcmp(w->ssid, me->kbd_ssid) == 0 )
-                {
+                case KGUI_JOIN_MADE: {
                     gui_kbd_joined(me);
+                    break;
                 }
-            }
-            else if ( w->joining )
-            {
-                /* Not its answer: the join is still out. */
-            }
-            else if ( (uint8_t)KDRV_WIFI_DISCONNECTED == w->state )
-            {
-                KLOG_I(TAG, "join of '%s': the network turned us away (%u)",
-                       me->kbd_ssid, (unsigned)w->fail);
-                gui_kbd_failed(me, kgui_wifi_fail_words(w->fail, me->kbd_rssi));
-            }
-            else if ( (uint8_t)KDRV_WIFI_IDLE == w->state )
-            {
-                KLOG_I(TAG, "join of '%s': nothing came of it", me->kbd_ssid);
-                gui_kbd_failed(me, GUI_KBD_REFUSED);
-            }
-            else
-            {
-                /* Still connecting. */
+                case KGUI_JOIN_TURNED: {
+                    KLOG_I(TAG, "join of '%s': the network turned us away (%u)",
+                           me->kbd_ssid, (unsigned)w->fail);
+                    gui_kbd_failed(me, kgui_wifi_fail_words(w->fail, me->kbd_rssi));
+                    break;
+                }
+                case KGUI_JOIN_NOTHING: {
+                    KLOG_I(TAG, "join of '%s': nothing came of it", me->kbd_ssid);
+                    gui_kbd_failed(me, GUI_KBD_REFUSED);
+                    break;
+                }
+                default: {
+                    /* Its answer is still to come. */
+                    break;
+                }
             }
         }
         else
@@ -27112,6 +27330,13 @@ static void gui_sheet_tick(Gui * const me)
             {
                 period = GUI_WIFI_SCAN_MS;
             }
+            if ( ('\0' != me->row_join_ssid[0])
+                && ((khal_time_ms() - me->row_join_ms) >= GUI_KBD_JOIN_GUARD_MS) )
+            {
+                /* The join a row asked for was never answered. */
+                gui_wifi_row_join_end(me, KGUI_JOIN_NOTHING, (uint8_t)KDRV_WIFI_FAIL_NONE);
+                gui_sheet_refill(me);
+            }
             /* What the sweep has heard so far, as it hears it. A finger on
              * the glass keeps its rows until it lifts. */
             if ( me->scan_dirty && ((khal_time_ms() - me->scan_paint_ms) >= GUI_SCAN_PAINT_MS)
@@ -27393,6 +27618,12 @@ static void gui_sheet_kind_take(Gui * const me, GuiSheet kind)
     if ( (GUI_SHEET_KEYPAD == me->sheet) && (GUI_SHEET_KEYPAD != kind) )
     {
         gui_kbd_forget(me);
+    }
+    /* The Wi-Fi page turns into another card: how a row's join ends is said
+     * on that page and nowhere else. */
+    if ( (GUI_SHEET_WIFI == me->sheet) && (GUI_SHEET_WIFI != kind) )
+    {
+        me->row_join_ssid[0] = '\0';
     }
 #endif
     if ( (GUI_SHEET_OPENING == kind) || (GUI_SHEET_FAILURE == kind) )
@@ -34914,6 +35145,7 @@ void Gui_ctor(void)
         me->shelf_pop[i] = UINT8_MAX;
     }
     me->lp_ctl          = (uint8_t)GUI_SET_COUNT;
+    me->lp_saved        = -1;
     me->vol             = (uint8_t)KODE_AUDIO_VOL_DEFAULT;
     me->entry_since_end     = false;
     me->list_paging         = false;
@@ -34929,6 +35161,7 @@ void Gui_ctor(void)
     me->scan_fresh      = true;
     me->saved_fresh     = true;
     me->saved_owed      = false;
+    me->row_join_ssid[0] = '\0';
 #endif
     me->list_answered   = false;
     me->apps_answered   = false;
@@ -35903,9 +36136,10 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                  * press does not survive one. */
                 gui_press_disarm(me);
                 /* No row or circle is under this finger until LVGL says so
-                 * (on_pill_pressed(), on_cc_pressed()). */
-                me->lp_row = -1;
-                me->lp_ctl = (uint8_t)GUI_SET_COUNT;
+                 * (on_pill_pressed(), on_cc_pressed(), on_wifi_saved_pressed()). */
+                me->lp_row   = -1;
+                me->lp_ctl   = (uint8_t)GUI_SET_COUNT;
+                me->lp_saved = -1;
                 /* The glass is the input in use from here: the focus ring
                  * goes until a button is pressed. */
                 gui_pad_mode(me, false);
@@ -36869,9 +37103,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 me->scan_refused = false;
                 me->sheet_ask    = true;
             }
+            /* The join a row asked for, whose answer this may be: its row
+             * says what it is again. */
+            bool const row_ended = gui_wifi_row_join_state(me, w);
+
             if ( GUI_SHEET_WIFI == me->sheet )
             {
-                if ( same )
+                if ( same && !row_ended )
                 {
                     gui_wifi_link_row(me);
                 }
@@ -39840,6 +40078,9 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
             {
                 gui_kbd_forget(me);
             }
+            /* And the join a row of the Wi-Fi page asked for has nowhere
+             * left to say how it ended. */
+            me->row_join_ssid[0] = '\0';
 #endif
             me->sheet       = GUI_SHEET_NONE;
             me->sheet_under = GUI_SHEET_NONE;

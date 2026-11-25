@@ -60,25 +60,40 @@ const char *kgui_ble_pair_words(bool open, bool wait, bool linked)
     return words;
 }
 
-const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi)
+bool kgui_wifi_fail_is_password(uint8_t fail, int8_t rssi)
 {
-    const char *words = "Could not join";
+    bool password = false;
 
     if ( (uint8_t)KDRV_WIFI_FAIL_PASSWORD == fail )
     {
         /* The network turned the password down, and said so. */
-        words = "Wrong password";
+        password = true;
     }
     else if ( (uint8_t)KDRV_WIFI_FAIL_HANDSHAKE == fail )
     {
         /* The handshake did not finish. The stack gives one reason for a
          * wrong password and for a signal that went during it: a network
          * heard weakly lost the signal, any other had the password wrong. */
+        password = ((int8_t)KGUI_WIFI_RSSI_NONE == rssi) || ((int8_t)KGUI_WIFI_WEAK_DBM <= rssi);
+    }
+    else
+    {
+        /* Not the password's doing. */
+    }
+    return password;
+}
+
+const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi)
+{
+    const char *words = "Could not join";
+
+    if ( kgui_wifi_fail_is_password(fail, rssi) )
+    {
         words = "Wrong password";
-        if ( ((int8_t)KGUI_WIFI_RSSI_NONE != rssi) && ((int8_t)KGUI_WIFI_WEAK_DBM > rssi) )
-        {
-            words = "Signal lost";
-        }
+    }
+    else if ( (uint8_t)KDRV_WIFI_FAIL_HANDSHAKE == fail )
+    {
+        words = "Signal lost";
     }
     else if ( (uint8_t)KDRV_WIFI_FAIL_NOT_FOUND == fail )
     {
@@ -90,6 +105,37 @@ const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi)
          * person cannot act on. */
     }
     return words;
+}
+
+kgui_join_t kgui_wifi_join_read(const char *asked, uint8_t state, const char *ssid,
+                                bool joining)
+{
+    kgui_join_t read = KGUI_JOIN_OUT;
+
+    if ( (uint8_t)KDRV_WIFI_GOT_IP == state )
+    {
+        if ( (NULL != asked) && (NULL != ssid) && (strcmp(asked, ssid) == 0) )
+        {
+            read = KGUI_JOIN_MADE;
+        }
+    }
+    else if ( joining )
+    {
+        /* Not its answer: the join is still out. */
+    }
+    else if ( (uint8_t)KDRV_WIFI_DISCONNECTED == state )
+    {
+        read = KGUI_JOIN_TURNED;
+    }
+    else if ( (uint8_t)KDRV_WIFI_IDLE == state )
+    {
+        read = KGUI_JOIN_NOTHING;
+    }
+    else
+    {
+        /* Still connecting. */
+    }
+    return read;
 }
 
 bool kgui_wifi_goes_nowhere(const char *why)

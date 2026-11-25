@@ -69,6 +69,47 @@ const char *kgui_ble_pair_words(bool open, bool wait, bool linked);
 const char *kgui_wifi_fail_words(uint8_t fail, int8_t rssi);
 
 /**
+ * @brief Whether a failed join is the password's doing.
+ *
+ * True for the failures kgui_wifi_fail_words() words as "Wrong password": the
+ * ones a new password can mend.
+ *
+ * @param fail kdrv_wifi_fail_t, as WifiStateEvt carries it.
+ * @param rssi How the network was heard when it was chosen, dBm, or
+ *             KGUI_WIFI_RSSI_NONE.
+ * @return true when the password is what failed.
+ */
+bool kgui_wifi_fail_is_password(uint8_t fail, int8_t rssi);
+
+/** @brief What a state of the radio says about a join that was asked for
+ *         (kgui_wifi_join_read()). */
+typedef enum {
+    KGUI_JOIN_OUT = 0,   /**< Nothing yet: the join is still out, or the state is another network's. */
+    KGUI_JOIN_MADE,      /**< The network gave an address.                                          */
+    KGUI_JOIN_TURNED,    /**< The network turned the board away; the state's `fail` says why.       */
+    KGUI_JOIN_NOTHING    /**< It ended on no network: a timeout, or a request the radio did not take. */
+} kgui_join_t;
+
+/**
+ * @brief What a state of the radio says about a join that was asked for.
+ *
+ * The answer to a join is the first state AO_Radio publishes once the join is
+ * no longer out. An address on the network asked for is the join, and an
+ * address on any other says nothing about it: the board was on that one
+ * before. A state published while the join is out - a refresh of the
+ * strength, a round's end - is not its answer. Off a network the radio names
+ * none, so a network that turned the board away is known by the state alone.
+ *
+ * @param asked   The network the join was asked for.
+ * @param state   kdrv_wifi_state_t, as WifiStateEvt carries it.
+ * @param ssid    The network the state is about, as WifiStateEvt carries it.
+ * @param joining The join has yet to end (WifiStateEvt.joining).
+ * @return What the state says about the join.
+ */
+kgui_join_t kgui_wifi_join_read(const char *asked, uint8_t state, const char *ssid,
+                                bool joining);
+
+/**
  * @brief Whether the Kode channel's wait means the network reaches nothing.
  *
  * The channel's join is a request to Kode over HTTPS. When it ends with no
