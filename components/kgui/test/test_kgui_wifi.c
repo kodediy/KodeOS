@@ -87,6 +87,70 @@ void test_a_handshake_that_timed_out_is_told_by_the_signal(void)
                                                   (int8_t)KGUI_WIFI_RSSI_NONE));
 }
 
+void test_an_address_on_the_network_asked_for_is_the_join(void)
+{
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_MADE,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_GOT_IP, "home", false));
+    /* The address is the answer, whatever else is still said to be out. */
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_MADE,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_GOT_IP, "home", true));
+}
+
+void test_an_address_on_another_network_says_nothing_about_the_join(void)
+{
+    /* The network the board was on before the join went out. */
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_OUT,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_GOT_IP, "office", false));
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_OUT,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_GOT_IP, "", false));
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_OUT,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_GOT_IP, NULL, false));
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_OUT,
+                          kgui_wifi_join_read(NULL, (uint8_t)KDRV_WIFI_GOT_IP, "home", false));
+}
+
+void test_a_state_published_while_the_join_is_out_is_not_its_answer(void)
+{
+    /* A refresh of the strength, the end of a round: the radio says the join
+     * has yet to end. */
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_OUT,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_DISCONNECTED, "", true));
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_OUT,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_IDLE, "", true));
+    /* And one still on its way to an address. */
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_OUT,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_CONNECTING, "home", false));
+}
+
+void test_a_network_that_turned_the_board_away_ends_the_join(void)
+{
+    /* The radio names no network once one has turned it away. */
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_TURNED,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_DISCONNECTED, "", false));
+}
+
+void test_a_join_that_ended_on_no_network_came_to_nothing(void)
+{
+    TEST_ASSERT_EQUAL_INT(KGUI_JOIN_NOTHING,
+                          kgui_wifi_join_read("home", (uint8_t)KDRV_WIFI_IDLE, "", false));
+}
+
+void test_a_failure_is_the_passwords_when_its_words_say_so(void)
+{
+    TEST_ASSERT_TRUE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_PASSWORD, -40));
+    TEST_ASSERT_TRUE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_PASSWORD, -90));
+    /* A handshake that timed out on a network heard well, or never heard. */
+    TEST_ASSERT_TRUE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE, -40));
+    TEST_ASSERT_TRUE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                (int8_t)KGUI_WIFI_RSSI_NONE));
+    /* On one heard weakly it is the signal's doing. */
+    TEST_ASSERT_FALSE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_HANDSHAKE,
+                                                 (int8_t)(KGUI_WIFI_WEAK_DBM - 1)));
+    TEST_ASSERT_FALSE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_NOT_FOUND, -40));
+    TEST_ASSERT_FALSE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_OTHER, -40));
+    TEST_ASSERT_FALSE(kgui_wifi_fail_is_password((uint8_t)KDRV_WIFI_FAIL_NONE, -40));
+}
+
 void test_only_a_wait_with_no_answer_goes_nowhere(void)
 {
     TEST_ASSERT_TRUE(kgui_wifi_goes_nowhere("timeout"));
@@ -146,6 +210,12 @@ int main(void)
     RUN_TEST(test_a_dead_radio_chip_is_never_on);
     RUN_TEST(test_a_failed_join_says_why);
     RUN_TEST(test_a_handshake_that_timed_out_is_told_by_the_signal);
+    RUN_TEST(test_an_address_on_the_network_asked_for_is_the_join);
+    RUN_TEST(test_an_address_on_another_network_says_nothing_about_the_join);
+    RUN_TEST(test_a_state_published_while_the_join_is_out_is_not_its_answer);
+    RUN_TEST(test_a_network_that_turned_the_board_away_ends_the_join);
+    RUN_TEST(test_a_join_that_ended_on_no_network_came_to_nothing);
+    RUN_TEST(test_a_failure_is_the_passwords_when_its_words_say_so);
     RUN_TEST(test_only_a_wait_with_no_answer_goes_nowhere);
     RUN_TEST(test_pair_new_device_says_visible_only_with_the_link_free);
     RUN_TEST(test_a_sweep_ended_for_a_newer_request_is_not_asked_again_at_once);
