@@ -879,6 +879,20 @@ enum {
 #define GUI_KBD_NEED_NAME    "Type the name"       /**< Next with nothing typed. */
 #define GUI_KBD_SCANNING     "Scanning, try again" /**< Join while the radio is still looking for networks: it would refuse. */
 #define GUI_WIFI_JOINING     "Joining..."          /**< What a row of the Wi-Fi page says while the join it asked for is out. */
+#define GUI_WIFI_LEAVING     "Disconnecting..."    /**< What the connected network's row says from the press that leaves it until it is left. */
+#define GUI_WIFI_LEAVE_GUARD_MS 10000U             /**< A leave the radio has not made in this long is given up, and the row says Connected again. */
+
+/**
+ * @brief Where the leave a press on the connected network's row asked for
+ *        stands.
+ *
+ * Kept in me->leave as a byte, like the other enumerations this AO keeps.
+ */
+enum {
+    GUI_LEAVE_NONE = 0,   /**< None is out. */
+    GUI_LEAVE_OWED,       /**< It waits for the page's sweep to end: the radio refuses a leave while it looks for networks. */
+    GUI_LEAVE_ASKED       /**< AO_Radio has it. */
+};
 #endif
 
 /* What kgui keeps across a reboot: the name of the row the launcher last
@@ -1637,8 +1651,8 @@ static const GuiListPage s_list_pages[] = {
 #define GUI_OFF_KEY        "off_after"
 
 /**
- * @brief The sequence numbers this AO puts on its requests of `vol` and of
- *        `off_after`.
+ * @brief The sequence numbers this AO puts on its requests of `vol`, of
+ *        `off_after` and of `chan`.
  *
  * The console numbers its own from 1 and only takes the answer to the one in
  * flight; the top bit keeps these out of its way, and says in the answer
@@ -1648,6 +1662,8 @@ static const GuiListPage s_list_pages[] = {
 #define GUI_VOL_SEQ_SET    0x80000002U   /**< Set it and keep it. */
 #define GUI_OFF_SEQ_READ   0x80000003U   /**< Ask what the time asleep before OFF is. */
 #define GUI_OFF_SEQ_SET    0x80000004U   /**< Set it and keep it. */
+#define GUI_CHAN_KEY       "chan"        /**< The Kode channel's switch, AO_Net's setting. */
+#define GUI_CHAN_SEQ_SET   0x80000005U   /**< Switch the Kode channel and keep it. */
 #define GUI_ZONE_SEQ_BASE  0x80000100U   /**< kgui's own `zone` requests start here: the top half, which the console's counter never reaches. */
 #define GUI_ZONE_SEQ_MASK  0x0000FFFFU   /**< How far they count before they wrap. */
 
@@ -3164,6 +3180,11 @@ typedef struct {
                                *   words a join that fails.                 */
     uint16_t row_join_door;  /**< The row's tag, where the ring goes back to
                                *   from the keypad a wrong password opens.  */
+    uint8_t  leave;          /**< GUI_LEAVE_* stage: the leave a press on the
+                               *   connected network's row asked for. Kept
+                               *   only while the Wi-Fi page is the card.   */
+    uint32_t leave_ms;       /**< When it was asked, for
+                               *   GUI_WIFI_LEAVE_GUARD_MS.                 */
 
     /* THE KEYPAD'S ERRAND (GUI_SHEET_KEYPAD). What it is for is here; what is
      * typed is NOT: that lives in kgui_keyboard.c alone, and is never in this
@@ -3448,6 +3469,8 @@ static void gui_wifi_fill(Gui * const me);
 static bool gui_wifi_scan_due(Gui const * const me, uint32_t now, bool entering);
 static void gui_wifi_act(Gui * const me, uint8_t idx);
 static void gui_wifi_forget(Gui * const me, uint8_t idx);
+static void gui_wifi_leave(Gui * const me);
+static void gui_wifi_leave_tick(Gui * const me);
 static int8_t gui_wifi_heard(Gui const * const me, const char *ssid);
 static bool gui_wifi_row_joining(Gui const * const me, const char *ssid);
 static void gui_wifi_row_join(Gui * const me, uint8_t idx, const char *ssid, int8_t rssi);
@@ -3474,6 +3497,7 @@ static void gui_kbd_joined(Gui * const me);
 static void gui_kbd_failed(Gui * const me, const char *words);
 static const char *gui_kbd_stage_name(uint8_t stage);
 #if CONFIG_KODEOS_CHANNEL
+static void gui_wifi_chan_switch(Gui * const me);
 static void gui_wifi_chan_text(Gui const * const me, char *out, size_t cap);
 static void gui_wifi_chan_row(Gui * const me);
 static uint32_t gui_wifi_chan_left_s(Gui const * const me);
@@ -23715,13 +23739,115 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
          * and its password. */
         gui_kbd_begin(me, "", true, (int8_t)KGUI_WIFI_RSSI_NONE, tag);
     }
+    else if ( (uint16_t)GUI_TAG_WIFI_LINKED == tag )
+    {
+        /* The network this board is on: the press leaves it. */
+        gui_wifi_leave(me);
+    }
+#if CONFIG_KODEOS_CHANNEL
+    else if ( (uint16_t)GUI_TAG_WIFI_CHANNEL == tag )
+    {
+        /* The Kode channel's row is its switch. */
+        gui_wifi_chan_switch(me);
+    }
+#endif
     else
     {
-        /* GUI_TAG_WIFI_LINKED: the network this board is already on. There
-         * is nothing to ask for and nothing to say - the check on the row is
-         * the whole answer, and leaving a network is not a gesture worth
-         * hiding behind the same press that joins one. GUI_TAG_WIFI_CHANNEL
-         * lands here too: the channel has no switch, so its row only tells. */
+        /* No other row has a press. */
+    }
+}
+
+/**
+ * @brief The top button on the row of the network the board is on: leave it.
+ *
+ * Leaving is not forgetting: the network stays remembered, its row says Saved
+ * and a press on it joins again. The radio goes back on no network by itself
+ * until one is asked for. It refuses a leave while it looks for networks, so
+ * with the page's sweep out the sweep is ended first and the leave goes when
+ * it has ended (gui_wifi_leave_tick()). The row says it is disconnecting from
+ * the press on. While a row's join is out the board is leaving this network
+ * already, and the press asks nothing.
+ *
+ * @param me The AO.
+ */
+static void gui_wifi_leave(Gui * const me)
+{
+    if ( ('\0' != me->row_join_ssid[0]) || ((uint8_t)GUI_LEAVE_NONE != me->leave) )
+    {
+        /* It is being left already: for the network a row asked for, or by
+         * an earlier press. */
+    }
+    else
+    {
+        uint8_t stage = (uint8_t)GUI_LEAVE_NONE;
+
+        if ( me->scan_out )
+        {
+            if ( wifi_scan_stop_request() )
+            {
+                stage = (uint8_t)GUI_LEAVE_OWED;
+            }
+        }
+        else if ( wifi_leave_request() )
+        {
+            stage = (uint8_t)GUI_LEAVE_ASKED;
+        }
+        else
+        {
+            /* Nothing was posted. */
+        }
+        if ( (uint8_t)GUI_LEAVE_NONE == stage )
+        {
+            /* AO_Radio had no room: nothing was asked. */
+            kgui_hint(GUI_HINT_ROOM_BUSY);
+        }
+        else
+        {
+            me->leave    = stage;
+            me->leave_ms = khal_time_ms();
+            KLOG_I(TAG, "leaving '%s'", me->wifi_ssid);
+            gui_wifi_link_row(me);
+        }
+    }
+}
+
+/**
+ * @brief The leave's share of the Wi-Fi page's tick.
+ *
+ * A leave that waited for the page's sweep goes once the sweep has ended.
+ * The network left ends it: the rows say so already. One the radio has not
+ * made in GUI_WIFI_LEAVE_GUARD_MS is given up - it was busy with something
+ * else - and the row says Connected again.
+ *
+ * @param me The AO, the Wi-Fi page its card.
+ */
+static void gui_wifi_leave_tick(Gui * const me)
+{
+    if ( (uint8_t)GUI_LEAVE_NONE == me->leave )
+    {
+        /* No leave is out. */
+    }
+    else if ( !me->wifi_linked )
+    {
+        me->leave = (uint8_t)GUI_LEAVE_NONE;
+    }
+    else if ( (khal_time_ms() - me->leave_ms) >= GUI_WIFI_LEAVE_GUARD_MS )
+    {
+        me->leave = (uint8_t)GUI_LEAVE_NONE;
+        KLOG_I(TAG, "leave of '%s': the radio did not make it", me->wifi_ssid);
+        kgui_hint(GUI_HINT_ROOM_BUSY);
+        gui_wifi_link_row(me);
+    }
+    else if ( ((uint8_t)GUI_LEAVE_OWED == me->leave) && (!me->scan_out) )
+    {
+        if ( wifi_leave_request() )
+        {
+            me->leave = (uint8_t)GUI_LEAVE_ASKED;
+        }
+    }
+    else
+    {
+        /* The sweep has yet to end, or the radio has yet to leave. */
     }
 }
 
@@ -24434,8 +24560,8 @@ static void gui_kbd_wifi_state(Gui * const me, WifiStateEvt const * const w)
 /**
  * @brief What the row of the network the board is on says under its name.
  *
- * "Connected" with the strength, unless the Kode channel's last try reached
- * nothing over it: a network that gives an address and goes nowhere is a
+ * "Disconnecting..." from the press that leaves it. Otherwise "Connected" with
+ * the strength, unless the Kode channel's last try reached nothing over it: a network that gives an address and goes nowhere is a
  * sign-in page or a line that is down, and "Connected" alone would be the lie
  * the person cannot see through.
  *
@@ -24445,6 +24571,11 @@ static void gui_kbd_wifi_state(Gui * const me, WifiStateEvt const * const w)
  */
 static void gui_wifi_link_text(Gui const * const me, char *out, size_t cap)
 {
+    if ( (uint8_t)GUI_LEAVE_NONE != me->leave )
+    {
+        (void)snprintf(out, cap, "%s", GUI_WIFI_LEAVING);
+        return;
+    }
 #if CONFIG_KODEOS_CHANNEL
     if ( me->chan_nowhere )
     {
@@ -24479,6 +24610,49 @@ static void gui_wifi_link_row(Gui * const me)
 }
 
 #if CONFIG_KODEOS_CHANNEL
+/**
+ * @brief The top button on the Kode ecosystem row: leave the channel, or join
+ *        it again.
+ *
+ * The row is the channel's switch, `config key="chan"`: its owner is asked as
+ * the console asks (kode_config_post()), applies it and keeps it. A channel
+ * that is off is switched on, and any other is switched off. The row's words
+ * follow the state AO_Net publishes.
+ *
+ * @param me The AO.
+ */
+static void gui_wifi_chan_switch(Gui * const me)
+{
+    bool const               on = ((uint8_t)CHAN_OFF == me->chan_state);
+    KodeConfigReqEvt * const e  = Q_NEW_X(KodeConfigReqEvt, 1U, CONFIG_REQ_SIG);
+    bool                     posted = false;
+
+    if ( NULL != e )
+    {
+        e->seq  = GUI_CHAN_SEQ_SET;
+        e->set  = true;
+        (void)snprintf(e->key, sizeof(e->key), "%s", GUI_CHAN_KEY);
+        e->i    = 0;
+        e->b    = on;
+        e->e    = 0U;
+        e->s[0] = '\0';
+        posted  = kode_config_post(e, &me->super);
+    }
+    if ( !posted )
+    {
+        /* AO_Net had no room: nothing was asked. */
+        kgui_hint(GUI_HINT_ROOM_BUSY);
+    }
+    else if ( on )
+    {
+        KLOG_I(TAG, "Kode ecosystem: asked to join");
+    }
+    else
+    {
+        KLOG_I(TAG, "Kode ecosystem: asked to leave");
+    }
+}
+
 /**
  * @brief What the Kode ecosystem row says about the channel, in words.
  *
@@ -27330,6 +27504,7 @@ static void gui_sheet_tick(Gui * const me)
             {
                 period = GUI_WIFI_SCAN_MS;
             }
+            gui_wifi_leave_tick(me);
             if ( ('\0' != me->row_join_ssid[0])
                 && ((khal_time_ms() - me->row_join_ms) >= GUI_KBD_JOIN_GUARD_MS) )
             {
@@ -27620,10 +27795,11 @@ static void gui_sheet_kind_take(Gui * const me, GuiSheet kind)
         gui_kbd_forget(me);
     }
     /* The Wi-Fi page turns into another card: how a row's join ends is said
-     * on that page and nowhere else. */
+     * on that page and nowhere else, and so is a leave on its way. */
     if ( (GUI_SHEET_WIFI == me->sheet) && (GUI_SHEET_WIFI != kind) )
     {
         me->row_join_ssid[0] = '\0';
+        me->leave            = (uint8_t)GUI_LEAVE_NONE;
     }
 #endif
     if ( (GUI_SHEET_OPENING == kind) || (GUI_SHEET_FAILURE == kind) )
@@ -35162,6 +35338,7 @@ void Gui_ctor(void)
     me->saved_fresh     = true;
     me->saved_owed      = false;
     me->row_join_ssid[0] = '\0';
+    me->leave           = (uint8_t)GUI_LEAVE_NONE;
 #endif
     me->list_answered   = false;
     me->apps_answered   = false;
@@ -40079,8 +40256,9 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
                 gui_kbd_forget(me);
             }
             /* And the join a row of the Wi-Fi page asked for has nowhere
-             * left to say how it ended. */
+             * left to say how it ended, nor a leave on its way. */
             me->row_join_ssid[0] = '\0';
+            me->leave            = (uint8_t)GUI_LEAVE_NONE;
 #endif
             me->sheet       = GUI_SHEET_NONE;
             me->sheet_under = GUI_SHEET_NONE;
