@@ -30010,7 +30010,7 @@ static uint32_t gui_knock_wait(Gui const * const me, uint32_t next)
 #define GUI_DEEP_FADE_MS        363U     /* The words go, at the count's end. */
 #define GUI_DEEP_BLACK_MS       198U     /* Black on the glass, before it is asked for. */
 #define GUI_DEEP_DIGIT_DY       (-40)    /**< The figure above the glass's middle. */
-#define GUI_DEEP_WORDS_DY       46       /**< The words under it, close to its foot. */
+#define GUI_DEEP_WORDS_DY       34       /**< The words under it, close to its foot. */
 
 static volatile bool s_deep_try;   /* `function name="deep_warn"`: see it now. */
 
@@ -30093,7 +30093,7 @@ static void gui_deep_begin(Gui * const me)
         lv_obj_set_clickable(box, false);
         lv_obj_set_scrollable(box, false);
         me->deep_digit = lv_label_create(box);
-        lv_obj_set_style_text_font(me->deep_digit, &kui_font_hero_160, LV_PART_MAIN);
+        lv_obj_set_style_text_font(me->deep_digit, &kgui_font_figure_128, LV_PART_MAIN);
         lv_obj_set_style_text_color(me->deep_digit, KUI_COLOR_TEXT_ON_BG, LV_PART_MAIN);
         lv_label_set_text_static(me->deep_digit, "5");
         lv_obj_align(me->deep_digit, LV_ALIGN_CENTER, 0, GUI_DEEP_DIGIT_DY);
