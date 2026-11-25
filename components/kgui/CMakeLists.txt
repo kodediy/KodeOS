@@ -89,7 +89,6 @@ idf_component_register(
          "kgui_fluid.c"
          "fonts/kgui_font_dmsans_b_34.c"
          "fonts/kgui_font_figure_128.c"
-         "fonts/kgui_font_outfit_xb_48.c"
          "glyphs/kgui_glyph_book_40.c"
          "glyphs/kgui_glyph_camera_40.c"
          "glyphs/kgui_glyph_clock_40.c"

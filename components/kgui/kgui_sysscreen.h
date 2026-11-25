@@ -55,13 +55,23 @@ LV_FONT_DECLARE(kgui_font_figure_128);
 #define KGUI_SYS_PILE_LEVEL_W 14    /**< What is left in the cell: the sliver of its fill. */
 #define KGUI_SYS_PILE_LEVEL_H 62    /**< ...and its height. */
 #define KGUI_SYS_PILE_LEVEL_R 6     /**< ...and its corners. */
-#define KGUI_SYS_PILL_Y       370   /**< The top of the answer pill. */
+#define KGUI_SYS_PILL_Y       340   /**< The top of the answer pill. */
 #define KGUI_SYS_PILL_H       72    /**< ...and its height. */
 #define KGUI_SYS_PILL_W_MIN   173   /**< ...and the least of its width. */
 #define KGUI_SYS_PILL_RING    (KUI_RING_W + KUI_RING_GAP) /**< ...and the room its focus ring takes outside it. */
 #define KGUI_SYS_PILL_PAD     72    /**< ...what its word is given across, both sides in all. */
 #define KGUI_SYS_PILL_ROW_W   374   /**< The row the pill stands in: the widest it may be. */
 #define KGUI_SYS_KIT_ROW_Y    395   /**< Where the kit stands its answer row (kui_sheet_create()). */
+#define KGUI_SYS_PAIR_W       173   /**< Each pill of a pair: its width. */
+#define KGUI_SYS_PAIR_GAP     16    /**< ...and the gap between the two. */
+#define KGUI_SYS_PAIR_ROW_W   410   /**< The room a pair stands in, rings included: the glass's width. */
+#define KGUI_SYS_PAIR_FONT    (&kui_font_display_40) /**< The face of every pair's words: the largest cut in which the longest word fits. */
+#define KGUI_SYS_ASK_Y        96    /**< The top of a question's title, in the glass's top third. */
+#define KGUI_SYS_ASK_X        20    /**< The left of a question's title and body. */
+#define KGUI_SYS_ASK_W        370   /**< ...and their width. */
+#define KGUI_SYS_ASK_GAP      14    /**< From the title's foot to the body. */
+#define KGUI_SYS_ASK_TITLE_N  2     /**< Lines a question's title may take: the rest is dotted. */
+#define KGUI_SYS_ASK_BODY_N   3     /**< Lines a question's body may take. */
 #define KGUI_SYS_FIGURE_NONE  255U  /**< The share the figure shows when it shows none. */
 
 /** @brief The frame's objects. */
@@ -70,7 +80,6 @@ typedef struct {
     lv_obj_t   *blank;    /**< The disc of an app with no look. */
     lv_obj_t   *blank_img;/**< The apps glyph on it. */
     lv_obj_t   *glyph;    /**< A glyph, 96 px. */
-    lv_obj_t   *word;     /**< A word as the protagonist. */
     lv_obj_t   *pile;     /**< The red battery. */
     lv_obj_t   *code;     /**< A pairing's code. */
     lv_obj_t   *figure;   /**< A write's share. */
@@ -79,7 +88,6 @@ typedef struct {
     lv_obj_t   *second;   /**< The second. */
     lv_obj_t   *detail;   /**< The lines under them, three at most, the last one dotted when there is more. */
     lv_obj_t   *note;     /**< A write's small print, under its second line. */
-    lv_obj_t   *message;  /**< A card that is only words: large, centred over its answer, no protagonist. */
     uint8_t     shown;    /**< The share the figure says, or KGUI_SYS_FIGURE_NONE. */
     bool        made;     /**< Every object stands. */
 } kgui_sys_t;
@@ -92,16 +100,6 @@ typedef struct {
  * @return true when all of them stand.
  */
 bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card);
-
-/**
- * @brief Say one message as the whole card: Outfit ExtraBold 40, centred
- *        across the glass and in the room above the answer pill, with no
- *        protagonist. NULL takes it away.
- *
- * @param s    The frame.
- * @param text The words; up to three lines, wrapped.
- */
-void kgui_sys_message(kgui_sys_t *s, const char *text);
 
 /**
  * @brief A large glyph as the card's whole message: at its own size, centred
@@ -147,14 +145,6 @@ void kgui_sys_app(kgui_sys_t *s, const kgui_icon_spec_t *look);
  * @param ink What it is drawn in.
  */
 void kgui_sys_glyph(kgui_sys_t *s, const lv_image_dsc_t *img, lv_color_t ink);
-
-/**
- * @brief The protagonist is a word, in the display face.
- *
- * @param s    The frame.
- * @param text The word.
- */
-void kgui_sys_word(kgui_sys_t *s, const char *text);
 
 /**
  * @brief The protagonist is the red battery, nearly empty.
@@ -223,6 +213,48 @@ void kgui_sys_text(kgui_sys_t *s, int32_t top, int32_t bottom, const char *name,
  * @param size Receives its side.
  */
 void kgui_sys_origin(int32_t *cx, int32_t *cy, int32_t *size);
+
+/**
+ * @brief A card that asks or tells: a title and a body in the display and body faces.
+ *
+ * The title is up to KGUI_SYS_ASK_TITLE_N lines of the display face; the
+ * body is up to KGUI_SYS_ASK_BODY_N lines of the body face, muted. With a
+ * room (@p bottom past @p top) the block is centred in it, the same air
+ * above and below, and a block taller than the room starts at its top; with
+ * KGUI_SYS_ROOM_NONE the title stands at @p top. The protagonist the caller
+ * set is left as it is.
+ *
+ * @param s      The frame.
+ * @param top    Where the room begins, or where the title stands.
+ * @param bottom Where the room ends, or KGUI_SYS_ROOM_NONE.
+ * @param title  The title; NULL for none.
+ * @param body   The body; NULL for none.
+ */
+void kgui_sys_ask(kgui_sys_t *s, int32_t top, int32_t bottom, const char *title, const char *body);
+
+/**
+ * @brief Make the left button of a pair, beside the sheet's answer button.
+ *
+ * Named "btn_l" and "btn_l_text", hidden, dressed with the kit's action
+ * styles so the focus rings reach it. Once per sheet.
+ *
+ * @param card The card of the sheet.
+ * @return The button; NULL when LVGL had no room.
+ */
+lv_obj_t *kgui_sys_keep_make(const lv_obj_t *card);
+
+/**
+ * @brief Dress the sheet's two buttons as a pair: two pills of
+ *        KGUI_SYS_PAIR_W with KGUI_SYS_PAIR_GAP between, centred.
+ *
+ * The left one is "btn_l" and the right one is the sheet's answer button
+ * ("btn"). Grounds and ink are the caller's.
+ *
+ * @param card  The card of the sheet.
+ * @param left  The left word.
+ * @param right The right word.
+ */
+void kgui_sys_pair(const lv_obj_t *card, const char *left, const char *right);
 
 /**
  * @brief Dress the sheet's answer button as the frame's pill, or as the kit's.

@@ -138,9 +138,10 @@ void kgui_osrel_row_text(kgui_osrel_row_t row, const char *version, char *out, s
 
 /* ---- The card at boot -------------------------------------------------------- */
 
-#define KGUI_OSREL_CARD_WORD    "kodeOS"                 /**< The card's protagonist, as the write that follows wears it. */
-#define KGUI_OSREL_CARD_TITLE   "New release available"  /**< The card's first line. */
-#define KGUI_OSREL_CARD_BUTTON  "Update"                 /**< Its one button. */
+#define KGUI_OSREL_CARD_WORD    "kodeOS"                 /**< The card's title when the version is not known, and the name the write that follows wears. */
+#define KGUI_OSREL_CARD_READY_BODY "A new version is ready." /**< The card's body when Update can install. */
+#define KGUI_OSREL_CARD_LATER   "Later"                  /**< Its left pill: the card closes. */
+#define KGUI_OSREL_CARD_BUTTON  "Update"                 /**< Its right pill. */
 
 #define KGUI_OSREL_BOOT_ASKS     4U     /**< The most times the boot's question goes out: the first, and again while it never reaches the service. */
 #define KGUI_OSREL_BOOT_AGAIN_MS 5000U  /**< The wait before the boot's question goes out again, in milliseconds. */
@@ -241,20 +242,20 @@ bool kgui_osrel_offer_may_rise(kgui_osrel_offer_t offer, const kgui_osrel_glass_
 kgui_osrel_card_t kgui_osrel_card(bool linked, bool power);
 
 /**
- * @brief Write the card's second line: the version it offers.
- * @param version The newer version; NULL reads as "".
+ * @brief Write the card's title: kodeOS and the version it offers.
+ * @param version The version as it is to be said (kgui_dtext_version()); NULL or "" says only kodeOS.
  * @param out     Receives the words and a terminator.
  * @param size    Bytes @p out holds; KGUI_OSREL_TEXT_MAX fits the longest version.
  */
-void kgui_osrel_card_version(const char *version, char *out, size_t size);
+void kgui_osrel_card_title(const char *version, char *out, size_t size);
 
 /**
- * @brief Write why the card's button is grey.
+ * @brief Write the card's body: that Update can install, or why it cannot.
  * @param card What the button can do.
- * @param out  Receives the words and a terminator; "" when it installs.
+ * @param out  Receives the words and a terminator.
  * @param size Bytes @p out holds; KGUI_OSREL_TEXT_MAX fits every state.
  */
-void kgui_osrel_card_why(kgui_osrel_card_t card, char *out, size_t size);
+void kgui_osrel_card_body(kgui_osrel_card_t card, char *out, size_t size);
 
 #ifdef __cplusplus
 }

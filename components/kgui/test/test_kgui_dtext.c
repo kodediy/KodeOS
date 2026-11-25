@@ -67,13 +67,10 @@ void test_dtext_null_and_empty_buffers(void)
     char out[4] = { 'x', 'x', 'x', 'x' };
 
     kgui_dtext_size(1U * MB, NULL, 0U);
-    kgui_dtext_date("Nov  2 2026", NULL, 0U);
-    kgui_dtext_meta("1.0", "games", NULL, 0U);
+    kgui_dtext_meta("games", "1.0", "1 KB", NULL, 0U);
     kgui_dtext_size(1U * MB, out, 0U);
     TEST_ASSERT_EQUAL_CHAR('x', out[0]);
-    kgui_dtext_date("Nov  2 2026", out, 0U);
-    TEST_ASSERT_EQUAL_CHAR('x', out[0]);
-    kgui_dtext_meta("1.0", "games", out, 0U);
+    kgui_dtext_meta("games", "1.0", "1 KB", out, 0U);
     TEST_ASSERT_EQUAL_CHAR('x', out[0]);
 }
 
@@ -81,58 +78,57 @@ void test_dtext_meta_longest_fits(void)
 {
     char out[KGUI_DTEXT_META_MAX];
 
-    kgui_dtext_meta("123456789012345", "abcdefghijklmno", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("v123456789012345 \xC2\xB7 Abcdefghijklmno", out);
+    kgui_dtext_meta("abcdefghijklmno", "123456789012345", "4096.0 MB", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Abcdefghijklmno \xC2\xB7 123456789012345 \xC2\xB7 4096.0 MB", out);
     TEST_ASSERT_LESS_THAN_UINT32(sizeof(out), strlen(out));
-}
-
-void test_dtext_date_day_first(void)
-{
-    char out[KGUI_DTEXT_DATE_MAX];
-
-    kgui_dtext_date("Nov  2 2026", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("2 Nov 2026", out);
-    kgui_dtext_date("Oct 28 2026", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("28 Oct 2026", out);
-    kgui_dtext_date("Nov 12 2026", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("12 Nov 2026", out);
-}
-
-void test_dtext_date_unknown_is_empty(void)
-{
-    char out[KGUI_DTEXT_DATE_MAX];
-
-    kgui_dtext_date("", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
-    kgui_dtext_date(NULL, out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
-    kgui_dtext_date("2026-11-02", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
-    kgui_dtext_date("Nov  2 20x6", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("", out);
 }
 
 void test_dtext_meta_parts(void)
 {
     char out[KGUI_DTEXT_META_MAX];
 
-    kgui_dtext_meta("1.2.0", "games", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("v1.2.0 \xC2\xB7 Games", out);
-    kgui_dtext_meta("v0.3", "tools", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("v0.3 \xC2\xB7 Tools", out);
-    kgui_dtext_meta("1.0", "", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("v1.0", out);
-    kgui_dtext_meta(NULL, "games", out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("Games", out);
-    kgui_dtext_meta("", NULL, out, sizeof(out));
+    kgui_dtext_meta("tools", "0.0.10", "2.8 MB", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Tools \xC2\xB7 0.0.10 \xC2\xB7 2.8 MB", out);
+    kgui_dtext_meta("games", "v1.2.0", "812 KB", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Games \xC2\xB7 1.2.0 \xC2\xB7 812 KB", out);
+    kgui_dtext_meta("", "1.0", "", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("1.0", out);
+    kgui_dtext_meta("games", NULL, "3 KB", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Games \xC2\xB7 3 KB", out);
+    kgui_dtext_meta(NULL, "", NULL, out, sizeof(out));
     TEST_ASSERT_EQUAL_STRING("", out);
+}
+
+void test_dtext_meta_version_has_no_leading_zeros(void)
+{
+    char out[KGUI_DTEXT_META_MAX];
+
+    kgui_dtext_meta(NULL, "00.07.05", NULL, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("0.7.5", out);
+    kgui_dtext_meta(NULL, "V10.00.100", NULL, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("10.0.100", out);
+    kgui_dtext_meta(NULL, "0.1.0", NULL, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("0.1.0", out);
+}
+
+/* The longest store category does not fit the line with a version and a size. */
+void test_dtext_meta_says_communication_short(void)
+{
+    char out[KGUI_DTEXT_META_MAX];
+
+    kgui_dtext_meta("Communication", "0.7.5", "1.3 MB", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Comms \xC2\xB7 0.7.5 \xC2\xB7 1.3 MB", out);
+    kgui_dtext_meta("communication", NULL, NULL, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Comms", out);
+    kgui_dtext_meta("Communications", "1.0", NULL, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("Communications \xC2\xB7 1.0", out);
 }
 
 void test_dtext_meta_fits_a_small_buffer(void)
 {
     char out[8];
 
-    kgui_dtext_meta("1.2.3.4.5.6", "games", out, sizeof(out));
+    kgui_dtext_meta("games", "1.2.3.4.5.6", "1 KB", out, sizeof(out));
     TEST_ASSERT_LESS_THAN_UINT32(sizeof(out), strlen(out));
 }
 
@@ -151,16 +147,6 @@ void test_dtext_remove_end_says_what_went_wrong(void)
     TEST_ASSERT_EQUAL_STRING("No answer. Try again", kgui_dtext_remove_end((uint8_t)KODE_NO_RESOURCES));
 }
 
-void test_dtext_remove_caption_says_when_files_go(void)
-{
-    char out[KGUI_DTEXT_CAPTION_MAX];
-
-    kgui_dtext_remove_caption(false, out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("It leaves the Dot.", out);
-    kgui_dtext_remove_caption(true, out, sizeof(out));
-    TEST_ASSERT_EQUAL_STRING("It leaves the Dot.\nIts files go too.", out);
-}
-
 int main(void)
 {
     UNITY_BEGIN();
@@ -169,12 +155,11 @@ int main(void)
     RUN_TEST(test_dtext_size_limits);
     RUN_TEST(test_dtext_null_and_empty_buffers);
     RUN_TEST(test_dtext_meta_longest_fits);
-    RUN_TEST(test_dtext_date_day_first);
-    RUN_TEST(test_dtext_date_unknown_is_empty);
     RUN_TEST(test_dtext_meta_parts);
+    RUN_TEST(test_dtext_meta_version_has_no_leading_zeros);
+    RUN_TEST(test_dtext_meta_says_communication_short);
     RUN_TEST(test_dtext_meta_fits_a_small_buffer);
     RUN_TEST(test_dtext_remove_end_of_a_whole_erase_has_no_hint);
     RUN_TEST(test_dtext_remove_end_says_what_went_wrong);
-    RUN_TEST(test_dtext_remove_caption_says_when_files_go);
     return UNITY_END();
 }
