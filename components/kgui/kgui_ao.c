@@ -53,6 +53,8 @@
 #include "kgui_prefs.h"    /* the interface's two settings: keys, words, store */
 #include "kgui_scene_label.h" /* a scene's English words, for what the interface shows */
 #include "kgui_osrel.h"    /* kodeOS's own update: the service's answer and About's row */
+#include "kgui_c5up.h"     /* the radio's own update: when the C5 is too old */
+#include "kdrv_c5.h"       /* the oldest kode_c5 this firmware works with */
 #include "kgui_span_label.h"  /* a length of time's English words, and the step round a setting's */
 #include "kgui_clock.h"    /* the Time page: its zones, the step of each row, what the face asks for */
 #include "kgui_keyboard.h" /* the keypad card: a password or a hidden name, by multitap */
@@ -118,6 +120,7 @@ enum {
     GUI_TICK_SIG = MAX_SIG,     /**< The render-pass QTimeEvt. */
     GUI_KEEP_RETRY_SIG,         /**< The card's copy was refused: ask again (gui_keep_read_next()). */
     GUI_OS_AGAIN_SIG,           /**< The boot's question never reached the update service: ask again (gui_update_again()). */
+    GUI_C5_AGAIN_SIG,           /**< The radio's question never reached its service: ask again (gui_c5_again()). */
     GUI_SETTINGS_TOGGLE_SIG,    /**< The settings door. The face and Apps open
                                  *   the settings screen over themselves on it,
                                  *   as a curtain,
@@ -901,6 +904,8 @@ enum {
                                      * name, one a line, the latest first,
                                      * KGUI_SHELF_MAX at most (kgui_shelf.h) */
 #define GUI_NVS_KEY_HOUR_SCENE "scene_hr" /* blob: the scene the hour drew and which hour */
+#define GUI_NVS_KEY_C5_TRIED "c5_tried" /* str: the kode_c5 release the C5 last took from the
+                                     * service; erased once the C5 meets the minimum */
 /* The two interface settings - haptic_ui and usb_awake - are bytes in the same namespace, and their keys are spelt in
  * kgui_prefs.h. */
 
@@ -1278,6 +1283,29 @@ typedef struct {
     char         answer[KGUI_OSREL_ANSWER_MAX + 1U];  /**< The service's last answer as it came, and a terminator. Lent to AO_Net while a question is out. */
     kgui_osrel_t rel;                                 /**< The newer release, while the check says there is one. */
 } GuiOsUpdate;
+
+/**
+ * @brief Whether this build updates its radio by itself: it needs the
+ *        radio, Wi-Fi to fetch the image with and AO_Net to ask the service.
+ */
+#if CONFIG_KODEOS_RADIO && CONFIG_KODEOS_WIFI && CONFIG_KODEOS_NET
+#define GUI_C5_UPDATE  1
+#else
+#define GUI_C5_UPDATE  0
+#endif
+
+/**
+ * @brief Where the radio asks which kode_c5 release its kodeOS carries.
+ *
+ * Asked with `?kodeos=<this version>` (KGUI_C5UP_QUERY); the answer has the
+ * shape of GUI_OS_SERVICE's, a version and the link of the signed image
+ * (kgui_c5up.h). Empty in a build that asks nobody.
+ */
+#define GUI_C5_SERVICE  CONFIG_KGUI_C5_UPDATE_URL
+
+_Static_assert(((sizeof(GUI_C5_SERVICE) - 1U) + (sizeof(KGUI_C5UP_QUERY) - 1U)
+                + KGUI_OSREL_VERSION_MAX) <= KODE_NET_URL_MAX,
+               "the radio's question, with a release's version, must fit an HTTP ask");
 
 /**
  * @brief The ESP32-C5's own firmware, by the name the internal FAT of a
@@ -3062,6 +3090,17 @@ typedef struct {
     uint8_t  os_offer;       /**< kgui_osrel_offer_t: where the boot's card stands. */
     uint8_t  os_asks;        /**< How many times the boot's question has gone out. */
     QTimeEvt os_again;       /**< The boot's question goes out again (KGUI_OSREL_BOOT_AGAIN_MS). */
+    GuiOsUpdate *c5;         /**< The radio's service's answer and the release
+                               *   it named, in PSRAM: NULL until its first
+                               *   question, and when there was no room.    */
+    uint8_t  c5_stage;       /**< kgui_c5up_stage_t: the radio's own update this boot. */
+    uint8_t  c5_asks;        /**< How many times its question has gone out. */
+    uint8_t  c5_starts;      /**< How many times AO_Radio was asked for it. */
+    bool     c5_old;         /**< AO_Radio judged the C5 too old (KRADIO_C5_FIT_OLD). */
+    bool     c5_fit_seen;    /**< The C5 met the minimum once this boot: the release tried is forgotten. */
+    bool     c5_reported;    /**< AO_Radio reported the update asked for. */
+    uint32_t c5_start_ms;    /**< When it was asked, for KGUI_C5UP_REPORT_MS. */
+    QTimeEvt c5_again;       /**< The radio's question goes out again (KGUI_OSREL_BOOT_AGAIN_MS). */
     uint8_t  write_what;     /**< kwrite_t: what the write on the glass is
                                *   and how it ends - the Opening sheet's
                                *   title, name and sentence, and the
@@ -3466,6 +3505,15 @@ static bool gui_update_may_rise(Gui const * const me);
 static bool gui_update_boot_card(Gui const * const me);
 static void gui_update_fill(Gui * const me);
 static void gui_update_act(Gui * const me);
+static kgui_osrel_glass_t gui_update_glass(Gui const * const me);
+static bool gui_c5_holds_os(Gui const * const me);
+static void gui_c5_ask(Gui * const me, const char *why);
+static void gui_c5_answer(Gui * const me, NetHttpRspEvt const * const r);
+static void gui_c5_again(Gui * const me);
+static void gui_c5_judged(Gui * const me, uint8_t fit);
+static void gui_c5_tick(Gui * const me);
+static void gui_c5_progress(Gui * const me, AppProgressEvt const * const p);
+static void gui_c5_end(Gui * const me, bool done);
 static const char *gui_boot_reason_name(void);
 static void gui_uptime_text(char *dst, size_t cap);
 static void gui_sheet_open_kind(Gui * const me, GuiSheet kind);
@@ -4152,6 +4200,11 @@ static void gui_dump(Gui * const me)
     KLOG_N(TAG, "  update: offer %s, asked %u of %u",
            kgui_osrel_offer_word((kgui_osrel_offer_t)me->os_offer),
            (unsigned)me->os_asks, (unsigned)KGUI_OSREL_BOOT_ASKS);
+    /* The radio's own update: where it stands this boot. */
+    KLOG_N(TAG, "  radio update: %s, asked %u of %u, started %u of %u",
+           kgui_c5up_stage_word((kgui_c5up_stage_t)me->c5_stage),
+           (unsigned)me->c5_asks, (unsigned)KGUI_OSREL_BOOT_ASKS,
+           (unsigned)me->c5_starts, (unsigned)KGUI_C5UP_STARTS);
 
     /* The sheet, when there is one. s_gui_state above already says "sheet", so
      * this line is the detail behind it: which one, how many rows it built
@@ -25284,9 +25337,10 @@ static void gui_os_ask(Gui * const me, const char *why)
 {
     /* cppcheck-suppress knownConditionTrueFalse ; the service is the build's choice: an empty CONFIG_KGUI_OS_UPDATE_URL asks nobody */
     if ( (!gui_os_service()) || (!me->wifi_linked)
-        || ((uint8_t)KGUI_OSREL_ASKING == me->os_check) )
+        || ((uint8_t)KGUI_OSREL_ASKING == me->os_check)
+        || ((uint8_t)KGUI_C5UP_ASKING == me->c5_stage) )
     {
-        return;     /* nobody to ask, no way to ask, or asked already */
+        return;     /* nobody to ask, no way to ask, or a question is out */
     }
 #if CONFIG_KODEOS_NET
     if ( NULL == me->os )
@@ -25303,7 +25357,7 @@ static void gui_os_ask(Gui * const me, const char *why)
         gui_os_failed(me, KGUI_OSREL_FAILED, "no memory for the answer");
         return;
     }
-    if ( net_http_ask(&me->super, false, GUI_OS_SERVICE, NULL, 0U, NULL,
+    if ( net_http_ask(&me->super, false, GUI_OS_SERVICE, NULL, 0U, NULL, NULL,
                       me->os->answer, KGUI_OSREL_ANSWER_MAX) == KODE_OK )
     {
         me->os_check = (uint8_t)KGUI_OSREL_ASKING;
@@ -25395,6 +25449,8 @@ static void gui_os_answer(Gui * const me, NetHttpRspEvt const * const r)
          * is written on it at once. */
         gui_sheet_refill(me);
     }
+    /* The radio's question, if it waited for this one. */
+    gui_c5_ask(me, "its turn");
 }
 
 /**
@@ -25601,8 +25657,9 @@ static void gui_update_question(Gui * const me)
  */
 static void gui_update_boot_ask(Gui * const me)
 {
-    if ( ((uint8_t)KGUI_OSREL_OFFER_UNASKED == me->os_offer)
-        || ((uint8_t)KGUI_OSREL_OFFER_AGAIN == me->os_offer) )
+    if ( (!gui_c5_holds_os(me))
+        && (((uint8_t)KGUI_OSREL_OFFER_UNASKED == me->os_offer)
+            || ((uint8_t)KGUI_OSREL_OFFER_AGAIN == me->os_offer)) )
     {
         gui_update_question(me);
     }
@@ -25636,6 +25693,437 @@ static void gui_update_again(Gui * const me)
     }
 }
 
+/* ---- The radio's own update ----------------------------------------------------- */
+
+/**
+ * @brief Whether this build asks a service for its radio's release.
+ * @return true unless CONFIG_KGUI_C5_UPDATE_URL is empty or the build has no
+ *         radio, Wi-Fi or AO_Net to update it with.
+ */
+static bool gui_c5_service(void)
+{
+#if GUI_C5_UPDATE
+    return (sizeof(GUI_C5_SERVICE) > GUI_OS_SERVICE_NONE);
+#else
+    return false;
+#endif
+}
+
+/**
+ * @brief Whether the radio's release may come on a plain link.
+ * @return true only when its service itself is asked with no TLS, on a bench.
+ */
+static bool gui_c5_plain(void)
+{
+    return (strncmp(GUI_C5_SERVICE, GUI_OS_SERVICE_PLAIN,
+                    sizeof(GUI_OS_SERVICE_PLAIN) - 1U) == 0);
+}
+
+/**
+ * @brief Whether the boot's kodeOS question waits for the radio's update.
+ * @param me The AO.
+ * @return true while the radio's question is owed or out, a release is due
+ *         or the update runs (kgui_c5up_holds_os()).
+ */
+static bool gui_c5_holds_os(Gui const * const me)
+{
+    return kgui_c5up_holds_os((kgui_c5up_stage_t)me->c5_stage);
+}
+
+/**
+ * @brief The radio's update has nothing more to do this boot: the boot's
+ *        kodeOS question, which waited for it, goes now.
+ * @param me The AO.
+ */
+static void gui_c5_settled(Gui * const me)
+{
+#if CONFIG_KODEOS_WIFI
+    if ( me->wifi_linked )
+    {
+        gui_update_boot_ask(me);
+    }
+#else
+    (void)me;
+#endif
+}
+
+/**
+ * @brief The radio's service answered, or its question never reached it.
+ *
+ * Read against the oldest kode_c5 this firmware works with and the release
+ * the C5 took last (kgui/c5_tried): a release that meets the one and is not
+ * the other is due, and installs from the tick (gui_c5_tick()). A question
+ * that never reached the service goes out again after
+ * KGUI_OSREL_BOOT_AGAIN_MS; anything else ends the update for this boot.
+ *
+ * @param me    The AO.
+ * @param reply The answer; NULL when AO_Net did not take the question. A
+ *              reply's body is in me->c5.
+ */
+static void gui_c5_heard(Gui * const me, const kgui_c5up_reply_t *reply)
+{
+    char              tried[KGUI_OSREL_VERSION_MAX];
+    kgui_c5up_rule_t  rule;
+    kgui_osrel_t      rel;
+    kgui_c5up_why_t   why = KGUI_C5UP_WHY_UNREAD;
+    kgui_c5up_stage_t next;
+
+    if ( khal_nvs_get_str(GUI_NVS_NAMESPACE, GUI_NVS_KEY_C5_TRIED, tried, sizeof(tried))
+         != KODE_OK )
+    {
+        tried[0] = '\0';
+    }
+    rule.min      = KDRV_C5_RELEASE_MIN;
+    rule.tried    = tried;
+    rule.plain_ok = gui_c5_plain();
+    rule.asks     = me->c5_asks;
+    (void)memset(&rel, 0, sizeof(rel));
+    next = kgui_c5up_answer(reply, &rule, &rel, &why);
+    if ( (KGUI_C5UP_DUE == next) && (NULL == me->c5) )
+    {
+        next = KGUI_C5UP_NONE;   /* unreached: a reply's body is in me->c5 */
+    }
+    me->c5_stage = (uint8_t)next;
+    if ( KGUI_C5UP_DUE == next )
+    {
+        me->c5->rel = rel;
+        KLOG_N(TAG, "radio: kode_c5 %s is due; it installs once the glass is free",
+               rel.version);
+    }
+    else if ( KGUI_C5UP_AGAIN == next )
+    {
+        (void)QTimeEvt_disarm(&me->c5_again);
+        QTimeEvt_armX(&me->c5_again, KQP_TICKS_PER_MS(KGUI_OSREL_BOOT_AGAIN_MS), 0U);
+        KLOG_I(TAG, "radio: %s; asked again in %u s (%u of %u)", kgui_c5up_why_words(why),
+               (unsigned)KGUI_OSREL_BOOT_AGAIN_MS / GUI_MS_PER_S, (unsigned)me->c5_asks,
+               (unsigned)KGUI_OSREL_BOOT_ASKS);
+    }
+    else
+    {
+        KLOG_N(TAG, "radio: no update this boot: %s", kgui_c5up_why_words(why));
+        gui_c5_settled(me);
+    }
+    /* About asks for kodeOS when it opens, and gui_os_ask() refuses while
+     * this question is out: its question goes now. */
+    if ( GUI_SHEET_ABOUT == me->sheet )
+    {
+        gui_os_ask(me, "About");
+    }
+}
+
+/**
+ * @brief Ask the radio's service which kode_c5 release this kodeOS carries.
+ *
+ * Asked once the C5 is judged too old (gui_c5_judged()) and Wi-Fi has an
+ * address, and again while the question never reaches the service. One HTTP
+ * question of this AO's is out at a time: while kodeOS's own is, this one
+ * waits for its answer (gui_os_answer()). The answer comes back as
+ * NET_HTTP_RSP_SIG (gui_c5_answer()), into a block of PSRAM taken at the
+ * first question and lent to AO_Net until then.
+ *
+ * @param me  The AO.
+ * @param why What asked, for the log.
+ */
+static void gui_c5_ask(Gui * const me, const char *why)
+{
+    char             url[KODE_NET_URL_MAX];
+    kdrv_slot_desc_t self;
+    bool const       busy = ((uint8_t)KGUI_OSREL_ASKING == me->os_check);
+    int              n    = -1;
+
+    /* cppcheck-suppress knownConditionTrueFalse ; the service is the build's choice: an empty CONFIG_KGUI_C5_UPDATE_URL asks nobody */
+    if ( (!gui_c5_service())
+         || (!kgui_c5up_may_ask((kgui_c5up_stage_t)me->c5_stage, me->wifi_linked, busy)) )
+    {
+        return;     /* nothing owed, no address, or kodeOS's question is out */
+    }
+    if ( kdrv_running_desc(&self) == KODE_OK )
+    {
+        n = snprintf(url, sizeof(url), "%s%s%s", GUI_C5_SERVICE, KGUI_C5UP_QUERY,
+                     self.version);
+    }
+    if ( (0 > n) || (sizeof(url) <= (size_t)n) )
+    {
+        me->c5_stage = (uint8_t)KGUI_C5UP_NONE;
+        KLOG_N(TAG, "radio: no update this boot: this image's version makes no question");
+        gui_c5_settled(me);
+        return;
+    }
+    if ( NULL == me->c5 )
+    {
+        /* cppcheck-suppress misra-c2012-11.5 ; khal_alloc_psram() answers void *: PSRAM is taken by name (rule 8) */
+        me->c5 = (GuiOsUpdate *)khal_alloc_psram(GUI_OS_ALIGN, sizeof(GuiOsUpdate));
+        if ( NULL != me->c5 )
+        {
+            (void)memset(me->c5, 0, sizeof(*me->c5));
+        }
+    }
+    if ( NULL == me->c5 )
+    {
+        me->c5_stage = (uint8_t)KGUI_C5UP_NONE;
+        KLOG_N(TAG, "radio: no update this boot: no memory for the answer");
+        gui_c5_settled(me);
+        return;
+    }
+    if ( KGUI_OSREL_BOOT_ASKS > me->c5_asks )
+    {
+        ++me->c5_asks;
+    }
+#if GUI_C5_UPDATE
+    if ( net_http_ask(&me->super, false, url, NULL, 0U, NULL, NULL, me->c5->answer,
+                      KGUI_OSREL_ANSWER_MAX) == KODE_OK )
+    {
+        me->c5_stage = (uint8_t)KGUI_C5UP_ASKING;
+        KLOG_I(TAG, "radio: asking %s (%s)", url, why);
+    }
+    else
+    {
+        gui_c5_heard(me, NULL);   /* AO_Net did not take it */
+    }
+#else
+    /* Unreached: without the radio, Wi-Fi or AO_Net gui_c5_service() is false. */
+    (void)why;
+#endif
+}
+
+/**
+ * @brief The radio's service answered (NET_HTTP_RSP_SIG while its question
+ *        is out).
+ * @param me The AO.
+ * @param r  AO_Net's answer; the body is in the block the question lent.
+ */
+static void gui_c5_answer(Gui * const me, NetHttpRspEvt const * const r)
+{
+    kgui_c5up_reply_t reply;
+
+    reply.reached = ((uint8_t)KODE_OK == r->rc);
+    reply.status  = r->result.status;
+    reply.whole   = (!r->result.truncated) && (KGUI_OSREL_ANSWER_MAX >= r->result.kept);
+    reply.body    = NULL;
+    reply.len     = 0U;
+    if ( reply.whole && (NULL != me->c5) )
+    {
+        me->c5->answer[r->result.kept] = '\0';
+        reply.body = me->c5->answer;
+        reply.len  = r->result.kept;
+    }
+    KLOG_I(TAG, "radio: the service gave status %u, HTTP %u", (unsigned)r->rc,
+           (unsigned)r->result.status);
+    gui_c5_heard(me, &reply);
+}
+
+/**
+ * @brief The wait after a question that never reached the radio's service
+ *        is over (GUI_C5_AGAIN_SIG): it goes out again, or with no address
+ *        waits for the next one.
+ * @param me The AO.
+ */
+static void gui_c5_again(Gui * const me)
+{
+    if ( (uint8_t)KGUI_C5UP_AGAIN == me->c5_stage )
+    {
+        me->c5_stage = (uint8_t)KGUI_C5UP_OWED;
+        gui_c5_ask(me, "again");
+    }
+}
+
+/**
+ * @brief The C5 meets the minimum: the release it took last is forgotten,
+ *        once a boot.
+ * @param me The AO.
+ */
+static void gui_c5_tried_forget(Gui * const me)
+{
+    char tried[KGUI_OSREL_VERSION_MAX];
+
+    if ( me->c5_fit_seen )
+    {
+        return;
+    }
+    me->c5_fit_seen = true;
+    if ( khal_nvs_get_str(GUI_NVS_NAMESPACE, GUI_NVS_KEY_C5_TRIED, tried, sizeof(tried))
+         != KODE_OK )
+    {
+        /* Nothing was kept. */
+    }
+    else if ( khal_nvs_erase(GUI_NVS_NAMESPACE, GUI_NVS_KEY_C5_TRIED) == KODE_OK )
+    {
+        KLOG_N(TAG, "radio: the C5 meets %s; kode_c5 %s, the release it took, is forgotten",
+               KDRV_C5_RELEASE_MIN, tried);
+    }
+    else
+    {
+        KLOG_W(TAG, "radio: the release the C5 took could not be forgotten");
+    }
+}
+
+/**
+ * @brief AO_Radio judged the C5 (RadioStateEvt.c5_fit).
+ *
+ * The first judgement that it is too old owes the question, asked at once
+ * when Wi-Fi already has an address. A C5 that meets the minimum forgets the
+ * release it took. While the link is down the judgement is unknown, and what
+ * was judged stands: the update's own link loss changes nothing.
+ *
+ * @param me  The AO.
+ * @param fit A kradio_c5_fit_t.
+ */
+static void gui_c5_judged(Gui * const me, uint8_t fit)
+{
+    kgui_c5up_stage_t const was = (kgui_c5up_stage_t)me->c5_stage;
+    bool const              old = ((uint8_t)KRADIO_C5_FIT_OLD == fit);
+
+    if ( (uint8_t)KRADIO_C5_FIT_YES == fit )
+    {
+        me->c5_old = false;
+        gui_c5_tried_forget(me);
+    }
+    else if ( old )
+    {
+        me->c5_old = true;
+    }
+    else
+    {
+        /* Unknown: the link is not up to a kode_c5. */
+    }
+    me->c5_stage = (uint8_t)kgui_c5up_judged(was, old);
+    if ( ((uint8_t)KGUI_C5UP_OWED == me->c5_stage) && (KGUI_C5UP_OWED != was) )
+    {
+        KLOG_N(TAG, "radio: the C5's kode_c5 is older than %s; the release this kodeOS "
+                    "carries is asked for", KDRV_C5_RELEASE_MIN);
+        gui_c5_ask(me, "the C5 is too old");
+    }
+}
+
+/**
+ * @brief Ask AO_Radio for the update: the release the service named, from
+ *        its link.
+ *
+ * No card rises here: AO_Radio refuses some requests in its log alone, and
+ * its first report raises the radio's write card, as an `install dst=c5`
+ * from the console does. A start with no report within KGUI_C5UP_REPORT_MS
+ * is asked again (gui_c5_tick()).
+ *
+ * @param me The AO.
+ */
+static void gui_c5_start(Gui * const me)
+{
+    if ( NULL == me->c5 )
+    {
+        return;     /* unreached: a due release is in me->c5 */
+    }
+    if ( KGUI_C5UP_STARTS > me->c5_starts )
+    {
+        ++me->c5_starts;
+    }
+    me->c5_stage    = (uint8_t)KGUI_C5UP_STARTED;
+    me->c5_reported = false;
+    me->c5_start_ms = khal_time_ms();
+    KLOG_N(TAG, "radio: installing kode_c5 %s from %s (%u of %u)", me->c5->rel.version,
+           me->c5->rel.url, (unsigned)me->c5_starts, (unsigned)KGUI_C5UP_STARTS);
+#if GUI_C5_UPDATE
+    if ( !c5_flash_request((uint8_t)KFW_SRC_HTTP, me->c5->rel.url) )
+    {
+        KLOG_W(TAG, "radio: AO_Radio had no room for the update");
+    }
+#endif
+}
+
+/**
+ * @brief The tick's share of the radio's update: a due release starts once
+ *        the power and the glass allow, and a start AO_Radio never reported
+ *        is asked again, a bounded number of times.
+ * @param me The AO.
+ */
+static void gui_c5_tick(Gui * const me)
+{
+    kgui_c5up_stage_t const stage = (kgui_c5up_stage_t)me->c5_stage;
+
+    if ( (KGUI_C5UP_STARTED == stage) && (!me->c5_reported)
+         && ((khal_time_ms() - me->c5_start_ms) >= KGUI_C5UP_REPORT_MS) )
+    {
+        me->c5_stage = (uint8_t)kgui_c5up_unanswered(me->c5_starts);
+        if ( (uint8_t)KGUI_C5UP_DUE == me->c5_stage )
+        {
+            KLOG_W(TAG, "radio: AO_Radio did not start the update in %u s; it is asked again",
+                   (unsigned)KGUI_C5UP_REPORT_MS / GUI_MS_PER_S);
+        }
+        else
+        {
+            KLOG_W(TAG, "radio: AO_Radio did not start the update in %u tries; no update "
+                        "this boot", (unsigned)KGUI_C5UP_STARTS);
+            gui_c5_settled(me);
+        }
+    }
+    else if ( KGUI_C5UP_DUE == stage )
+    {
+        kgui_osrel_glass_t const g = gui_update_glass(me);
+
+        if ( kgui_c5up_may_start(stage, kgui_osrel_power_ok(me->soc, me->vbus), &g) )
+        {
+            gui_c5_start(me);
+        }
+    }
+    else
+    {
+        /* Nothing to do now. */
+    }
+}
+
+/**
+ * @brief A report of a write: AO_Radio took the update this AO asked for.
+ * @param me The AO.
+ * @param p  The report.
+ */
+static void gui_c5_progress(Gui * const me, AppProgressEvt const * const p)
+{
+    if ( ((uint8_t)KWRITE_C5 == p->what) && ((uint8_t)KGUI_C5UP_STARTED == me->c5_stage)
+         && (!me->c5_reported) )
+    {
+        me->c5_reported = true;
+        KLOG_I(TAG, "radio: AO_Radio started the update");
+    }
+}
+
+/**
+ * @brief The radio's write ended.
+ *
+ * Only the update this AO asked for and AO_Radio reported. Written and
+ * activated, the release is kept (kgui/c5_tried) before AO_Radio restarts
+ * the board: if the C5 still reads older after it, the board does not take
+ * the same release again. A failure leaves the C5 on the image it had, and
+ * the next boot asks again.
+ *
+ * @param me   The AO.
+ * @param done APP_FLASH_DONE_SIG; false for APP_FLASH_FAIL_SIG.
+ */
+static void gui_c5_end(Gui * const me, bool done)
+{
+    if ( ((uint8_t)KGUI_C5UP_STARTED != me->c5_stage) || (!me->c5_reported)
+         || ((uint8_t)KWRITE_C5 != me->write_what) || (NULL == me->c5) )
+    {
+        return;     /* another writer's, or the console's */
+    }
+    if ( done )
+    {
+        if ( khal_nvs_set_str(GUI_NVS_NAMESPACE, GUI_NVS_KEY_C5_TRIED, me->c5->rel.version)
+             != KODE_OK )
+        {
+            KLOG_W(TAG, "radio: kode_c5 %s could not be kept as the release taken",
+                   me->c5->rel.version);
+        }
+        KLOG_N(TAG, "radio: the C5 took kode_c5 %s; AO_Radio restarts the board",
+               me->c5->rel.version);
+    }
+    else
+    {
+        me->c5_stage = (uint8_t)KGUI_C5UP_NONE;
+        KLOG_N(TAG, "radio: the update failed; the C5 keeps its firmware, and the next "
+                    "boot asks again");
+        gui_c5_settled(me);
+    }
+}
+
 /**
  * @brief The tick's share: the card at boot rises once the glass is free.
  *
@@ -25647,6 +26135,7 @@ static void gui_update_again(Gui * const me)
  */
 static void gui_update_tick(Gui * const me)
 {
+    gui_c5_tick(me);
     /* The greeting holds the card until its line is through. */
     kgui_welcome_notice(&me->welcome, gui_face_notice_owed(me));
     if ( ((uint8_t)KGUI_OSREL_OFFER_DUE == me->os_offer) && gui_update_may_rise(me) )
@@ -26385,8 +26874,14 @@ static void gui_about_fill(Gui * const me)
                                               : "Unknown",
                         KUI_COLOR_SURFACE, &kui_glyph_info, NULL);
 
-    /* The Radio row is technical; the card stays, the part a person uses. */
-    if ( me->about_tech && me->c5_fw_known )
+    /* The Radio row is technical; the card stays, the part a person uses.
+     * A C5 too old for this firmware is everyone's business: the row shows
+     * then, and says so. */
+    if ( me->c5_old )
+    {
+        (void)snprintf(line, sizeof(line), "Update needed");
+    }
+    else if ( me->about_tech && me->c5_fw_known )
     {
         (void)snprintf(line, sizeof(line), "ESP32-C5 \xC2\xB7 v%u.%u.%u",
                        (unsigned)me->c5_fw[0], (unsigned)me->c5_fw[1],
@@ -26398,7 +26893,7 @@ static void gui_about_fill(Gui * const me)
          * told us anything, and a version of zero would be a claim. */
         (void)snprintf(line, sizeof(line), "ESP32-C5 \xC2\xB7 off");
     }
-    if ( me->about_tech
+    if ( (me->about_tech || me->c5_old)
         && (gui_sheet_row(me, "Radio", line, KUI_COLOR_SURFACE, &kui_glyph_radio,
                           NULL) != NULL) )
     {
@@ -34398,6 +34893,7 @@ void Gui_ctor(void)
     QTimeEvt_ctorX(&me->tick, &me->super, (enum_t)GUI_TICK_SIG, 0U);
     QTimeEvt_ctorX(&me->keep_retry, &me->super, (enum_t)GUI_KEEP_RETRY_SIG, 0U);
     QTimeEvt_ctorX(&me->os_again, &me->super, (enum_t)GUI_OS_AGAIN_SIG, 0U);
+    QTimeEvt_ctorX(&me->c5_again, &me->super, (enum_t)GUI_C5_AGAIN_SIG, 0U);
     me->sel_idx         = -1;
     me->sel_name[0]     = '\0';
     me->level           = (uint8_t)GUI_LEVEL_ROOT;
@@ -35597,6 +36093,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
              * here. There is no transition, in this case or the two below
              * it: the Opening sheet is a KIND of the one card, and the card
              * is a child state of whichever screen it stands on. */
+            gui_c5_progress(me, Q_EVT_CAST(AppProgressEvt));
             gui_show_write(me, Q_EVT_CAST(AppProgressEvt));
             status = Q_HANDLED();
             break;
@@ -35626,6 +36123,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
              * folder that made none wrote no app, and its card goes without
              * a failure (gui_data_lost()). */
             me->fail_why = Q_EVT_CAST(AppFlashFailEvt)->why;
+            gui_c5_end(me, false);
             if ( me->write_cancel )
             {
                 me->write_cancel = false;
@@ -35669,6 +36167,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
         case APP_FLASH_DONE_SIG: {
             AppFlashDoneEvt const * const d = Q_EVT_CAST(AppFlashDoneEvt);
 
+            gui_c5_end(me, true);
             me->writing = false;
             if ( GUI_INST_WRITING == me->inst_stage )
             {
@@ -36271,6 +36770,7 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                 /* Starting: still whatever the failure made it. */
             }
             me->radio_gave_up = r->gave_up;
+            gui_c5_judged(me, r->c5_fit);
             if ( (GUI_SHEET_ABOUT == me->sheet)
                 || (((GUI_SHEET_WIFI == me->sheet) || (GUI_SHEET_BLE == me->sheet))
                     && ((was_relinking != me->radio_relinking)
@@ -36283,13 +36783,26 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
         }
 #endif
         case NET_HTTP_RSP_SIG: {
-            /* The one HTTP question this AO asks: the update service's. */
-            gui_os_answer(me, Q_EVT_CAST(NetHttpRspEvt));
+            /* The HTTP questions this AO asks, one at a time: the radio's
+             * service's while its question is out, kodeOS's otherwise. */
+            if ( (uint8_t)KGUI_C5UP_ASKING == me->c5_stage )
+            {
+                gui_c5_answer(me, Q_EVT_CAST(NetHttpRspEvt));
+            }
+            else
+            {
+                gui_os_answer(me, Q_EVT_CAST(NetHttpRspEvt));
+            }
             status = Q_HANDLED();
             break;
         }
         case GUI_OS_AGAIN_SIG: {
             gui_update_again(me);
+            status = Q_HANDLED();
+            break;
+        }
+        case GUI_C5_AGAIN_SIG: {
+            gui_c5_again(me);
             status = Q_HANDLED();
             break;
         }
@@ -36369,10 +36882,13 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             }
             /* And the keypad, whose join this may be the answer to. */
             gui_kbd_wifi_state(me, w);
-            /* The boot's question, on the first address since the boot,
-             * whatever is on the glass (gui_update_boot_ask()). */
+            /* The boot's questions, on the first address since the boot,
+             * whatever is on the glass: the radio's first when its C5 is too
+             * old (gui_c5_ask()), then kodeOS's (gui_update_boot_ask()),
+             * which waits for the radio's update to settle. */
             if ( joined )
             {
+                gui_c5_ask(me, "Wi-Fi");
                 gui_update_boot_ask(me);
             }
             /* The card at boot: Update turns grey or yellow with the link,
@@ -36802,7 +37318,11 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                                                            entry->name);
 
                     gui_entry_clear(slot);
-                    (void)snprintf(slot->name, sizeof(slot->name), "%s", entry->name);
+                    /* The images' listing sends no name longer than
+                     * KODE_APP_FILE_MAX holds, so the bound cuts nothing: it
+                     * tells the compiler so. */
+                    (void)snprintf(slot->name, sizeof(slot->name), "%.*s",
+                                   (int)sizeof(slot->name) - 1, entry->name);
                     /* A face made of the one thing known this early: the
                      * file's own name. A file the list already had, moved to
                      * another place, stays on the list; any other waits for

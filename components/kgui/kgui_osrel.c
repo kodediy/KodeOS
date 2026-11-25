@@ -454,11 +454,11 @@ const char *kgui_osrel_offer_word(kgui_osrel_offer_t offer)
     return word;
 }
 
-bool kgui_osrel_offer_may_rise(kgui_osrel_offer_t offer, const kgui_osrel_glass_t *glass)
+bool kgui_osrel_glass_free(const kgui_osrel_glass_t *glass)
 {
-    bool may = false;
+    bool free_glass = false;
 
-    if ( (KGUI_OSREL_OFFER_DUE == offer) && (NULL != glass) )
+    if ( NULL != glass )
     {
         bool const free_screen = (KGUI_OSREL_SCREEN_FACE == glass->screen)
                                  || (KGUI_OSREL_SCREEN_APPS == glass->screen)
@@ -468,9 +468,14 @@ bool kgui_osrel_offer_may_rise(kgui_osrel_offer_t offer, const kgui_osrel_glass_
                           || glass->parked || glass->moving || glass->hand
                           || glass->greeting;
 
-        may = free_screen && (!held);
+        free_glass = free_screen && (!held);
     }
-    return may;
+    return free_glass;
+}
+
+bool kgui_osrel_offer_may_rise(kgui_osrel_offer_t offer, const kgui_osrel_glass_t *glass)
+{
+    return (KGUI_OSREL_OFFER_DUE == offer) && kgui_osrel_glass_free(glass);
 }
 
 kgui_osrel_card_t kgui_osrel_card(bool linked, bool power)

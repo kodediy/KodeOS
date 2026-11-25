@@ -452,6 +452,18 @@ void test_may_rise_never_at_rest_or_on_any_other_screen(void)
     TEST_ASSERT_FALSE(kgui_osrel_offer_may_rise(KGUI_OSREL_OFFER_DUE, NULL));
 }
 
+void test_glass_free_reads_the_glass_alone(void)
+{
+    kgui_osrel_glass_t g = glass_free(KGUI_OSREL_SCREEN_APPS);
+
+    TEST_ASSERT_TRUE(kgui_osrel_glass_free(&g));
+    g.moving = true;
+    TEST_ASSERT_FALSE(kgui_osrel_glass_free(&g));
+    g = glass_free(KGUI_OSREL_SCREEN_OTHER);
+    TEST_ASSERT_FALSE(kgui_osrel_glass_free(&g));
+    TEST_ASSERT_FALSE(kgui_osrel_glass_free(NULL));
+}
+
 void test_may_rise_only_while_the_offer_is_due(void)
 {
     static const kgui_osrel_offer_t NOT_DUE[] = {
@@ -585,6 +597,7 @@ int main(void)
     RUN_TEST(test_offer_words);
     RUN_TEST(test_may_rise_on_the_face_apps_or_settings_when_free);
     RUN_TEST(test_may_rise_never_at_rest_or_on_any_other_screen);
+    RUN_TEST(test_glass_free_reads_the_glass_alone);
     RUN_TEST(test_may_rise_only_while_the_offer_is_due);
     RUN_TEST(test_may_rise_waits_for_each_thing_that_holds_the_glass);
     RUN_TEST(test_card_button_follows_the_network_then_the_battery);
