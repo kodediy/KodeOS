@@ -17,8 +17,9 @@ name: tests
 #
 # Three jobs side by side - the cheap checks, the host suites, the firmware -
 # so a red suite says so in seconds, and the build's minutes are not waited
-# on for it. On a pull request a fourth writes the build's numbers into one
-# comment.
+# on for it. The firmware job builds twice: the board's image, and the same
+# tree with the radio left out. On a pull request a fourth job writes the
+# build's numbers into one comment.
 on:
   push:
     branches: [main]
@@ -124,9 +125,10 @@ jobs:
 
   firmware:
     runs-on: ubuntu-24.04
-    # The longest green build so far took 16 minutes; without a ceiling a hung
-    # build bills the default six hours.
-    timeout-minutes: 40
+    # The longest green build so far took 16 minutes, and the build with the
+    # radio left out comes after it; without a ceiling a hung build bills the
+    # default six hours.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -166,8 +168,12 @@ jobs:
           # image and the OS role names each start strongly, so kodeOS parks
           # none of its own owners (sdk/tools/check_starts.sh); MISRA, cppcheck
           # and its addon over the first-party C against
-          # tools/misra_baseline.txt. All four run even when one fails, so the
-          # report is whole; the step fails after.
+          # tools/misra_baseline.txt. Then the same tree is built once more
+          # with the radio left out, in a directory of its own
+          # (tools/check_noradio.sh): the simulator builds kodeOS that way, and
+          # the build above never compiles that side of the guards. All five
+          # run even when one fails, so the report is whole; the step fails
+          # after.
           #
           # Nothing inside `command` may contain a single quote, comments
           # included: the action runs it as bash -c '...', so one apostrophe
@@ -182,7 +188,8 @@ jobs:
             sdk/tools/build_cppcheck.sh tools/misra_baseline.txt .ci-cppcheck || exit 1
             export PATH="$PWD/.ci-cppcheck/bin:$PATH"
             sdk/tools/check_misra.sh build/compile_commands.json tools/misra_baseline.txt sdk/components components/kgui > ci-report/misra.txt 2>&1 || ok=1
-            cat ci-report/size.txt ci-report/ram.txt ci-report/starts.txt ci-report/misra.txt
+            tools/check_noradio.sh > ci-report/noradio.txt 2>&1 || ok=1
+            cat ci-report/size.txt ci-report/ram.txt ci-report/starts.txt ci-report/misra.txt ci-report/noradio.txt
             exit $ok
 
       # The build regenerates nothing that is committed. A file it does change
