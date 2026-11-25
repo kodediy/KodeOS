@@ -3135,6 +3135,10 @@ typedef struct {
                                *   networks, the battery and the uptime.    */
     uint32_t sheet_ask_ms;   /**< When the sheet last asked its owner for
                                *   something (khal_time_ms()).              */
+    bool     card_full_due;  /**< The card was found full while the glass
+                               *   was out of sight (parked or at Rest): it
+                               *   is said on the next face, Apps or
+                               *   Settings (gui_card_full_due_say()).      */
 #if CONFIG_KODE_LOWPOWER
     /* THE LOW-POWER ROUNDS (gui_lp_park(), gui_lp_resume(), and Rest's own,
      * gui_rest_park(), gui_rest_unpark()). Parked, this AO draws nothing and
@@ -3162,11 +3166,7 @@ typedef struct {
     uint32_t park_seq;       /**< The DISPLAY_PARK_SIG this park answers (the
                                *   glass's own rest, `rest parts=1`); 0 for a
                                *   round's park.                             */
-    bool     card_full_due;  /**< The card was found full while the glass
-                               *   was out of sight (parked or at Rest): it
-                               *   is said on the next face, Apps or
-                               *   Settings (gui_card_full_due_say()).      */
-    bool     lp_rest;        /**< The park is Rest's (Gui_rest_asleep): the
+    bool     lp_rest;       /**< The park is Rest's (Gui_rest_asleep): the
                                *   Rest face stays on the glass.            */
     bool     lp_top_down;    /**< TOP went down while parked and has not come up. */
     bool     lp_top_cycle;   /**< A whole press of TOP went by while parked. */
@@ -33707,6 +33707,36 @@ static void gui_pass_measure(Gui * const me, uint32_t t0, bool drew)
     }
 }
 
+/**
+ * @brief Say on the glass that the card is full.
+ *
+ * AO_AppMgr skips the copy of an app that does not fit the card and says so
+ * once for each card mounted; the person is told, to free some space.
+ *
+ * @param me The AO, its face awake, Apps or Settings on the glass.
+ */
+static void gui_card_full_say(Gui * const me)
+{
+    me->card_full_due = false;
+    KLOG_N(TAG, "the card is full: an app's copy does not fit");
+    kgui_hint(GUI_HINT_CARD_FULL);
+}
+
+/**
+ * @brief Say the card's "full" that came while the glass was out of sight.
+ *
+ * Called on the way into the face awake, Apps and Settings.
+ *
+ * @param me The AO.
+ */
+static void gui_card_full_due_say(Gui * const me)
+{
+    if ( me->card_full_due )
+    {
+        gui_card_full_say(me);
+    }
+}
+
 #if CONFIG_KODE_LOWPOWER
 /* ---- The low-power rounds -------------------------------------------------- */
 
@@ -33907,36 +33937,6 @@ static void gui_lp_refused(Gui * const me, LowPowerRefusedEvt const * const r)
         {
             gui_lp_refusal_say(me);
         }
-    }
-}
-
-/**
- * @brief Say on the glass that the card is full.
- *
- * AO_AppMgr skips the copy of an app that does not fit the card and says so
- * once for each card mounted; the person is told, to free some space.
- *
- * @param me The AO, its face awake, Apps or Settings on the glass.
- */
-static void gui_card_full_say(Gui * const me)
-{
-    me->card_full_due = false;
-    KLOG_N(TAG, "the card is full: an app's copy does not fit");
-    kgui_hint(GUI_HINT_CARD_FULL);
-}
-
-/**
- * @brief Say the card's "full" that came while the glass was out of sight.
- *
- * Called on the way into the face awake, Apps and Settings.
- *
- * @param me The AO.
- */
-static void gui_card_full_due_say(Gui * const me)
-{
-    if ( me->card_full_due )
-    {
-        gui_card_full_say(me);
     }
 }
 
@@ -34562,7 +34562,9 @@ void Gui_ctor(void)
      * the glass is at the level the store holds, until Rest dims it. */
     me->at_rest         = false;
     me->card_full_due   = false;
+#if CONFIG_KODE_LOWPOWER
     me->park_seq        = 0U;
+#endif
     me->woken           = false;
     me->usb_awake       = false;
     me->rail_3v3        = false;
