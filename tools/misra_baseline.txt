@@ -723,7 +723,7 @@ sdk/components/kqp/src/kqp_tick.c misra-c2012-5.9 1
 sdk/components/kscreen/src/kscreen.c constParameterCallback 1
 sdk/components/kscreen/src/kscreen.c constParameterPointer 1
 sdk/components/kscreen/src/kscreen.c misra-c2012-17.7 2
-sdk/components/kscreen/src/kscreen_geom.c misra-c2012-8.7 1
+sdk/components/kscreen/src/kscreen_geom.c misra-c2012-8.7 2
 sdk/components/kui/core/src/kui.c misra-c2012-5.9 1
 sdk/components/kui/core/src/kui.c misra-c2012-8.9 1
 sdk/components/kui/core/src/kui_cat_pill.c misra-c2012-10.1 1

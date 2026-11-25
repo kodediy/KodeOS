@@ -28,6 +28,21 @@ menu "kodeOS interface"
             card alone. An `http://` service is for a bench: only then may
             the release be a plain link as well.
 
+    config KGUI_C5_UPDATE_URL
+        string "Where kodeOS asks which radio firmware it carries"
+        default "https://api.kode.diy/kodes/c5"
+        help
+            Asked, with `?kodeos=<this version>` and no authentication, only
+            when the C5's kode_c5 is older than the oldest this firmware
+            works with. Its answer has the shape of the kodeOS service's: a
+            `version`, the kode_c5 release this kodeOS carries, and a `url`,
+            the link of its signed image, which kodeOS then installs by
+            itself. A 404 means there is none to install. At most 56
+            characters.
+
+            Empty: kodeOS asks nobody. An `http://` service is for a bench:
+            only then may the image be a plain link as well.
+
     config KGUI_ASSETS_WAIT_MS
         int "How long the face waits for the pack at boot, ms"
         range 0 5000

@@ -219,13 +219,22 @@ kgui_osrel_offer_t kgui_osrel_offer_shown(kgui_osrel_offer_t offer);
 const char *kgui_osrel_offer_word(kgui_osrel_offer_t offer);
 
 /**
+ * @brief Whether nothing holds the glass.
+ *
+ * The face awake, Apps or the settings screen with nothing else on the
+ * glass: no card and none asked for by the face's pill, no locked card, no
+ * write and no install being decided, no factory reset, no parked glass,
+ * nothing moving, no hand on the board and no greeting waiting.
+ *
+ * @param glass What holds the glass; NULL is never free.
+ * @return true when the glass is free.
+ */
+bool kgui_osrel_glass_free(const kgui_osrel_glass_t *glass);
+
+/**
  * @brief Whether the card may rise now.
  *
- * Only for a due offer, and only on the face awake, Apps or the settings
- * screen with nothing else on the glass: no card and none asked for by the
- * face's pill, no locked card, no write and no install being decided, no
- * factory reset, no parked glass, nothing moving, no hand on the board and
- * no greeting waiting.
+ * Only for a due offer, and only on a free glass (kgui_osrel_glass_free()).
  *
  * @param offer Where the offer stands.
  * @param glass What holds the glass; NULL never lets it rise.

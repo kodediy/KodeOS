@@ -13,6 +13,7 @@ idf_component_register(
          "kgui_curtain.c"
          "kgui_details.c"
          "kgui_dtext.c"
+         "kgui_c5up.c"
          "kgui_charge.c"
          "kgui_clock.c"
          "kgui_edge.c"
