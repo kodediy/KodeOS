@@ -446,7 +446,7 @@ static bool gui_sheet_pins(GuiSheet kind)
 /**
  * @brief Whether a sheet is one of the three cards the details module draws.
  *
- * The details of an app, the question before Remove and the wait while the
+ * The details of an app, the question before Delete and the wait while the
  * app leaves share one set of pages (kgui_details.h), kept while the card
  * turns from one into another.
  *
@@ -12941,8 +12941,9 @@ static int8_t gui_sheet_card_row(Gui const * const me)
  * the row's own model, and how it is drawn is the module's. This AO owns the
  * state around it - which sheet is up, what the buttons mean on it, what the
  * pill is worth - and posts, like everything that reaches an owner. The details
- * have one answer, Remove, for an installed app and for a file that names its
- * project; it asks on a card of its own, then AO_AppMgr takes everything of the
+ * have two answers: Open, which launches the app as the list does, and Delete,
+ * for an installed app and for a file that names its project. Delete asks on
+ * a card of its own, then AO_AppMgr takes everything of the
  * app off the board (gui_remove_go()) while a locked card waits for the erase
  * to say how it ended (APP_ERASE_DONE_SIG).
  */
@@ -12980,11 +12981,11 @@ static uint32_t gui_row_size_of(Gui const * const me, GuiRow const * const r)
 }
 
 /**
- * @brief Whether Remove has something to name for a row.
+ * @brief Whether Delete has something to name for a row.
  *
  * An installed app by its project name; a file that is not installed by the
  * project its descriptor names, which is what the erase matches files by. A
- * file that names none has no Remove.
+ * file that names none has no Delete.
  *
  * @param me The AO.
  * @param r  The row: which model, and where in it.
@@ -26497,7 +26498,7 @@ static void gui_about_fill(Gui * const me)
         }
     }
 
-    /* The factory reset, under Update and red like Remove: it only opens the
+    /* The factory reset, under Update and red like Delete: it only opens the
      * question (gui_reset_fill()), which says what goes before anything is
      * asked of AO_Boot. */
     if ( gui_sheet_row_plain(me, KGUI_RESET_ROW, KGUI_RESET_ROW_SUB,
