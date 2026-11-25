@@ -37,10 +37,11 @@ This part is for a person who changes the code of kodeOS. To use the board, you 
 | `host_tests.sh` | Runs the unit tests of the SDK on the computer (Unity and CMock on the linux target of ESP-IDF). |
 | `tool_tests.sh` | Runs every test in `tools/tests/`, and the station's two tests in `tools/factory/`, with no board and no ESP-IDF. Only `test_kappdata.py` and `test_factory.py` need Pillow, and it says so when Pillow is missing. It fails when a `tools/tests/test_*` file exists that it does not run. |
 | `check_os_size.sh` | Checks that `build/kodeos.bin` is small enough for an update through the mailbox. |
+| `check_noradio.sh` | Builds kodeOS with the radio left out, in `build_noradio/`, and fails when it does not build. That leaves Wi-Fi, Bluetooth, the network, AO_LowPower and the factory test out too. The simulator builds kodeOS this way, and the board's build does not compile that side of the guards. It needs ESP-IDF, and it takes as long as a build. |
 | `ram_budget.txt` | The budget of internal RAM for kodeOS. It gives the highest allowed size of the static image. It also lists the static variables of 2048 bytes or more that are in internal RAM. A static variable keeps one fixed place in memory while the program runs. `sdk/tools/check_ram.sh build/kodeos.elf tools/ram_budget.txt` checks a build against it. |
 | `misra_baseline.txt` | The MISRA C baseline of kodeOS: the version of cppcheck it was taken with, and, for each file and each id, the number of findings that the file must not exceed. `sdk/tools/check_misra.sh build/compile_commands.json tools/misra_baseline.txt sdk/components components/kgui` checks a build against it. The same command with `--update` first writes the file again. |
 | `check_todo_refs.sh` | Fails when a change adds a `TODO`, `FIXME`, `HACK` or `XXX` that names no issue, for example `TODO(#42)`. It reads only the lines that the change adds against a base commit. CI runs it on every pull request. |
-| `ci_report.sh` | Turns the output of the size, RAM and MISRA checks into one Markdown table. CI writes the table to the summary of the run and to one comment on the pull request. |
+| `ci_report.sh` | Turns the output of the size, RAM, starts and MISRA checks and of the radio-less build into one Markdown table. CI writes the table to the summary of the run and to one comment on the pull request. |
 
 See [Host tests](https://docs.kode.diy/internals/host-tests) and [Design rules](https://docs.kode.diy/sdk/design-rules).
 

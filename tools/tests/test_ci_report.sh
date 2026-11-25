@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercises tools/ci_report.sh against canned outputs of the four build
+# Exercises tools/ci_report.sh against canned outputs of the five build
 # checks: a green build reports each number on its own row, a red one quotes
 # the lines that say why, and a check that left no output says so.
 #   usage: tools/tests/test_ci_report.sh
@@ -26,11 +26,13 @@ printf 'kodeos.bin 2621440 of 4190208 bytes, 1568768 left (37%%)\n' > "$scratch/
 printf 'kodeos.elf 9 statics of 2048 bytes or more in internal RAM, all listed\n' > "$scratch/green/ram.txt"
 printf 'starts: 20 Active Objects and 6 door set-ups, each beside what it starts\n' > "$scratch/green/starts.txt"
 printf 'MISRA: 812 findings in 97 files, none past the baseline\n' > "$scratch/green/misra.txt"
+printf 'noradio: kodeOS builds with the radio left out\n' > "$scratch/green/noradio.txt"
 out="$("$script" "$scratch/green")"
 expect "the image row carries the size line" "$out" "| Image size | kodeos.bin 2621440 of 4190208 bytes, 1568768 left (37%) |"
 expect "the RAM row carries the statics line" "$out" "| Internal RAM | kodeos.elf 9 statics"
 expect "the starts row carries the count" "$out" "| Starts | starts: 20 Active Objects and 6 door set-ups, each beside what it starts |"
 expect "the MISRA row carries the count" "$out" "| MISRA | MISRA: 812 findings in 97 files, none past the baseline |"
+expect "the radio-less row carries the result" "$out" "| No radio | noradio: kodeOS builds with the radio left out |"
 expect "a green report has a marker for the PR comment" "$out" "<!-- kodeos-ci-report -->"
 
 mkdir -p "$scratch/red"
@@ -38,13 +40,18 @@ printf 'kodeos.bin 2621440 of 4190208 bytes, 1568768 left (37%%)\n' > "$scratch/
 printf 'kodeos.elf 9 statics of 2048 bytes or more in internal RAM, all listed\n' > "$scratch/red/ram.txt"
 printf 'error: sdk/components/kaos/x.c has 3 of 8.4, the baseline allows 2:\n         sdk/components/kaos/x.c:12\n' > "$scratch/red/misra.txt"
 printf 'FAIL  compiled but not in the image: AO_Touch\n' > "$scratch/red/starts.txt"
+printf "     kgui_ao.c:34160:7: error: 'Gui' has no member named 'card_full_due'\nerror: kodeOS does not build with the radio left out (build_noradio/noradio.log)\n" > "$scratch/red/noradio.txt"
 out="$("$script" "$scratch/red")"
 expect "a failed check's lines are quoted" "$out" "error: sdk/components/kaos/x.c has 3 of 8.4"
 expect "a failed start check is quoted" "$out" "FAIL  compiled but not in the image: AO_Touch"
+expect "a failed radio-less build is quoted" "$out" "error: kodeOS does not build with the radio left out"
+expect "and so is the compiler's line" "$out" "kgui_ao.c:34160:7: error: 'Gui' has no member named 'card_full_due'"
+expect "a failed radio-less build has no result on its row" "$out" "| No radio | failed, see below |"
 
 mkdir -p "$scratch/empty"
 out="$("$script" "$scratch/empty")"
 expect "a check with no output says it did not run" "$out" "| Image size | did not run |"
+expect "the radio-less build too" "$out" "| No radio | did not run |"
 
 if [ "$fail" -eq 0 ]; then
     echo "all cases passed"
