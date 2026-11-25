@@ -22773,8 +22773,9 @@ static void gui_sheet_fill_again_as(Gui * const me, GuiSheet kind)
  *
  * A reading does nothing, and a press on it is not an act. The Screen card
  * is not asked: its rows click after the change (gui_screen_act()). Nor are
- * the radios' switches and Forget all: they click once AO_Radio has the
- * request and thud when it had no room.
+ * the Wi-Fi page's rows, the Bluetooth switch and Forget all: they click once
+ * their owner has the request and thud when it had no room, and a press that
+ * asks nothing is silent (gui_wifi_act()).
  *
  * @param me  The AO.
  * @param tag The row's tag.
@@ -22786,11 +22787,6 @@ static bool gui_sheet_row_acts(Gui const * const me, uint16_t tag)
 
     switch ( me->sheet )
     {
-        case GUI_SHEET_WIFI: {
-            acts = ((uint16_t)GUI_TAG_WIFI_HIDDEN == tag)
-                   || ((uint16_t)GUI_TAG_WIFI_SAVED <= tag);
-            break;
-        }
         case GUI_SHEET_BLE: {
             acts = ((uint16_t)GUI_TAG_BLE_PAIR == tag);
             break;
@@ -23691,6 +23687,11 @@ static bool gui_wifi_scan_due(Gui const * const me, uint32_t now, bool entering)
 /**
  * @brief The top button on one Wi-Fi row.
  *
+ * Every row does something, and answers the press the same way: a click once
+ * what it asks for is out - the keypad on its way up, or a request its owner
+ * took - a thud when the owner had no room, and nothing when the press asks
+ * nothing because what it would ask for is on its way already.
+ *
  * @param me  The AO.
  * @param idx The row, already known to exist.
  */
@@ -23714,6 +23715,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
         {
             /* A network with a password nobody has given this board: the
              * keypad asks for it. */
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
             gui_kbd_begin(me, me->scan_shown[i], false, me->scan_shown_rssi[i], tag);
         }
         else
@@ -23737,6 +23739,7 @@ static void gui_wifi_act(Gui * const me, uint8_t idx)
     {
         /* A hidden network is a network chosen: the keypad takes its name
          * and its password. */
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
         gui_kbd_begin(me, "", true, (int8_t)KGUI_WIFI_RSSI_NONE, tag);
     }
     else if ( (uint16_t)GUI_TAG_WIFI_LINKED == tag )
@@ -23798,11 +23801,11 @@ static void gui_wifi_leave(Gui * const me)
         }
         if ( (uint8_t)GUI_LEAVE_NONE == stage )
         {
-            /* AO_Radio had no room: nothing was asked. */
-            kgui_hint(GUI_HINT_ROOM_BUSY);
+            gui_radio_refused("leaving the network");
         }
         else
         {
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
             me->leave    = stage;
             me->leave_ms = khal_time_ms();
             KLOG_I(TAG, "leaving '%s'", me->wifi_ssid);
@@ -23971,18 +23974,22 @@ static void gui_wifi_row_join(Gui * const me, uint8_t idx, const char *ssid, int
     }
     else if ( wifi_join_request(ssid, "", true) )
     {
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
         (void)snprintf(me->row_join_ssid, sizeof(me->row_join_ssid), "%s", ssid);
         me->row_join_ms   = khal_time_ms();
         me->row_join_rssi = rssi;
         me->row_join_door = me->sheet_tag[idx];
         me->scan_own_join = me->scan_out;
+        /* The join leaves the network the board is on by itself: a leave
+         * still waiting for the sweep is not sent after it. */
+        me->leave         = (uint8_t)GUI_LEAVE_NONE;
         KLOG_I(TAG, "joining '%s'", me->row_join_ssid);
         gui_sheet_refill(me);
     }
     else
     {
-        /* AO_Radio had no room: nothing is out and nothing will answer. */
-        kgui_hint(GUI_HINT_ROOM_BUSY);
+        /* Nothing is out and nothing will answer. */
+        gui_radio_refused("joining a network");
     }
 }
 
@@ -24641,15 +24648,21 @@ static void gui_wifi_chan_switch(Gui * const me)
     if ( !posted )
     {
         /* AO_Net had no room: nothing was asked. */
+        KLOG_N(TAG, "the Kode channel's switch refused: AO_Net had no room");
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
         kgui_hint(GUI_HINT_ROOM_BUSY);
-    }
-    else if ( on )
-    {
-        KLOG_I(TAG, "Kode ecosystem: asked to join");
     }
     else
     {
-        KLOG_I(TAG, "Kode ecosystem: asked to leave");
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+        if ( on )
+        {
+            KLOG_I(TAG, "Kode ecosystem: asked to join");
+        }
+        else
+        {
+            KLOG_I(TAG, "Kode ecosystem: asked to leave");
+        }
     }
 }
 
