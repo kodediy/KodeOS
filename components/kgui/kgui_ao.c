@@ -79,7 +79,7 @@
 #include "kgui_wifi.h"     /* the radios' rows' words, and why a join failed */
 #include "kgui_trim.h"     /* a name without the spaces at its ends */
 #include "kgui_selftest.h" /* what the Self-test page says about the last run */
-#include "kgui_syscard.h"  /* the words of the stopped, critical and factory reset cards, and their decisions */
+#include "kgui_syscard.h"  /* the words of the system cards, their plain OK among them, and their decisions */
 #include "kgui_sysscreen.h" /* the frame of a system screen: protagonist, figure, words, pill */
 #include "kgui_fault.h"    /* the fault notice: the record kept until a person answers */
 #if CONFIG_KODE_TEST_DOT
@@ -1105,7 +1105,6 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_PILE_KEY_SHOWN  1U                               /**< The key's bit for a cell being known. */
 #define GUI_OFF_BUTTON      "Turn off"                       /**< The Turn off card's one button. */
 #define GUI_OFF_USB_TITLE   "Unplug to turn off"                 /**< What the Turn off card says while a cable is in: it cannot turn off. */
-#define GUI_OFF_USB_OK      "OK"                             /**< Its one button then, which closes the card. */
 #define GUI_HINT_ROOM_LOST  "No answer. Try again"           /**< What it says when AO_AppMgr does not answer. */
 #define GUI_HINT_TOO_BIG    "Too big for this Dot"           /**< What it says of an app that cannot fit the apps region. */
 #define GUI_LONG_PRESS_MS   KODE_BUTTON_HOLD_MS                  /**< A finger that stays on an app's row, or on the Wi-Fi or Bluetooth circle, this long, within KUI_GESTURE_TAP_PX of where it landed and with no claim, opens its details or its page: the time TOP held takes. */
@@ -1425,7 +1424,6 @@ typedef enum {
 #define GUI_FORGET_BLE_TITLE   "Forget all devices?"        /**< The paired devices' question's title. */
 #define GUI_FORGET_BLE_BODY    "You'll need to pair them again." /**< ...and its body. */
 #define GUI_FORGET_TITLE_MAX   48U                          /**< Room for the network question's title: the words and a 32 byte name. */
-#define GUI_FAIL_OK            "OK"         /**< The failure screen's answer: the screen is left. */
 #define GUI_FAIL_RETRY         "Retry"      /**< The failure screen's right pill when the card was busy: the request is made again. */
 #define GUI_FAIL_CLOSE         "Close"      /**< ...and its left pill: the screen is left. */
 #define GUI_FAIL_TITLE_APP     "Couldn't "  /**< The failure's title of an app, before its verb. */
@@ -19104,7 +19102,7 @@ static void gui_off_fill(Gui * const me)
         role = GUI_ACT_PRIMARY;
         kgui_sys_glyph(&me->sys, &kgui_glyph_power_180, KUI_COLOR_TEXT_ON_BG);
         kgui_sys_ask(&me->sys, KGUI_SYS_ROOM_TOP, KGUI_SYS_ROOM_END, GUI_OFF_USB_TITLE, NULL);
-        gui_sheet_action(me, GUI_OFF_USB_OK, role);
+        gui_sheet_action(me, KGUI_CARD_OK, role);
     }
     else
     {
@@ -22462,7 +22460,7 @@ static void gui_failure_fill(Gui * const me)
     }
     else
     {
-        gui_sheet_action(me, GUI_FAIL_OK, GUI_ACT_PRIMARY);
+        gui_sheet_action(me, KGUI_CARD_OK, GUI_ACT_PRIMARY);
     }
 }
 
@@ -26936,7 +26934,7 @@ static void gui_fault_fill(Gui * const me)
         kgui_sys_text(&me->sys, KGUI_SYS_ROOM_TOP, KGUI_SYS_ROOM_END, KGUI_FAULT_NAME,
                       words, NULL);
     }
-    gui_sheet_action(me, KGUI_FAULT_OK, GUI_ACT_PRIMARY);
+    gui_sheet_action(me, KGUI_CARD_OK, GUI_ACT_PRIMARY);
     KLOG_N(TAG, "fault: the notice is on the glass (%s), %s",
            gui_fault_class_word((kgui_fault_class_t)me->fault.rec.cls), look);
 }

@@ -13,6 +13,10 @@
 extern "C" {
 #endif
 
+/* ---- Every card ------------------------------------------------------------ */
+
+#define KGUI_CARD_OK           "OK"                     /**< A card's plain answer, its one button: the card is left. */
+
 /* ---- The app that stopped -------------------------------------------------- */
 
 #define KGUI_STOPPED_ANON      "An app"                 /**< The name when the app is not known. */
@@ -45,7 +49,6 @@ const char *kgui_stopped_reason(int end);
 /* ---- kodeOS's own fault ---------------------------------------------------- */
 
 #define KGUI_FAULT_NAME        "kodeOS restarted"       /**< The fault notice's name; its second line is the Stopped card's why. */
-#define KGUI_FAULT_OK          "OK"                     /**< The notice's one button. */
 
 /* ---- The battery ----------------------------------------------------------- */
 
