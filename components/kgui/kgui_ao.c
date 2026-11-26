@@ -3122,9 +3122,20 @@ typedef struct {
     QTimeEvt c5_again;       /**< The radio's question goes out again (KGUI_OSREL_BOOT_AGAIN_MS). */
     kgui_fault_t fault;      /**< The fault notice: what is owed and whether it is due. */
     uint8_t  fault_face;     /**< kgui_fault_face_t: what the notice's card shows. */
+    bool     fault_offer;    /**< The card rose offering to send the report (KGUI_FAULT_RISE_SEND), kept while it is up. */
+    bool     fault_kody_on;  /**< Kody stood in the notice's band: the send's faces keep him as he stands. */
     lv_obj_t *fault_kody;    /**< The card band's player: made the first time the card is filled, kept. */
     bool     fault_kody_live;/**< It plays, to be paused KGUI_FAULT_HOLD_MS after the play. */
     uint32_t fault_kody_ms;  /**< When the play began. */
+#if CONFIG_KODEOS_DUMP_HTTP
+    uint32_t fault_face_ms;  /**< When the card took its face: the send's guard and the sent card's stay count from here. */
+    uint8_t  fault_why;      /**< kgui_fault_send_t: how the last send ended, for the failure face. */
+    bool     fault_dump_read;/**< The dump in flash was looked at, once this boot. */
+    bool     fault_dump_ok;  /**< ...and it is a kodeOS image's. */
+    bool     fault_wifi_heard;/**< Wi-Fi's state was heard this boot. */
+    bool     fault_chan_heard;/**< The channel's state was heard this boot. */
+    bool     chan_dumps;     /**< ChannelStateEvt.dumps: the channel is up and names a `dumps` link. */
+#endif
     uint8_t  write_what;     /**< kwrite_t: what the write on the glass is
                                *   and how it ends - the Opening sheet's
                                *   title, name and sentence, and the
@@ -3558,6 +3569,11 @@ static bool gui_update_boot_card(Gui const * const me);
 static bool gui_sheet_unasked(Gui const * const me);
 static void gui_fault_fill(Gui * const me);
 static void gui_fault_answer(Gui * const me, const char *what);
+static bool gui_fault_sent_up(Gui const * const me);
+#if CONFIG_KODEOS_DUMP_HTTP
+static bool gui_fault_send_act(Gui * const me);
+static void gui_fault_report_answer(Gui * const me, NetDumpRspEvt const * const r);
+#endif
 static void gui_fault_info(Gui const * const me);
 static void gui_update_fill(Gui * const me);
 static void gui_update_act(Gui * const me);
@@ -20537,6 +20553,8 @@ static void gui_sheet_keep_act(Gui * const me)
     me->pair_done = true;
     (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
     KLOG_D(TAG, "sheet: the left pill keeps; the card closes");
+    /* The fault notice's OK beside Send, or Close beside Retry. */
+    gui_fault_answer(me, "the left pill");
     gui_sheet_close(me);
 }
 
@@ -20647,9 +20665,18 @@ static void gui_sheet_action_act(Gui * const me)
             break;
         }
         case GUI_SHEET_FAULT: {
-            /* OK: the notice is answered, and the card goes. */
-            gui_fault_answer(me, "OK");
-            gui_sheet_close(me);
+            /* Send and Retry ask for the report (gui_fault_send_act());
+             * OK answers the notice, and the card goes. */
+            bool took = false;
+
+#if CONFIG_KODEOS_DUMP_HTTP
+            took = gui_fault_send_act(me);
+#endif
+            if ( !took )
+            {
+                gui_fault_answer(me, "OK");
+                gui_sheet_close(me);
+            }
             break;
         }
         default: {
@@ -22101,7 +22128,8 @@ static bool gui_sheet_framed(GuiSheet kind)
  * @brief Whether the edge along the glass stays as it is across a card's
  *        being written again.
  *
- * The write, the pairing and the factory reset's wait draw it.
+ * The write, the pairing, the factory reset's wait and the fault notice's
+ * send draw it; the notice's own face takes it off (gui_fault_fill()).
  *
  * @param kind Which sheet.
  * @return true when the card owns the edge.
@@ -22109,7 +22137,7 @@ static bool gui_sheet_framed(GuiSheet kind)
 static bool gui_sheet_edged(GuiSheet kind)
 {
     return (GUI_SHEET_OPENING == kind) || (GUI_SHEET_PAIRING == kind)
-           || (GUI_SHEET_RESETTING == kind);
+           || (GUI_SHEET_RESETTING == kind) || (GUI_SHEET_FAULT == kind);
 }
 
 /**
@@ -26671,6 +26699,14 @@ static void gui_fault_load(Gui * const me)
     {
         /* No fault of kodeOS's own before this boot. */
     }
+#if CONFIG_KODEOS_DUMP_HTTP
+    if ( (uint8_t)KGUI_FAULT_NONE != boot.cls )
+    {
+        /* AO_Boot has looked at this fault's dump: no read of the flash. */
+        me->fault_dump_read = true;
+        me->fault_dump_ok   = boot.dump;
+    }
+#endif
     kgui_fault_begin(&me->fault, kept, kept_byte, boot, khal_time_ms());
     if ( me->fault.store )
     {
@@ -26721,18 +26757,47 @@ static kgui_fault_chan_t gui_fault_chan(uint8_t state)
 }
 #endif
 
+#if CONFIG_KODEOS_DUMP_HTTP
 /**
- * @brief What the notice's verdict is decided from, now: the record's word on
- *        the dump, the radios, the channel and the time waited.
+ * @brief Whether a dump of a kodeOS image waits in flash for the notice.
  *
- * Nothing in this build sends a report (`built` is false), so the verdict is
- * OK alone.
+ * The fault boot takes AO_Boot's word (gui_fault_load()). A later boot reads
+ * the coredump partition once, only for a record that says a dump and only
+ * once the card is due: kdrv_slot_coredump() proves the checksum over the
+ * whole dump, up to KDRV_COREDUMP_MAX of flash, inside this AO's step.
+ *
+ * @param me The AO.
+ * @return true when the record says a dump and a kodeOS image's is in flash.
+ */
+static bool gui_fault_dump_now(Gui * const me)
+{
+    if ( me->fault.rec.dump && (!me->fault_dump_read) )
+    {
+        kdrv_coredump_t cd;
+
+        (void)memset(&cd, 0, sizeof(cd));
+        me->fault_dump_read = true;
+        me->fault_dump_ok   = (kdrv_slot_coredump(&cd) == KODE_OK) && cd.present && cd.kodeos;
+        KLOG_D(TAG, "fault: the dump in flash is %s", gui_yes_no(me->fault_dump_ok));
+    }
+    return me->fault.rec.dump && me->fault_dump_ok;
+}
+#endif
+
+/**
+ * @brief What the notice's verdict is decided from, now: the dump, the
+ *        radios, the channel and the time waited.
+ *
+ * A build without CONFIG_KODEOS_DUMP_HTTP sends nothing (`built` is false),
+ * so its verdict is OK alone. With it, a radio not heard yet this boot counts
+ * as on its way (kgui_fault_net_unheard()), and the dump is looked at in
+ * flash (gui_fault_dump_now()).
  *
  * @param me        The AO.
  * @param waited_ms Since the notice became due, in milliseconds.
  * @param n         Receives it.
  */
-static void gui_fault_net(Gui const * const me, uint32_t waited_ms, kgui_fault_net_t *n)
+static void gui_fault_net(Gui * const me, uint32_t waited_ms, kgui_fault_net_t *n)
 {
 #if CONFIG_KODEOS_CHANNEL
     kgui_fault_chan_t const chan = gui_fault_chan(me->chan_state);
@@ -26740,12 +26805,19 @@ static void gui_fault_net(Gui const * const me, uint32_t waited_ms, kgui_fault_n
     kgui_fault_chan_t const chan = KGUI_FAULT_CHAN_NEVER;    /* no channel in the build */
 #endif
 
-    n->dump      = me->fault.rec.dump;
-    n->built     = false;
     n->wifi_on   = me->wifi_on;
     n->chan      = (uint8_t)chan;
-    n->link      = false;
     n->waited_ms = waited_ms;
+#if CONFIG_KODEOS_DUMP_HTTP
+    n->dump  = gui_fault_dump_now(me);
+    n->built = true;
+    n->link  = me->chan_dumps;
+    kgui_fault_net_unheard(n, me->fault_wifi_heard, me->fault_chan_heard);
+#else
+    n->dump  = me->fault.rec.dump;
+    n->built = false;
+    n->link  = false;
+#endif
 }
 
 /**
@@ -26799,7 +26871,8 @@ static bool gui_fault_tick(Gui * const me)
             verdict = kgui_fault_verdict(&n);
             if ( KGUI_FAULT_WAIT != verdict )
             {
-                me->fault_face = (uint8_t)KGUI_FAULT_FACE_NOTICE;
+                me->fault_face  = (uint8_t)KGUI_FAULT_FACE_NOTICE;
+                me->fault_offer = (KGUI_FAULT_RISE_SEND == verdict);
                 gui_sheet_open_kind(me, GUI_SHEET_FAULT);
                 asked = true;
             }
@@ -26876,66 +26949,208 @@ static bool gui_fault_kody_play(Gui * const me, const kui_kody_anim_t *anim)
     return plays;
 }
 
+#define GUI_FAULT_ROOM_RAISE   2    /**< How far the notice's words with Kody stand above the band's room when they carry the report's line: the least that keeps them off the pair's focus ring. */
+#define GUI_FAULT_ROOM_TOP     (KGUI_SYS_BAND_ROOM_TOP - GUI_FAULT_ROOM_RAISE) /**< ...where that room begins. */
+#define GUI_FAULT_ROOM_END     (KGUI_SYS_BAND_PILL_Y - KGUI_SYS_PILL_RING) /**< ...and where it ends: the pair's focus ring. */
+#define GUI_FAULT_BODY_LINE    34   /**< A line of kui_font_body, the report line's face, in pixels. */
+#define GUI_FAULT_REPORT_LINES 2    /**< The lines the report's line takes in KGUI_SYS_TEXT_W. */
+#define GUI_FAULT_WORDS_H      (KGUI_SYS_TEXT_STEP_NAME + KGUI_SYS_TEXT_STEP_SECOND \
+                                + (GUI_FAULT_REPORT_LINES * GUI_FAULT_BODY_LINE)) /**< The notice's words at their tallest. */
+
+_Static_assert(GUI_FAULT_ROOM_TOP >= KGUI_EDGE_W, "the notice's words stand inside the edge");
+_Static_assert((GUI_FAULT_ROOM_END - GUI_FAULT_ROOM_TOP) >= GUI_FAULT_WORDS_H,
+               "the notice's words fit over the pair and its focus ring");
+_Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_WORDS_H) / 2) > KGUI_SYS_PILL_RING,
+               "with the X, air stays between the notice's words and the pair's focus ring");
+_Static_assert(KGUI_FAULT_SEND_GUARD_MS > KODE_NET_GUARD_MS,
+               "AO_Net answers every request it took within its own guard: the card's covers a lost answer");
+_Static_assert(KGUI_FAULT_SENT_MS >= KGUI_EDGE_DONE_MS, "\"Report sent\" stays until its edge has closed");
+#if CONFIG_KODEOS_DUMP_HTTP
+_Static_assert((uint32_t)KGUI_FAULT_SEND_OK == (uint32_t)KDUMP_R_OK, "the card reads AO_Net's results as they are");
+_Static_assert((uint32_t)KGUI_FAULT_SEND_REFUSED == (uint32_t)KDUMP_R_REFUSED, "the card reads AO_Net's results as they are");
+_Static_assert((uint32_t)KGUI_FAULT_SEND_NO_ANSWER == (uint32_t)KDUMP_R_NO_ANSWER, "the card reads AO_Net's results as they are");
+_Static_assert((uint32_t)KGUI_FAULT_SEND_BUSY == (uint32_t)KDUMP_R_BUSY, "the card reads AO_Net's results as they are");
+_Static_assert((uint32_t)KGUI_FAULT_SEND_CHANNEL == (uint32_t)KDUMP_R_CHANNEL, "the card reads AO_Net's results as they are");
+_Static_assert((uint32_t)KGUI_FAULT_SEND_NONE == (uint32_t)KDUMP_R_NONE, "the card reads AO_Net's results as they are");
+#endif
+
 /**
- * @brief Write the fault notice: the name and the class's words over OK,
+ * @brief Write the notice's own face: the name and the class's words over OK,
  *        over Kody in the band on the glass's lower edge; or the X with the
  *        name, the words and OK under it.
  *
- * Kody plays the pack's fault animation once and is paused with the X on
- * the glass (gui_fault_kody_tick()). With no animation - the pack has none,
- * its file could not be read, or the built-in pack is the source - or none
- * that plays, the X in the danger colour stands in his place. Rest and the
- * auto-lock count from the rise.
+ * A card that rose offering the report (`fault_offer`) says what a report is
+ * under the words, and answers with the pair OK and Send, OK on the left
+ * with the focus; with Kody its words stand GUI_FAULT_ROOM_RAISE higher, off
+ * the pair's focus ring. Kody plays the pack's fault animation once and
+ * is paused with the X on the glass (gui_fault_kody_tick()). With no
+ * animation - the pack has none, its file could not be read, or the built-in
+ * pack is the source - or none that plays, the X in the danger colour stands
+ * in his place. The edge is not drawn.
  *
  * @param me The AO.
  */
-static void gui_fault_fill(Gui * const me)
+static void gui_fault_notice_fill(Gui * const me)
 {
-    const kui_kody_anim_t * const anim  = kgui_assets_role(KUI_PACK_ROLE_FAULT);
-    const char * const            words = kgui_fault_words(me->fault.rec.cls);
-    const char                   *look  = "the X in his place";
-    bool                          kody  = false;
+    const kui_kody_anim_t * const anim   = kgui_assets_role(KUI_PACK_ROLE_FAULT);
+    const char * const            words  = kgui_fault_words(me->fault.rec.cls);
+    const char                   *look   = "the X in his place";
+    const char                   *report = NULL;
+    const char                   *offer  = "OK alone";
+    int32_t                       top    = KGUI_SYS_BAND_ROOM_TOP;
+    int32_t                       end    = KGUI_SYS_BAND_PILL_Y;
+    bool                          kody   = false;
 
-    gui_idle_rearm(me);
-    me->sheet_locked = false;
-    gui_frame_begin(me);
+    kgui_ring_cancel(&me->glass);
+    kgui_ring_show(&me->glass, false);
+    if ( me->fault_offer )
+    {
+        report = KGUI_FAULT_REPORT;
+        offer  = "with Send";
+        top    = GUI_FAULT_ROOM_TOP;
+        end    = GUI_FAULT_ROOM_END;
+    }
     if ( NULL != anim )
     {
         kody = gui_fault_kody_play(me, anim);
     }
+    me->fault_kody_on = kody;
     if ( kody )
     {
         look = "Kody plays";
-        kgui_sys_text(&me->sys, KGUI_SYS_BAND_ROOM_TOP, KGUI_SYS_BAND_PILL_Y, KGUI_FAULT_NAME,
-                      words, NULL);
+        kgui_sys_text(&me->sys, top, end, KGUI_FAULT_NAME, words, report);
     }
     else
     {
         /* The bad news in the error colour, as on a Stopped card. */
         kgui_sys_glyph(&me->sys, &kui_glyph_x_30, KUI_COLOR_DANGER);
         kgui_sys_text(&me->sys, KGUI_SYS_ROOM_TOP, KGUI_SYS_ROOM_END, KGUI_FAULT_NAME,
-                      words, NULL);
+                      words, report);
     }
-    gui_sheet_action(me, KGUI_CARD_OK, GUI_ACT_PRIMARY);
+    if ( me->fault_offer )
+    {
+        gui_sheet_pair(me, KGUI_CARD_OK, GUI_ACT_NEUTRAL, KGUI_FAULT_REPORT_SEND, GUI_ACT_PRIMARY, false);
+    }
+    else
+    {
+        gui_sheet_action(me, KGUI_CARD_OK, GUI_ACT_PRIMARY);
+    }
     if ( kody )
     {
         /* Over the band, which stands on the glass's lower edge. */
         kgui_sys_pill_at(me->sheet_card, KGUI_SYS_BAND_PILL_Y);
     }
-    KLOG_N(TAG, "fault: the notice is on the glass (%s), %s",
-           gui_fault_class_word((kgui_fault_class_t)me->fault.rec.cls), look);
+    KLOG_N(TAG, "fault: the notice is on the glass (%s), %s, %s",
+           gui_fault_class_word((kgui_fault_class_t)me->fault.rec.cls), look, offer);
+}
+
+#if CONFIG_KODEOS_DUMP_HTTP
+/**
+ * @brief Write a send's face: "Sending report..." with the edge turning,
+ *        "Report sent" with the edge closing green, or why it was not sent
+ *        with the edge cut and the pair Close and Retry.
+ *
+ * Kody stays in the band as he stands when he stood there on the notice;
+ * otherwise the X keeps his place. Sending and sent offer no pill.
+ *
+ * @param me The AO.
+ */
+static void gui_fault_send_fill(Gui * const me)
+{
+    kgui_fault_face_t const face = (kgui_fault_face_t)me->fault_face;
+    kgui_fault_send_t const why  = (kgui_fault_send_t)me->fault_why;
+    uint32_t const          now  = khal_time_ms();
+    const lv_obj_t         *band = NULL;
+    int32_t                 top  = KGUI_SYS_ROOM_TOP;
+    int32_t                 end  = KGUI_SYS_ROOM_END;
+
+    if ( me->fault_kody_on )
+    {
+        band = kgui_sys_band(&me->sys);
+    }
+    if ( NULL != band )
+    {
+        top = KGUI_SYS_BAND_ROOM_TOP;
+        end = KGUI_SYS_BAND_PILL_Y;
+    }
+    else
+    {
+        kgui_sys_glyph(&me->sys, &kui_glyph_x_30, KUI_COLOR_DANGER);
+    }
+    if ( KGUI_FAULT_FACE_SENDING == face )
+    {
+        kgui_sys_text(&me->sys, top, end, KGUI_FAULT_SENDING, NULL, NULL);
+        gui_glass_dress(me, KUI_COLOR_ACTION);
+        kgui_ring_spin(&me->glass, now);
+        gui_sheet_action(me, NULL, GUI_ACT_PRIMARY);
+    }
+    else if ( KGUI_FAULT_FACE_SENT == face )
+    {
+        kgui_sys_text(&me->sys, top, end, KGUI_FAULT_SENT, NULL, NULL);
+        kgui_ring_done(&me->glass, now);
+        gui_sheet_action(me, NULL, GUI_ACT_PRIMARY);
+    }
+    else
+    {
+        /* The title takes two lines of the display face: an ask's frame. */
+        kgui_sys_ask(&me->sys, top, end, KGUI_FAULT_UNSENT, kgui_fault_send_words((uint8_t)why));
+        kgui_ring_cancel(&me->glass);
+        kgui_ring_cut(&me->glass);
+        kgui_ring_show(&me->glass, true);
+        gui_sheet_pair(me, KGUI_CARD_CLOSE, GUI_ACT_NEUTRAL, KGUI_CARD_RETRY, GUI_ACT_PRIMARY, false);
+        if ( NULL != band )
+        {
+            kgui_sys_pill_at(me->sheet_card, KGUI_SYS_BAND_PILL_Y);
+        }
+    }
+}
+#endif
+
+/**
+ * @brief Write the fault notice in the face it shows: the notice
+ *        (gui_fault_notice_fill()) or a send's (gui_fault_send_fill()).
+ *
+ * Rest and the auto-lock count from each face's rise. The card is never
+ * locked: BOT and HOME close it in every face.
+ *
+ * @param me The AO.
+ */
+static void gui_fault_fill(Gui * const me)
+{
+    bool notice = true;
+
+    gui_idle_rearm(me);
+    me->sheet_locked = false;
+    gui_frame_begin(me);
+#if CONFIG_KODEOS_DUMP_HTTP
+    notice = ((uint8_t)KGUI_FAULT_FACE_NOTICE == me->fault_face);
+    if ( !notice )
+    {
+        gui_fault_send_fill(me);
+    }
+#endif
+    if ( notice )
+    {
+        gui_fault_notice_fill(me);
+    }
 }
 
 /**
- * @brief OK, BOT or HOME answered the notice: nothing is owed any more and
- *        the record is erased. The caller closes the card.
+ * @brief OK, Send, BOT or HOME answered the card. On the notice's
+ *        face nothing is owed any more and the record is erased; on a send's
+ *        face the answer was given already, and the card's leaving is logged.
+ *        The caller closes the card, or turns it to the send.
  *
  * @param me   The AO.
  * @param what What answered, for the log.
  */
 static void gui_fault_answer(Gui * const me, const char *what)
 {
-    if ( GUI_SHEET_FAULT == me->sheet )
+    if ( GUI_SHEET_FAULT != me->sheet )
+    {
+        /* Another card: nothing to answer. */
+    }
+    else if ( (uint8_t)KGUI_FAULT_FACE_NOTICE == me->fault_face )
     {
         kgui_fault_answered(&me->fault);
         if ( khal_nvs_erase(GUI_NVS_NAMESPACE, KGUI_FAULT_KEY) != KODE_OK )
@@ -26945,7 +27160,172 @@ static void gui_fault_answer(Gui * const me, const char *what)
         }
         KLOG_N(TAG, "fault: %s answered the notice", what);
     }
+    else if ( (uint8_t)KGUI_FAULT_FACE_SENDING == me->fault_face )
+    {
+        KLOG_N(TAG, "fault: %s closed the card while the report goes; its answer goes "
+                    "to the log", what);
+    }
+    else
+    {
+        KLOG_D(TAG, "fault: %s closed the card", what);
+    }
 }
+
+/**
+ * @brief Whether the card on the glass is the fault notice saying "Report
+ *        sent", which leaves at any press.
+ * @param me The AO.
+ * @return true for that card.
+ */
+static bool gui_fault_sent_up(Gui const * const me)
+{
+    return (GUI_SHEET_FAULT == me->sheet) && ((uint8_t)KGUI_FAULT_FACE_SENT == me->fault_face);
+}
+
+#if CONFIG_KODEOS_DUMP_HTTP
+/**
+ * @brief Send the report: the card turns to "Sending report..." and AO_Net
+ *        is asked.
+ *
+ * The face is posted BEFORE the request, so the answer lands behind it. A
+ * request AO_Net cannot take (net_dump_request() false: no answer comes)
+ * turns the card to the failure at once, "Busy. Try again", and Retry asks
+ * again.
+ *
+ * @param me The AO.
+ */
+static void gui_fault_send(Gui * const me)
+{
+    me->fault_face    = (uint8_t)KGUI_FAULT_FACE_SENDING;
+    me->fault_face_ms = khal_time_ms();
+    gui_sheet_refill(me);
+    if ( net_dump_request(&me->super) )
+    {
+        KLOG_N(TAG, "fault: the report is asked of AO_Net");
+    }
+    else
+    {
+        me->fault_face    = (uint8_t)KGUI_FAULT_FACE_FAILED;
+        me->fault_why     = (uint8_t)KGUI_FAULT_SEND_BUSY;
+        me->fault_face_ms = khal_time_ms();
+        KLOG_W(TAG, "fault: AO_Net could not take the report's request");
+        (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        gui_sheet_refill(me);
+    }
+}
+
+/**
+ * @brief The fault notice's right pill: Send on the notice, Retry on the
+ *        failure.
+ *
+ * Send answers the notice first (gui_fault_answer()): the record is
+ * erased and the notice never rises again, whatever the send's end.
+ *
+ * @param me The AO.
+ * @return true when the press was taken here; false for the notice's one OK,
+ *         which the caller answers.
+ */
+static bool gui_fault_send_act(Gui * const me)
+{
+    kgui_fault_face_t const face = (kgui_fault_face_t)me->fault_face;
+    bool                    took = true;
+
+    if ( (KGUI_FAULT_FACE_NOTICE == face) && me->fault_offer )
+    {
+        gui_fault_answer(me, "Send");
+        gui_fault_send(me);
+    }
+    else if ( KGUI_FAULT_FACE_FAILED == face )
+    {
+        KLOG_N(TAG, "fault: Retry sends the report again");
+        gui_fault_send(me);
+    }
+    else if ( KGUI_FAULT_FACE_NOTICE == face )
+    {
+        took = false;    /* the notice's OK alone */
+    }
+    else
+    {
+        /* Sending or sent: no pill stands on the glass. */
+    }
+    return took;
+}
+
+/**
+ * @brief How a send ended: the card turns to "Report sent" or to why not.
+ *
+ * Taken only by the card on the glass with the sending face
+ * (kgui_fault_on_answer()); any other answer - the card closed, a face that
+ * moved on - is said in the log and dropped.
+ *
+ * @param me The AO.
+ * @param r  AO_Net's answer.
+ */
+static void gui_fault_report_answer(Gui * const me, NetDumpRspEvt const * const r)
+{
+    uint8_t face = me->fault_face;
+
+    if ( kgui_fault_on_answer(&face, (GUI_SHEET_FAULT == me->sheet), r->result) )
+    {
+        me->fault_face    = face;
+        me->fault_why     = r->result;
+        me->fault_face_ms = khal_time_ms();
+        if ( (uint8_t)KGUI_FAULT_FACE_SENT == face )
+        {
+            KLOG_N(TAG, "fault: the report was sent");
+        }
+        else
+        {
+            KLOG_N(TAG, "fault: the report was not sent: %s (http %u)",
+                   kgui_fault_send_words(r->result), (unsigned)r->http);
+            (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+        }
+        gui_sheet_refill(me);
+    }
+    else
+    {
+        KLOG_N(TAG, "fault: the report's answer came with no card: %s",
+               kgui_fault_send_words(r->result));
+    }
+}
+
+/**
+ * @brief The tick's share of a send's faces: a send with no answer by the
+ *        guard fails as "No answer", and "Report sent" leaves after
+ *        KGUI_FAULT_SENT_MS (kgui_fault_face_step()). Counted on the tick.
+ *
+ * @param me The AO.
+ */
+static void gui_fault_send_tick(Gui * const me)
+{
+    if ( GUI_SHEET_FAULT == me->sheet )
+    {
+        uint32_t const          now  = khal_time_ms();
+        kgui_fault_step_t const step = kgui_fault_face_step(me->fault_face,
+                                                            now - me->fault_face_ms);
+
+        if ( KGUI_FAULT_STEP_FAIL == step )
+        {
+            me->fault_face    = (uint8_t)KGUI_FAULT_FACE_FAILED;
+            me->fault_why     = (uint8_t)KGUI_FAULT_SEND_NO_ANSWER;
+            me->fault_face_ms = now;
+            KLOG_W(TAG, "fault: no answer to the report in %u ms",
+                   (unsigned)KGUI_FAULT_SEND_GUARD_MS);
+            (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+            gui_sheet_refill(me);
+        }
+        else if ( KGUI_FAULT_STEP_CLOSE == step )
+        {
+            KLOG_D(TAG, "fault: \"Report sent\" has been read; the card closes");
+            gui_sheet_close(me);
+        }
+        else
+        {
+            /* The face stays. */
+        }
+    }
+}
+#endif
 
 /**
  * @brief Whether the card on the glass rose with nobody asking: the card at
@@ -26978,6 +27358,9 @@ static bool gui_sheet_unasked(Gui const * const me)
 static void gui_update_tick(Gui * const me)
 {
     gui_fault_kody_tick(me);
+#if CONFIG_KODEOS_DUMP_HTTP
+    gui_fault_send_tick(me);
+#endif
     /* The greeting holds the cards until its line is through. */
     kgui_welcome_notice(&me->welcome, gui_face_notice_owed(me));
     if ( !gui_fault_tick(me) )
@@ -28697,6 +29080,11 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
             gui_fault_answer(me, "the bottom button");
             gui_sheet_close(me);
         }
+        else if ( gui_fault_sent_up(me) )
+        {
+            /* "Report sent" leaves at any press. */
+            gui_sheet_close(me);
+        }
 #if CONFIG_KODEOS_WIFI
         else if ( GUI_SHEET_KEYPAD == me->sheet )
         {
@@ -28736,6 +29124,12 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
         return;
     }
 #endif
+    if ( gui_fault_sent_up(me) )
+    {
+        /* "Report sent" leaves at any press, the pad's included. */
+        gui_sheet_close(me);
+        return;
+    }
     if ( speaks )
     {
         /* One answer wears the ring and the pad has nowhere to move it; a
@@ -35860,9 +36254,20 @@ void Gui_ctor(void)
     me->sys.shown       = (uint8_t)KGUI_SYS_FIGURE_NONE;
     (void)memset(&me->fault, 0, sizeof(me->fault));
     me->fault_face      = (uint8_t)KGUI_FAULT_FACE_NOTICE;
+    me->fault_offer     = false;
+    me->fault_kody_on   = false;
     me->fault_kody      = NULL;
     me->fault_kody_live = false;
     me->fault_kody_ms   = 0U;
+#if CONFIG_KODEOS_DUMP_HTTP
+    me->fault_face_ms    = 0U;
+    me->fault_why        = (uint8_t)KGUI_FAULT_SEND_OK;
+    me->fault_dump_read  = false;
+    me->fault_dump_ok    = false;
+    me->fault_wifi_heard = false;
+    me->fault_chan_heard = false;
+    me->chan_dumps       = false;
+#endif
     /* The boot is a cut onto the face, and no curtain moves. */
     kui_drag_init(&me->curtain, (int32_t)KBSP_LCD_V_RES);
     me->curtain_kind     = GUI_CURTAIN_SETTINGS;
@@ -37045,6 +37450,15 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             status = Q_HANDLED();
             break;
         }
+#if CONFIG_KODEOS_DUMP_HTTP
+        case NET_DUMP_RSP_SIG: {
+            /* AO_Net's answer to the fault notice's Send, posted to
+             * this AO alone and wherever the interface stands. */
+            gui_fault_report_answer(me, Q_EVT_CAST(NetDumpRspEvt));
+            status = Q_HANDLED();
+            break;
+        }
+#endif
         case APP_ERASE_DONE_SIG: {
             /* The end of an erase, whoever asked for it: the Removing card's
              * answer, and the moment an app that left is forgotten. */
@@ -37703,6 +38117,9 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             bool on = w->enabled;
 
             me->wifi_real = w->enabled;
+#if CONFIG_KODEOS_DUMP_HTTP
+            me->fault_wifi_heard = true;    /* the notice's verdict reads it as it is */
+#endif
             if ( (uint8_t)GUI_WISH_NONE != me->wifi_wish )
             {
                 bool const wished_on = ((uint8_t)GUI_WISH_ON == me->wifi_wish);
@@ -37809,6 +38226,10 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
             bool const is_up  = ((uint8_t)CHAN_UP == c->state);
 
             me->chan_state  = c->state;
+#if CONFIG_KODEOS_DUMP_HTTP
+            me->chan_dumps       = c->dumps;
+            me->fault_chan_heard = true;    /* the notice's verdict reads it as it is */
+#endif
             me->chan_at_ms   = khal_time_ms();
             me->chan_wait_ms = c->next_s;
             if ( (uint32_t)GUI_CHAN_WAIT_MAX_S < me->chan_wait_ms )
@@ -40672,8 +41093,14 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
                  * glass. The offer is spent for this boot. */
                 KLOG_N(TAG, "update: the card closed; offered again at the next boot");
             }
-            /* Kody on the fault notice stands still with the card gone. */
+            /* Kody on the fault notice stands still with the card gone, and
+             * the send's edge goes with it. */
             gui_fault_kody_still(me);
+            if ( GUI_SHEET_FAULT == me->sheet )
+            {
+                kgui_ring_cancel(&me->glass);
+                kgui_ring_show(&me->glass, false);
+            }
             if ( over_face )
             {
                 /* The face is uncovered: its next tick wakes Kody, who goes
@@ -40935,8 +41362,16 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
                         who = "the auto-lock";
                     }
                     kgui_fault_taken_down(&me->fault);
-                    KLOG_N(TAG, "fault: %s took the notice down; it rises again at the "
-                                "next button or touch", who);
+                    if ( me->fault.owed )
+                    {
+                        KLOG_N(TAG, "fault: %s took the notice down; it rises again at the "
+                                    "next button or touch", who);
+                    }
+                    else
+                    {
+                        /* A send's face: the notice was answered already. */
+                        KLOG_N(TAG, "fault: %s took the card down", who);
+                    }
                 }
                 status = gui_sheet_hand_up(me, e, home);
             }
