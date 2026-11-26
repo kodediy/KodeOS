@@ -79,9 +79,9 @@ void kgui_crit_taken(kgui_crit_t *c)
     }
 }
 
-bool kgui_crit_waits(bool locked, bool system, bool offer, bool guided, bool parked)
+bool kgui_crit_waits(bool locked, bool system, bool yields, bool guided, bool parked)
 {
-    return locked || (system && (!offer)) || guided || parked;
+    return locked || (system && (!yields)) || guided || parked;
 }
 
 const char *kgui_reset_why(uint8_t step, uint32_t status)

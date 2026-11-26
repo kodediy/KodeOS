@@ -247,7 +247,7 @@ def assets_refusal(records):
 
 
 PACK_FILE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
-PACK_ROLES = ("empty", "writing", "goodbye", "loading")
+PACK_ROLES = ("empty", "writing", "goodbye", "loading", "fault")  # kui_pack.h's roles, in its order
 PACK_FILE_MAX = 64 * 1024
 
 

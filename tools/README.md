@@ -58,7 +58,7 @@ See [`factory/README.md`](factory/README.md).
 | Script | What it does |
 |---|---|
 | `validate_release_tag.sh` | Accepts or rejects a tag, and gives the version text for the build. The format of a tag is checked in this one place. |
-| `assemble_release.sh` | Makes the release files from a finished build: the factory pack and the single image. |
+| `assemble_release.sh` | Makes the release files from a finished build: the factory pack, the single image and its ELF. |
 | `check_line_blanks.sh` | Fails when the zones `flash.sh --line` blanks are not the partition table's: nvs, the core dump, the apps region's directories and boot request, and the mailbox's first sector and its intent. `assemble_release.sh` runs it. |
 | `check_on_main.sh` | Fails when a commit is not on a branch. The release refuses a tag that is not on `main`, and a C5 commit that is not on the C5's `main`. |
 | `release/` | The four files `assemble_release.sh` copies into the factory pack: `flash.sh`, `write_unchecked.py` (writes one image without the read-back; `flash.sh --line` calls it for `kodeos.bin`), `FACTORY_README.txt` and `THIRD_PARTY_NOTICES.txt`. |

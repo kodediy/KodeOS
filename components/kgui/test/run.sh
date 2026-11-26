@@ -8,7 +8,14 @@ unity="$IDF_PATH/components/unity/unity/src"
 out="${TMPDIR:-/tmp}/kode_kgui_tests"
 mkdir -p "$out"
 
-inc="-I.. -I../include -I../screens -I$unity \
+# The configuration every binary here is built with, in the sdkconfig.h the
+# firmware's headers include: the send of the fault's report is on, so every
+# case of it is built and run. One file for all of them, as one sdkconfig is
+# for the firmware: the option decides what the headers declare.
+mkdir -p "$out/config"
+printf '#define CONFIG_KODEOS_DUMP_HTTP 1\n' > "$out/config/sdkconfig.h"
+
+inc="-I.. -I../include -I../screens -I$out/config -I$unity \
  -I$sdk/kui/core/include -I$sdk/kdefs/include -I$sdk/klog/include -I$sdk/kdrv/apps/include \
  -I$sdk/khal/nvs/include -I$sdk/khal/sync/include -I$sdk/khal/system/include"
 
@@ -93,6 +100,9 @@ run_suite kgui_osrel test_kgui_osrel.c ../kgui_osrel.c
 # The radio's own update: the question, the answer, the start; it reads its
 # answers with kgui_osrel's parser.
 run_suite kgui_c5up test_kgui_c5up.c ../kgui_c5up.c ../kgui_osrel.c
+# The fault notice: its record, when its card rises and what it offers. The
+# Stopped card's words come from kgui_syscard.h's macros; no SDK header.
+run_suite kgui_fault test_kgui_fault.c ../kgui_fault.c
 # The Time page's steps, zones and prompt: the C library's mktime and nothing else.
 run_suite kgui_clock -I"$sdk/kdrv/clocks/include" test_kgui_clock.c ../kgui_clock.c
 # The spaces a typed name loses at both ends.

@@ -20,6 +20,7 @@ echo "fake bootloader"       > "$build_dir/bootloader/bootloader.bin"
 echo "fake partition table"  > "$build_dir/partition_table/partition-table.bin"
 echo "fake otadata"          > "$build_dir/ota_data_initial.bin"
 echo "fake kodeos v00.00.99" > "$build_dir/kodeos.bin"
+echo "fake kodeos elf"       > "$build_dir/kodeos.elf"
 echo "fake storage with kode/" > "$build_dir/storage.bin"
 
 # The FAT's staging: Kody's pack, as the root CMake leaves it. The welcome
@@ -75,12 +76,14 @@ fi
 
 zip_file="$out_dir/kodeos-factory-v00.00.99.zip"
 bin_file="$out_dir/kodeos-v00.00.99.bin"
+elf_file="$out_dir/kodeos-v00.00.99.elf"
 app_file="$out_dir/welcome-v00.00.99.bin"
 data_file="$out_dir/welcome-v00.00.99-appdata.zip"
 sums_file="$out_dir/SHA256SUMS.txt"
 
 [ -f "$zip_file" ]  && ok "factory zip exists"    || bad "factory zip missing: $zip_file"
 [ -f "$bin_file" ]  && ok "standalone bin exists" || bad "standalone bin missing: $bin_file"
+[ -f "$elf_file" ]  && ok "the ELF exists"        || bad "the ELF is missing: $elf_file"
 [ -f "$app_file" ]  && ok "the welcome app's image exists" || bad "the welcome app's image is missing: $app_file"
 [ -f "$data_file" ] && ok "the welcome app's data exists"  || bad "the welcome app's data is missing: $data_file"
 [ -f "$sums_file" ] && ok "SHA256SUMS.txt exists" || bad "SHA256SUMS.txt missing: $sums_file"
@@ -106,10 +109,10 @@ if diff -r "$data_dir/welcome" "$build_dir/storage_stage/.kode/appsdata/welcome"
 else
     bad "the published data is not the folder the FAT image carries"
 fi
-if [ "$(awk '{ print $2 }' "$sums_file" | sort | tr '\n' ' ')" = "kodeos-factory-v00.00.99.zip kodeos-v00.00.99.bin welcome-v00.00.99-appdata.zip welcome-v00.00.99.bin " ]; then
-    ok "SHA256SUMS.txt lists the four files"
+if [ "$(awk '{ print $2 }' "$sums_file" | sort | tr '\n' ' ')" = "kodeos-factory-v00.00.99.zip kodeos-v00.00.99.bin kodeos-v00.00.99.elf welcome-v00.00.99-appdata.zip welcome-v00.00.99.bin " ]; then
+    ok "SHA256SUMS.txt lists the five files"
 else
-    bad "SHA256SUMS.txt does not list the four files"
+    bad "SHA256SUMS.txt does not list the five files"
     cat "$sums_file" >&2
 fi
 
@@ -144,6 +147,12 @@ else
     bad "standalone bin content does not match build/kodeos.bin"
 fi
 
+if diff -q "$build_dir/kodeos.elf" "$elf_file" >/dev/null; then
+    ok "kodeos-v00.00.99.elf matches build/kodeos.elf"
+else
+    bad "the ELF's content does not match build/kodeos.elf"
+fi
+
 if ( cd "$out_dir" && sha256sum -c SHA256SUMS.txt >/dev/null 2>&1 ); then
     ok "SHA256SUMS.txt verifies"
 else
@@ -164,6 +173,23 @@ else
     ok "assemble_release.sh rejects an incomplete build dir"
 fi
 
+# A core dump is read with the ELF of the build that wrote it: a release
+# without its ELF leaves every dump from it unreadable.
+no_elf_dir="$work/build-no-elf"
+cp -R "$build_dir" "$no_elf_dir"
+rm "$no_elf_dir/kodeos.elf"
+if tools/assemble_release.sh 00.00.99 "$no_elf_dir" "$work/dist-no-elf" "$apps_dir" >/dev/null 2>"$work/no-elf.err"; then
+    bad "assemble_release.sh should have failed on a missing kodeos.elf"
+else
+    ok "assemble_release.sh rejects a build dir with no kodeos.elf"
+fi
+if grep -q 'kodeos.elf' "$work/no-elf.err"; then
+    ok "the refusal names kodeos.elf"
+else
+    bad "the refusal does not name kodeos.elf"
+    cat "$work/no-elf.err" >&2
+fi
+
 # --- case 3: a kodeos.bin past its ceiling fails loudly and names it ---
 # The ceiling is the smaller of the OS slot (factory, 4 MB, in
 # sdk/components/kbsp/partitions.csv) and the mailbox's image space
@@ -177,6 +203,7 @@ echo "fake otadata"          > "$oversize_dir/ota_data_initial.bin"
 echo "fake storage"          > "$oversize_dir/storage.bin"
 os_ceiling=$((0x400000))
 head -c "$((os_ceiling + 1))" /dev/zero > "$oversize_dir/kodeos.bin"
+echo "fake kodeos elf"       > "$oversize_dir/kodeos.elf"
 
 oversize_err="$work/oversize.err"
 if tools/assemble_release.sh 00.00.99 "$oversize_dir" "$work/dist-oversize" >/dev/null 2>"$oversize_err"; then

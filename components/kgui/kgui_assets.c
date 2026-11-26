@@ -1104,14 +1104,16 @@ static bool cand_take(kode_status_t rc, kui_pack_src_t src)
  *
  * The writing and goodbye roles belonged to the Opening card's Kody, which is
  * gone: the pack still carries them (its format does not change), and nothing
- * reads them, so their files are not loaded.
+ * reads them, so their files are not loaded. The fault role is the fault
+ * notice's band.
  *
  * @param role The role, an index of the pack's role table.
  * @return true for the roles something plays.
  */
 static bool role_wanted(uint16_t role)
 {
-    return ((uint16_t)KUI_PACK_ROLE_EMPTY == role) || ((uint16_t)KUI_PACK_ROLE_LOADING == role);
+    return ((uint16_t)KUI_PACK_ROLE_EMPTY == role) || ((uint16_t)KUI_PACK_ROLE_LOADING == role)
+           || ((uint16_t)KUI_PACK_ROLE_FAULT == role);
 }
 
 /**
@@ -2808,6 +2810,26 @@ const kui_kody_anim_t *kgui_assets_wake(uint16_t s)
     return a;
 }
 
+bool kgui_assets_role_waits(kui_pack_role_t r)
+{
+    bool waits = !s_a.ready;
+
+    if ( (!waits) && ((uint32_t)r < (uint32_t)KUI_PACK_ROLE_COUNT) && (NULL != s_a.rt)
+         && role_wanted((uint16_t)r) )
+    {
+        uint16_t const f = s_a.pack.role[r];
+
+        if ( KUI_PACK_NONE != f )
+        {
+            /* Being read, or still ahead in the roles' job, or owed one. */
+            waits = (FILE_LOADING == s_a.rt[f].state)
+                    || ((FILE_UNLOADED == s_a.rt[f].state)
+                        && (s_a.roles_owed || ((JOB_ROLES == s_a.job) && (s_a.i <= (uint16_t)r))));
+        }
+    }
+    return waits;
+}
+
 const kui_kody_anim_t *kgui_assets_loop(uint16_t s)
 {
     const kui_kody_anim_t *a = &kody_reloj;
@@ -3063,7 +3085,8 @@ const char *kgui_assets_install_why(void)
 void kgui_assets_info(void)
 {
     static const char *const ROLE_WORDS[KUI_PACK_ROLE_COUNT] = { "empty", "writing",
-                                                                  "goodbye", "loading" };
+                                                                  "goodbye", "loading",
+                                                                  "fault" };
 
     say_source(false);
     if ( KUI_PACK_SRC_BUILTIN == s_a.src )

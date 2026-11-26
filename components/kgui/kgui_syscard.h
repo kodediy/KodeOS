@@ -9,9 +9,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "sdkconfig.h" /* CONFIG_KODEOS_DUMP_HTTP */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ---- Every card ------------------------------------------------------------ */
+
+#define KGUI_CARD_OK           "OK"                     /**< A card's plain answer, its one button: the card is left. */
+#define KGUI_CARD_CLOSE        "Close"                  /**< The left pill of a failure that can be tried again: the card is left. */
+#define KGUI_CARD_RETRY        "Retry"                  /**< ...and its right pill: the request is made again. */
+#define KGUI_CARD_BUSY         "Busy. Try again"        /**< What a request says when its owner had no room for it, on a card or a hint. */
 
 /* ---- The app that stopped -------------------------------------------------- */
 
@@ -41,6 +50,21 @@ bool kgui_stopped_is(int end);
  *         "" for an end that raises no card. Never NULL.
  */
 const char *kgui_stopped_reason(int end);
+
+/* ---- kodeOS's own fault ---------------------------------------------------- */
+
+#define KGUI_FAULT_NAME        "kodeOS restarted"       /**< The fault notice's name; its second line is the Stopped card's why. */
+#if CONFIG_KODEOS_DUMP_HTTP
+#define KGUI_FAULT_REPORT      "A report is a copy of kodeOS's memory." /**< The notice's line when it offers to send the report: two lines of the body face. */
+#define KGUI_FAULT_REPORT_SEND "Send"                   /**< The notice's right pill, beside OK: it sends the report. */
+#define KGUI_FAULT_SENDING     "Sending report..."      /**< The card while the report goes. */
+#define KGUI_FAULT_SENT        "Report sent"            /**< ...once the service has it. */
+#define KGUI_FAULT_UNSENT      "Couldn't send the report" /**< The failure's title. */
+#define KGUI_FAULT_WHY_REFUSED "The service refused it" /**< Why: the service answered something else. */
+#define KGUI_FAULT_WHY_NO_ANSWER "No answer"            /**< Why: no answer came. */
+#define KGUI_FAULT_WHY_CHANNEL "No connection"          /**< Why: the channel is down or names no link for reports. */
+#define KGUI_FAULT_WHY_NONE    "Nothing to send"        /**< Why: no dump of a kodeOS image is in flash. */
+#endif
 
 /* ---- The battery ----------------------------------------------------------- */
 
@@ -94,14 +118,15 @@ void kgui_crit_taken(kgui_crit_t *c);
  *
  * @param locked  A locked card is up: a write is running.
  * @param system  Another system card is up: it would take a question away.
- * @param offer   That card is the offer of a newer kodeOS, which gives way:
- *                the charge is the more urgent word.
+ * @param yields  That card gives way - the offer of a newer kodeOS, or the
+ *                fault notice while no send runs: the charge is the more
+ *                urgent word.
  * @param guided  A guided test has the glass.
  * @param parked  The board rests with the glass handed over: nothing would
  *                answer the card, and nobody would see it.
  * @return true when the card has to wait.
  */
-bool kgui_crit_waits(bool locked, bool system, bool offer, bool guided, bool parked);
+bool kgui_crit_waits(bool locked, bool system, bool yields, bool guided, bool parked);
 
 /* ---- The factory reset ----------------------------------------------------- */
 

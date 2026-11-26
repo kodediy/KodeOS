@@ -76,7 +76,7 @@ s_large_pool           kqp.c                16512
 
 # The Active Objects themselves, where one is this large. They grow with the
 # code, so each line leaves room.
-l_gui                  kgui_ao.c            13312
+l_gui                  kgui_ao.c            13568
 l_console              console_ao.c         4096
 
 # What the libraries declare. Not kodeOS's to move; listed so that a version

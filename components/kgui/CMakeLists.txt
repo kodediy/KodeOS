@@ -17,6 +17,7 @@ idf_component_register(
          "kgui_charge.c"
          "kgui_clock.c"
          "kgui_edge.c"
+         "kgui_fault.c"
          "kgui_frames.c"
          "kgui_backbar.c"
          "kgui_group.c"

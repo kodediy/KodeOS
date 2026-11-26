@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# Turns a finished `idf.py build` into the four release artifacts kodeOS
+# Turns a finished `idf.py build` into the five release artifacts kodeOS
 # ships on GitHub: the factory pack (the files this release's
 # erase-everything flash writes, per https://docs.kode.diy/internals/boot-model,
 # the apps region with the welcome app installed among them, plus
 # a flash.sh, a README.txt covering the same ground and the
 # THIRD_PARTY_NOTICES.txt for what kodeos.bin contains), kodeos.bin
-# standalone, for `os update` or the mailbox, and the welcome app's image and
+# standalone, for `os update` or the mailbox, its kodeos.elf, to read a core
+# dump that build wrote, and the welcome app's image and
 # its app data, to install it again on a board that lost it. Used by
 # .github/workflows/release.yml; safe to run locally too, e.g. to check what
 # a release would contain before tagging.
@@ -45,6 +46,7 @@ require "${build_dir}/bootloader/bootloader.bin"
 require "${build_dir}/partition_table/partition-table.bin"
 require "${build_dir}/ota_data_initial.bin"
 require "${build_dir}/kodeos.bin"
+require "${build_dir}/kodeos.elf"
 require "${build_dir}/storage.bin"
 require "${templates_dir}/flash.sh"
 require "${templates_dir}/write_unchecked.py"
@@ -160,6 +162,7 @@ chmod +x "$stage/flash.sh" "$stage/write_unchecked.py"
 rm -rf "$stage"
 
 cp "${build_dir}/kodeos.bin" "${out_dir}/kodeos-v${version}.bin"
+cp "${build_dir}/kodeos.elf" "${out_dir}/kodeos-v${version}.elf"
 
 # The welcome app as a person puts it back on a board that lost it: its image,
 # for `install`, and its data folder under the app's own name, which is what
@@ -172,7 +175,7 @@ cp "$meta"/* "${out_dir}/${welcome}/"
 ( cd "$out_dir" && rm -f "${app_name}-appdata.zip" && zip -rq "${app_name}-appdata.zip" "${welcome}" -x "${welcome}/" )
 rm -rf "${out_dir:?}/${welcome}"
 
-( cd "$out_dir" && sha256sum "${pack_name}.zip" "kodeos-v${version}.bin" "${app_name}.bin" "${app_name}-appdata.zip" > SHA256SUMS.txt )
+( cd "$out_dir" && sha256sum "${pack_name}.zip" "kodeos-v${version}.bin" "kodeos-v${version}.elf" "${app_name}.bin" "${app_name}-appdata.zip" > SHA256SUMS.txt )
 
 echo "release artifacts ready in ${out_dir}/:"
 ls -la "${out_dir}"

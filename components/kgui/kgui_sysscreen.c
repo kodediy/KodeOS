@@ -13,6 +13,15 @@
 #include "kgui_lvgl.h"
 #include "kui.h"
 #include "kui_glyphs.h"
+#include "kui_pack.h"
+
+_Static_assert(KGUI_SYS_BAND_W == (int32_t)KUI_PACK_CARD_W, "the band is the pack's card canvas, across");
+_Static_assert(KGUI_SYS_BAND_H == (int32_t)KUI_PACK_CARD_H, "the band is the pack's card canvas, down");
+_Static_assert((KGUI_SYS_BAND_Y >= 0) && ((KGUI_SYS_BAND_Y + KGUI_SYS_BAND_H) <= KGUI_SYS_GLASS_H),
+               "the band stands inside the glass");
+_Static_assert((KGUI_SYS_BAND_PILL_Y + KGUI_SYS_PILL_H + KGUI_SYS_PILL_RING) <= KGUI_SYS_BAND_Y,
+               "the pill, its focus ring included, stands above the band");
+_Static_assert(KGUI_SYS_BAND_ROOM_TOP < KGUI_SYS_BAND_PILL_Y, "a card with a band has room for its words");
 
 #define SYS_LINE_COUNT       3U    /**< Lines of detail a card has room for. */
 #define SYS_PILL_X           (((int32_t)KBSP_LCD_H_RES - KGUI_SYS_PILL_ROW_W) / 2) /**< Where the pill's row stands across. */
@@ -100,6 +109,7 @@ static void sys_prot_off(kgui_sys_t *s)
     lv_obj_set_hidden(s->glyph, true);
     lv_obj_set_hidden(s->pile, true);
     lv_obj_set_hidden(s->code, true);
+    lv_obj_set_hidden(s->band, true);
 }
 
 /**
@@ -162,9 +172,11 @@ bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card)
         s->second = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_SECOND_Y);
         s->detail = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_TEXT_Y);
         s->note   = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_NOTE_Y);
+        s->band   = kgui_plain(card, 0, KGUI_SYS_BAND_Y, KGUI_SYS_BAND_W, KGUI_SYS_BAND_H);
         if ( (NULL != s->blank) && (NULL != s->glyph) && (NULL != s->pile)
              && (NULL != s->code) && (NULL != s->figure) && (NULL != s->unit) && (NULL != s->name)
-             && (NULL != s->second) && (NULL != s->detail) && (NULL != s->note) )
+             && (NULL != s->second) && (NULL != s->detail) && (NULL != s->note)
+             && (NULL != s->band) )
         {
             s->blank_img = lv_image_create(s->blank);
             if ( NULL != s->blank_img )
@@ -189,6 +201,7 @@ bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card)
                 lv_obj_set_height(s->second, (int32_t)lv_font_get_line_height(&kui_font_body));
                 lv_label_set_long_mode(s->detail, LV_LABEL_LONG_MODE_DOTS);
                 lv_obj_set_height(s->detail, (int32_t)SYS_LINE_COUNT * (int32_t)lv_font_get_line_height(&kui_font_body));
+                lv_obj_set_hidden(s->band, true);
                 lv_obj_set_hidden(s->blank, true);
                 lv_obj_set_hidden(s->glyph, true);
                 s->made = true;
@@ -231,6 +244,19 @@ void kgui_sys_app(kgui_sys_t *s, const kgui_icon_spec_t *look)
             lv_obj_set_hidden(s->blank, false);
         }
     }
+}
+
+lv_obj_t *kgui_sys_band(kgui_sys_t *s)
+{
+    lv_obj_t *band = NULL;
+
+    if ( s->made )
+    {
+        sys_prot_off(s);
+        lv_obj_set_hidden(s->band, false);
+        band = s->band;
+    }
+    return band;
 }
 
 void kgui_sys_glyph(kgui_sys_t *s, const lv_image_dsc_t *img, lv_color_t ink)
@@ -640,5 +666,16 @@ void kgui_sys_pill(const lv_obj_t *card, bool framed, const char *word)
                 lv_obj_set_style_text_font(text, &kui_font_name, LV_PART_MAIN);
             }
         }
+    }
+}
+
+void kgui_sys_pill_at(const lv_obj_t *card, int32_t top)
+{
+    lv_obj_t * const row = lv_obj_find_by_name(card, "actions");
+
+    if ( NULL != row )
+    {
+        /* The row stands a ring's room above the pills (kgui_sys_pill()). */
+        lv_obj_set_y(row, top - KGUI_SYS_PILL_RING);
     }
 }
