@@ -3124,12 +3124,12 @@ typedef struct {
     QTimeEvt c5_again;       /**< The radio's question goes out again (KGUI_OSREL_BOOT_AGAIN_MS). */
     kgui_fault_t fault;      /**< The fault notice: what is owed and whether it is due. */
     uint8_t  fault_face;     /**< kgui_fault_face_t: what the notice's card shows. */
-    bool     fault_offer;    /**< The card rose offering to send the report (KGUI_FAULT_RISE_SEND), kept while it is up. */
-    bool     fault_kody_on;  /**< Kody stood in the notice's band: the send's faces keep him as he stands. */
     lv_obj_t *fault_kody;    /**< The card band's player: made the first time the card is filled, kept. */
     bool     fault_kody_live;/**< It plays, to be paused KGUI_FAULT_HOLD_MS after the play. */
     uint32_t fault_kody_ms;  /**< When the play began. */
 #if CONFIG_KODEOS_DUMP_HTTP
+    bool     fault_offer;    /**< The card rose offering to send the report (KGUI_FAULT_RISE_SEND), kept while it is up. */
+    bool     fault_kody_on;  /**< Kody stood in the notice's band: the send's faces keep him as he stands. */
     uint32_t fault_face_ms;  /**< When the card took its face: the send's guard and the sent card's stay count from here. */
     uint8_t  fault_why;      /**< kgui_fault_send_t: how the last send ended, for the failure face. */
     bool     fault_dump_read;/**< The dump in flash was looked at, once this boot. */
@@ -3571,10 +3571,10 @@ static bool gui_update_boot_card(Gui const * const me);
 static bool gui_sheet_unasked(Gui const * const me);
 static void gui_fault_fill(Gui * const me);
 static void gui_fault_answer(Gui * const me, const char *what);
-static bool gui_fault_sent_up(Gui const * const me);
 static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
                                  const char *what);
 #if CONFIG_KODEOS_DUMP_HTTP
+static bool gui_fault_sent_up(Gui const * const me);
 static void gui_fault_report_answer(Gui * const me, NetDumpRspEvt const * const r);
 #endif
 static void gui_fault_info(Gui const * const me);
@@ -26889,7 +26889,9 @@ static bool gui_fault_tick(Gui * const me)
             if ( KGUI_FAULT_WAIT != verdict )
             {
                 me->fault_face  = (uint8_t)KGUI_FAULT_FACE_NOTICE;
+#if CONFIG_KODEOS_DUMP_HTTP
                 me->fault_offer = (KGUI_FAULT_RISE_SEND == verdict);
+#endif
                 gui_sheet_open_kind(me, GUI_SHEET_FAULT);
                 asked = true;
             }
@@ -26966,6 +26968,7 @@ static bool gui_fault_kody_play(Gui * const me, const kui_kody_anim_t *anim)
     return plays;
 }
 
+#if CONFIG_KODEOS_DUMP_HTTP
 #define GUI_FAULT_AIR          8    /**< The least black between the lowest row of a pair's words and the pair's focus ring. */
 #define GUI_FAULT_BODY_LINE    34   /**< A line of kui_font_body, the report line's and the why's face, in pixels. */
 #define GUI_FAULT_ASK_LINE     49   /**< A line of kui_font_display_40, the failure's title's face, in pixels. */
@@ -26987,6 +26990,7 @@ _Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_WORDS_H) / 2)
 _Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_UNSENT_H) / 2)
                >= (KGUI_SYS_PILL_RING + GUI_FAULT_AIR),
                "with the X, air stays between the failure's words and the pair's focus ring");
+#endif
 _Static_assert(KGUI_FAULT_SEND_GUARD_MS > KODE_NET_GUARD_MS,
                "AO_Net answers every request it took within its own guard: the card's covers a lost answer");
 _Static_assert(KGUI_FAULT_SENT_MS >= KGUI_EDGE_DONE_MS, "\"Report sent\" stays until its edge has closed");
@@ -27028,6 +27032,7 @@ static void gui_fault_notice_fill(Gui * const me)
 
     kgui_ring_cancel(&me->glass);
     kgui_ring_show(&me->glass, false);
+#if CONFIG_KODEOS_DUMP_HTTP
     if ( me->fault_offer )
     {
         report = KGUI_FAULT_REPORT;
@@ -27035,11 +27040,14 @@ static void gui_fault_notice_fill(Gui * const me)
         top    = GUI_FAULT_ROOM_TOP;
         end    = GUI_FAULT_ROOM_END;
     }
+#endif
     if ( NULL != anim )
     {
         kody = gui_fault_kody_play(me, anim);
     }
+#if CONFIG_KODEOS_DUMP_HTTP
     me->fault_kody_on = kody;
+#endif
     if ( kody )
     {
         look = "Kody plays";
@@ -27052,11 +27060,13 @@ static void gui_fault_notice_fill(Gui * const me)
         kgui_sys_text(&me->sys, KGUI_SYS_ROOM_TOP, KGUI_SYS_ROOM_END, KGUI_FAULT_NAME,
                       words, report);
     }
+#if CONFIG_KODEOS_DUMP_HTTP
     if ( me->fault_offer )
     {
         gui_sheet_pair(me, KGUI_CARD_OK, GUI_ACT_NEUTRAL, KGUI_FAULT_REPORT_SEND, GUI_ACT_PRIMARY, false);
     }
     else
+#endif
     {
         gui_sheet_action(me, KGUI_CARD_OK, GUI_ACT_PRIMARY);
     }
@@ -27204,6 +27214,7 @@ static void gui_fault_answer(Gui * const me, const char *what)
     }
 }
 
+#if CONFIG_KODEOS_DUMP_HTTP
 /**
  * @brief Whether the card on the glass is the fault notice saying "Report
  *        sent", which leaves at any press.
@@ -27215,7 +27226,6 @@ static bool gui_fault_sent_up(Gui const * const me)
     return (GUI_SHEET_FAULT == me->sheet) && ((uint8_t)KGUI_FAULT_FACE_SENT == me->fault_face);
 }
 
-#if CONFIG_KODEOS_DUMP_HTTP
 /**
  * @brief The card takes a face in place of another: what it says is new, so
  *        it refuses input for KGUI_RISE_INPUT_MS, as a card that has just
@@ -27354,7 +27364,11 @@ static void gui_fault_send_tick(Gui * const me)
 static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
                                  const char *what)
 {
+#if CONFIG_KODEOS_DUMP_HTTP
     bool const offer = me->fault_offer;
+#else
+    bool const offer = false;
+#endif
     kgui_fault_do_t const act = kgui_fault_press(me->fault_face, offer, (uint8_t)pill, remote);
 
     switch ( act )
@@ -36323,14 +36337,14 @@ void Gui_ctor(void)
     me->sys.shown       = (uint8_t)KGUI_SYS_FIGURE_NONE;
     (void)memset(&me->fault, 0, sizeof(me->fault));
     me->fault_face      = (uint8_t)KGUI_FAULT_FACE_NOTICE;
-    me->fault_offer     = false;
-    me->fault_kody_on   = false;
     me->fault_kody      = NULL;
     me->fault_kody_live = false;
     me->fault_kody_ms   = 0U;
     me->touch_remote    = false;
     me->btn_remote      = false;
 #if CONFIG_KODEOS_DUMP_HTTP
+    me->fault_offer      = false;
+    me->fault_kody_on    = false;
     me->fault_face_ms    = 0U;
     me->fault_why        = (uint8_t)KGUI_FAULT_SEND_OK;
     me->fault_dump_read  = false;
