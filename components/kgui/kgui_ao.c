@@ -26966,19 +26966,27 @@ static bool gui_fault_kody_play(Gui * const me, const kui_kody_anim_t *anim)
     return plays;
 }
 
-#define GUI_FAULT_ROOM_RAISE   2    /**< How far the notice's words with Kody stand above the band's room when they carry the report's line: the least that keeps them off the pair's focus ring. */
-#define GUI_FAULT_ROOM_TOP     (KGUI_SYS_BAND_ROOM_TOP - GUI_FAULT_ROOM_RAISE) /**< ...where that room begins. */
-#define GUI_FAULT_ROOM_END     (KGUI_SYS_BAND_PILL_Y - KGUI_SYS_PILL_RING) /**< ...and where it ends: the pair's focus ring. */
-#define GUI_FAULT_BODY_LINE    34   /**< A line of kui_font_body, the report line's face, in pixels. */
+#define GUI_FAULT_AIR          8    /**< The least black between the lowest row of a pair's words and the pair's focus ring. */
+#define GUI_FAULT_BODY_LINE    34   /**< A line of kui_font_body, the report line's and the why's face, in pixels. */
+#define GUI_FAULT_ASK_LINE     49   /**< A line of kui_font_display_40, the failure's title's face, in pixels. */
 #define GUI_FAULT_REPORT_LINES 2    /**< The lines the report's line takes in KGUI_SYS_TEXT_W. */
 #define GUI_FAULT_WORDS_H      (KGUI_SYS_TEXT_STEP_NAME + KGUI_SYS_TEXT_STEP_SECOND \
-                                + (GUI_FAULT_REPORT_LINES * GUI_FAULT_BODY_LINE)) /**< The notice's words at their tallest. */
+                                + (GUI_FAULT_REPORT_LINES * GUI_FAULT_BODY_LINE)) /**< The notice's words with the report's line. */
+#define GUI_FAULT_UNSENT_H     ((KGUI_SYS_ASK_TITLE_N * GUI_FAULT_ASK_LINE) + KGUI_SYS_ASK_GAP \
+                                + GUI_FAULT_BODY_LINE) /**< The failure's words: two lines of title, the why in one. */
+#define GUI_FAULT_ROOM_END     (KGUI_SYS_BAND_PILL_Y - KGUI_SYS_PILL_RING - GUI_FAULT_AIR) /**< With Kody, where the words over a pair end: GUI_FAULT_AIR above its focus ring. */
+#define GUI_FAULT_ROOM_TOP     (GUI_FAULT_ROOM_END - GUI_FAULT_WORDS_H) /**< ...and where they begin: as high as the notice's tallest words need. */
 
-_Static_assert(GUI_FAULT_ROOM_TOP >= KGUI_EDGE_W, "the notice's words stand inside the edge");
-_Static_assert((GUI_FAULT_ROOM_END - GUI_FAULT_ROOM_TOP) >= GUI_FAULT_WORDS_H,
-               "the notice's words fit over the pair and its focus ring");
-_Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_WORDS_H) / 2) > KGUI_SYS_PILL_RING,
+_Static_assert(GUI_FAULT_ROOM_TOP >= KGUI_EDGE_W, "the words over a pair stand inside the edge");
+_Static_assert(GUI_FAULT_ROOM_TOP <= KGUI_SYS_BAND_ROOM_TOP, "the room over a pair is raised, never lowered");
+_Static_assert((GUI_FAULT_ROOM_END - GUI_FAULT_ROOM_TOP) >= GUI_FAULT_UNSENT_H,
+               "the failure's words fit over the pair with air above its focus ring");
+_Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_WORDS_H) / 2)
+               >= (KGUI_SYS_PILL_RING + GUI_FAULT_AIR),
                "with the X, air stays between the notice's words and the pair's focus ring");
+_Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_UNSENT_H) / 2)
+               >= (KGUI_SYS_PILL_RING + GUI_FAULT_AIR),
+               "with the X, air stays between the failure's words and the pair's focus ring");
 _Static_assert(KGUI_FAULT_SEND_GUARD_MS > KODE_NET_GUARD_MS,
                "AO_Net answers every request it took within its own guard: the card's covers a lost answer");
 _Static_assert(KGUI_FAULT_SENT_MS >= KGUI_EDGE_DONE_MS, "\"Report sent\" stays until its edge has closed");
@@ -26998,8 +27006,8 @@ _Static_assert((uint32_t)KGUI_FAULT_SEND_NONE == (uint32_t)KDUMP_R_NONE, "the ca
  *
  * A card that rose offering the report (`fault_offer`) says what a report is
  * under the words, and answers with the pair OK and Send, OK on the left
- * with the focus; with Kody its words stand GUI_FAULT_ROOM_RAISE higher, off
- * the pair's focus ring. Kody plays the pack's fault animation once and
+ * with the focus; with Kody its words stand in a room raised to end
+ * GUI_FAULT_AIR above the pair's focus ring. Kody plays the pack's fault animation once and
  * is paused with the X on the glass (gui_fault_kody_tick()). With no
  * animation - the pack has none, its file could not be read, or the built-in
  * pack is the source - or none that plays, the X in the danger colour stands
@@ -27068,18 +27076,22 @@ static void gui_fault_notice_fill(Gui * const me)
  *        with the edge cut and the pair Close and Retry.
  *
  * Kody stays in the band as he stands when he stood there on the notice;
- * otherwise the X keeps his place. Sending and sent offer no pill.
+ * otherwise the X keeps his place. Sending and sent offer no pill. With Kody
+ * the failure's words stand in the room over the pair, GUI_FAULT_AIR above
+ * its focus ring.
  *
  * @param me The AO.
  */
 static void gui_fault_send_fill(Gui * const me)
 {
-    kgui_fault_face_t const face = (kgui_fault_face_t)me->fault_face;
-    kgui_fault_send_t const why  = (kgui_fault_send_t)me->fault_why;
-    uint32_t const          now  = khal_time_ms();
-    const lv_obj_t         *band = NULL;
-    int32_t                 top  = KGUI_SYS_ROOM_TOP;
-    int32_t                 end  = KGUI_SYS_ROOM_END;
+    kgui_fault_face_t const face    = (kgui_fault_face_t)me->fault_face;
+    kgui_fault_send_t const why     = (kgui_fault_send_t)me->fault_why;
+    uint32_t const          now     = khal_time_ms();
+    const lv_obj_t         *band    = NULL;
+    int32_t                 top     = KGUI_SYS_ROOM_TOP;
+    int32_t                 end     = KGUI_SYS_ROOM_END;
+    int32_t                 ask_top = KGUI_SYS_ROOM_TOP;
+    int32_t                 ask_end = KGUI_SYS_ROOM_END;
 
     if ( me->fault_kody_on )
     {
@@ -27087,8 +27099,10 @@ static void gui_fault_send_fill(Gui * const me)
     }
     if ( NULL != band )
     {
-        top = KGUI_SYS_BAND_ROOM_TOP;
-        end = KGUI_SYS_BAND_PILL_Y;
+        top     = KGUI_SYS_BAND_ROOM_TOP;
+        end     = KGUI_SYS_BAND_PILL_Y;
+        ask_top = GUI_FAULT_ROOM_TOP;
+        ask_end = GUI_FAULT_ROOM_END;
     }
     else
     {
@@ -27109,8 +27123,10 @@ static void gui_fault_send_fill(Gui * const me)
     }
     else
     {
-        /* The title takes two lines of the display face: an ask's frame. */
-        kgui_sys_ask(&me->sys, top, end, KGUI_FAULT_UNSENT, kgui_fault_send_words((uint8_t)why));
+        /* The title takes two lines of the display face, an ask's frame, in
+         * the room over the pair. */
+        kgui_sys_ask(&me->sys, ask_top, ask_end, KGUI_FAULT_UNSENT,
+                     kgui_fault_send_words((uint8_t)why));
         kgui_ring_cancel(&me->glass);
         kgui_ring_cut(&me->glass);
         kgui_ring_show(&me->glass, true);
