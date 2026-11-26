@@ -42,6 +42,11 @@ bool kgui_stopped_is(int end);
  */
 const char *kgui_stopped_reason(int end);
 
+/* ---- kodeOS's own fault ---------------------------------------------------- */
+
+#define KGUI_FAULT_NAME        "kodeOS restarted"       /**< The fault notice's name; its second line is the Stopped card's why. */
+#define KGUI_FAULT_OK          "OK"                     /**< The notice's one button. */
+
 /* ---- The battery ----------------------------------------------------------- */
 
 #define KGUI_BAT_CRIT_PCT        10U  /**< At or under this charge, and not charging, the battery is critical. */

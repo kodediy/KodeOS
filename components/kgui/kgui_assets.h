@@ -208,6 +208,18 @@ void kgui_assets_scene_keep(uint16_t s);
 const kui_kody_anim_t *kgui_assets_role(kui_pack_role_t r);
 
 /**
+ * @brief Whether a role's animation is still on its way.
+ *
+ * True before the first resolution ends, and while the active pack names a
+ * file for @p r that is being read or is still to be read; false once the
+ * file is ready or settled as dead, and for a pack with no file for @p r.
+ *
+ * @param r The role.
+ * @return true while kgui_assets_role() may still answer for @p r.
+ */
+bool kgui_assets_role_waits(kui_pack_role_t r);
+
+/**
  * @brief Stage an install of @p bytes: the cable's and BLE's first step.
  *
  * Creates /storage/kode.new/, removes a stale `.ok`, and checks the internal

@@ -13,6 +13,10 @@
 #include "kgui_lvgl.h"
 #include "kui.h"
 #include "kui_glyphs.h"
+#include "kui_pack.h"
+
+_Static_assert(KGUI_SYS_BAND_W == (int32_t)KUI_PACK_CARD_W, "the band is the pack's card canvas, across");
+_Static_assert(KGUI_SYS_BAND_H == (int32_t)KUI_PACK_CARD_H, "the band is the pack's card canvas, down");
 
 #define SYS_LINE_COUNT       3U    /**< Lines of detail a card has room for. */
 #define SYS_PILL_X           (((int32_t)KBSP_LCD_H_RES - KGUI_SYS_PILL_ROW_W) / 2) /**< Where the pill's row stands across. */
@@ -100,6 +104,7 @@ static void sys_prot_off(kgui_sys_t *s)
     lv_obj_set_hidden(s->glyph, true);
     lv_obj_set_hidden(s->pile, true);
     lv_obj_set_hidden(s->code, true);
+    lv_obj_set_hidden(s->band, true);
 }
 
 /**
@@ -162,9 +167,12 @@ bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card)
         s->second = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_SECOND_Y);
         s->detail = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_TEXT_Y);
         s->note   = sys_label(card, &kui_font_body, KUI_COLOR_TEXT_MUTED, KGUI_SYS_NOTE_Y);
+        s->band   = kgui_plain(card, 0, KGUI_SYS_BAND_Y, KGUI_SYS_BAND_W, KGUI_SYS_BAND_H);
+        s->band_name = sys_label(card, &kui_font_title, KUI_COLOR_TEXT_ON_BG, KGUI_SYS_BAND_Y);
         if ( (NULL != s->blank) && (NULL != s->glyph) && (NULL != s->pile)
              && (NULL != s->code) && (NULL != s->figure) && (NULL != s->unit) && (NULL != s->name)
-             && (NULL != s->second) && (NULL != s->detail) && (NULL != s->note) )
+             && (NULL != s->second) && (NULL != s->detail) && (NULL != s->note)
+             && (NULL != s->band) && (NULL != s->band_name) )
         {
             s->blank_img = lv_image_create(s->blank);
             if ( NULL != s->blank_img )
@@ -189,6 +197,11 @@ bool kgui_sys_create(kgui_sys_t *s, lv_obj_t *card)
                 lv_obj_set_height(s->second, (int32_t)lv_font_get_line_height(&kui_font_body));
                 lv_label_set_long_mode(s->detail, LV_LABEL_LONG_MODE_DOTS);
                 lv_obj_set_height(s->detail, (int32_t)SYS_LINE_COUNT * (int32_t)lv_font_get_line_height(&kui_font_body));
+                lv_obj_set_x(s->band_name, KGUI_SYS_BAND_NAME_X);
+                lv_obj_set_width(s->band_name, KGUI_SYS_BAND_NAME_W);
+                lv_obj_set_style_text_align(s->band_name, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+                lv_label_set_long_mode(s->band_name, LV_LABEL_LONG_MODE_DOTS);
+                lv_obj_set_hidden(s->band, true);
                 lv_obj_set_hidden(s->blank, true);
                 lv_obj_set_hidden(s->glyph, true);
                 s->made = true;
@@ -210,6 +223,7 @@ void kgui_sys_clear(kgui_sys_t *s)
         sys_say(s->detail, NULL);
         sys_say(s->note, NULL);
         sys_say(s->code, NULL);
+        sys_say(s->band_name, NULL);
         lv_obj_set_hidden(s->unit, true);
         s->shown = (uint8_t)KGUI_SYS_FIGURE_NONE;
         kgui_sys_lift(s, 0);
@@ -230,6 +244,42 @@ void kgui_sys_app(kgui_sys_t *s, const kgui_icon_spec_t *look)
         {
             lv_obj_set_hidden(s->blank, false);
         }
+    }
+}
+
+lv_obj_t *kgui_sys_band(kgui_sys_t *s)
+{
+    lv_obj_t *band = NULL;
+
+    if ( s->made )
+    {
+        sys_prot_off(s);
+        lv_obj_set_hidden(s->band, false);
+        band = s->band;
+    }
+    return band;
+}
+
+void kgui_sys_band_name(kgui_sys_t *s, const char *name)
+{
+    if ( s->made )
+    {
+        int32_t const line  = (int32_t)lv_font_get_line_height(&kui_font_title);
+        int32_t       lines = 1;
+        lv_point_t    size  = { 0, 0 };
+
+        if ( NULL != name )
+        {
+            kgui_text_size(&size, name, &kui_font_title);
+        }
+        if ( KGUI_SYS_BAND_NAME_W < size.x )
+        {
+            lines = KGUI_SYS_BAND_NAME_N;
+        }
+        /* Centred down the band, one line or two. */
+        lv_obj_set_height(s->band_name, lines * line);
+        lv_obj_set_y(s->band_name, KGUI_SYS_BAND_Y + ((KGUI_SYS_BAND_H - (lines * line)) / 2));
+        sys_say(s->band_name, name);
     }
 }
 

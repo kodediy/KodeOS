@@ -23,6 +23,10 @@ extern "C" {
 #define KGUI_FAULT_NET_WAIT_MS   30000U  /**< The most the card waits for the channel since it became due, in milliseconds. */
 #define KGUI_FAULT_SENT_MS        1500U  /**< How long "Report sent" stays before the card leaves, in milliseconds. */
 #define KGUI_FAULT_SEND_GUARD_MS 45000U  /**< The wait for AO_Net's answer to a send before the card says "No answer", in milliseconds. */
+#define KGUI_FAULT_HOLD_MS        1200U  /**< After the play, when Kody is paused: frame 36 of 72, up with the X, in milliseconds. */
+#define KGUI_FAULT_KODY_WAIT_MS   5000U  /**< The most the card waits for the pack's fault animation to be read since it became due, in milliseconds. */
+
+#define KGUI_FAULT_KEY           "fault" /**< The record's byte: a u8 in the kgui NVS namespace, kgui_fault_pack()'s. */
 
 #define KGUI_FAULT_CLASS_MASK    0x03U   /**< The record's byte: bits 0 and 1 hold the class. */
 #define KGUI_FAULT_DUMP_BIT      0x80U   /**< The record's byte: bit 7 says the fault left a dump. */

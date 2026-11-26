@@ -73,6 +73,12 @@ LV_FONT_DECLARE(kgui_font_figure_128);
 #define KGUI_SYS_ASK_TITLE_N  2     /**< Lines a question's title may take: the rest is dotted. */
 #define KGUI_SYS_ASK_BODY_N   3     /**< Lines a question's body may take. */
 #define KGUI_SYS_FIGURE_NONE  255U  /**< The share the figure shows when it shows none. */
+#define KGUI_SYS_BAND_Y       24    /**< The top of the band on a card: its middle is the protagonist's. */
+#define KGUI_SYS_BAND_W       410   /**< The band's width: the pack's card band (KUI_PACK_CARD_W). */
+#define KGUI_SYS_BAND_H       160   /**< ...and its height (KUI_PACK_CARD_H). */
+#define KGUI_SYS_BAND_NAME_X  26    /**< The left of the name in the band's free left half. */
+#define KGUI_SYS_BAND_NAME_W  186   /**< ...and its width: it ends at x 212. */
+#define KGUI_SYS_BAND_NAME_N  2     /**< Lines the name in the band may take: the rest is dotted. */
 
 /** @brief The frame's objects. */
 typedef struct {
@@ -88,6 +94,8 @@ typedef struct {
     lv_obj_t   *second;   /**< The second. */
     lv_obj_t   *detail;   /**< The lines under them, three at most, the last one dotted when there is more. */
     lv_obj_t   *note;     /**< A write's small print, under its second line. */
+    lv_obj_t   *band;     /**< The band Kody's player stands in. */
+    lv_obj_t   *band_name;/**< The name in the band's free left half. */
     uint8_t     shown;    /**< The share the figure says, or KGUI_SYS_FIGURE_NONE. */
     bool        made;     /**< Every object stands. */
 } kgui_sys_t;
@@ -145,6 +153,26 @@ void kgui_sys_app(kgui_sys_t *s, const kgui_icon_spec_t *look);
  * @param ink What it is drawn in.
  */
 void kgui_sys_glyph(kgui_sys_t *s, const lv_image_dsc_t *img, lv_color_t ink);
+
+/**
+ * @brief The protagonist is a band across the card's top, for a player of
+ *        the pack's card canvas: the box is shown, empty, and the other
+ *        protagonists are taken off.
+ *
+ * @param s The frame.
+ * @return The KGUI_SYS_BAND_W x KGUI_SYS_BAND_H box, at KGUI_SYS_BAND_Y;
+ *         NULL when the frame is not made.
+ */
+lv_obj_t *kgui_sys_band(kgui_sys_t *s);
+
+/**
+ * @brief The card's name in the band's free left half: up to
+ *        KGUI_SYS_BAND_NAME_N lines of the name's face, centred down the band.
+ *
+ * @param s    The frame.
+ * @param name The name; NULL or "" takes it away.
+ */
+void kgui_sys_band_name(kgui_sys_t *s, const char *name);
 
 /**
  * @brief The protagonist is the red battery, nearly empty.
