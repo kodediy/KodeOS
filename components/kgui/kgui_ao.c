@@ -27201,6 +27201,23 @@ static bool gui_fault_sent_up(Gui const * const me)
 
 #if CONFIG_KODEOS_DUMP_HTTP
 /**
+ * @brief The card takes a face in place of another: what it says is new, so
+ *        it refuses input for KGUI_RISE_INPUT_MS, as a card that has just
+ *        risen does, and a press that is down clicks nothing.
+ *
+ * @param me   The AO, the fault notice on the glass.
+ * @param face The face it takes.
+ * @param now  The clock.
+ */
+static void gui_fault_face_take(Gui * const me, kgui_fault_face_t face, uint32_t now)
+{
+    me->fault_face    = (uint8_t)face;
+    me->fault_face_ms = now;
+    gui_syscard_press_drop(me);
+    kgui_rise_gate(&me->rise, now);
+}
+
+/**
  * @brief Send the report: the card turns to "Sending report..." and AO_Net
  *        is asked.
  *
@@ -27213,8 +27230,7 @@ static bool gui_fault_sent_up(Gui const * const me)
  */
 static void gui_fault_send(Gui * const me)
 {
-    me->fault_face    = (uint8_t)KGUI_FAULT_FACE_SENDING;
-    me->fault_face_ms = khal_time_ms();
+    gui_fault_face_take(me, KGUI_FAULT_FACE_SENDING, khal_time_ms());
     gui_sheet_refill(me);
     if ( net_dump_request(&me->super) )
     {
@@ -27222,9 +27238,8 @@ static void gui_fault_send(Gui * const me)
     }
     else
     {
-        me->fault_face    = (uint8_t)KGUI_FAULT_FACE_FAILED;
-        me->fault_why     = (uint8_t)KGUI_FAULT_SEND_BUSY;
-        me->fault_face_ms = khal_time_ms();
+        me->fault_why = (uint8_t)KGUI_FAULT_SEND_BUSY;
+        gui_fault_face_take(me, KGUI_FAULT_FACE_FAILED, khal_time_ms());
         KLOG_W(TAG, "fault: AO_Net could not take the report's request");
         (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
         gui_sheet_refill(me);
@@ -27247,9 +27262,8 @@ static void gui_fault_report_answer(Gui * const me, NetDumpRspEvt const * const 
 
     if ( kgui_fault_on_answer(&face, (GUI_SHEET_FAULT == me->sheet), r->result) )
     {
-        me->fault_face    = face;
-        me->fault_why     = r->result;
-        me->fault_face_ms = khal_time_ms();
+        me->fault_why = r->result;
+        gui_fault_face_take(me, (kgui_fault_face_t)face, khal_time_ms());
         if ( (uint8_t)KGUI_FAULT_FACE_SENT == face )
         {
             KLOG_N(TAG, "fault: the report was sent");
@@ -27286,9 +27300,8 @@ static void gui_fault_send_tick(Gui * const me)
 
         if ( KGUI_FAULT_STEP_FAIL == step )
         {
-            me->fault_face    = (uint8_t)KGUI_FAULT_FACE_FAILED;
-            me->fault_why     = (uint8_t)KGUI_FAULT_SEND_NO_ANSWER;
-            me->fault_face_ms = now;
+            me->fault_why = (uint8_t)KGUI_FAULT_SEND_NO_ANSWER;
+            gui_fault_face_take(me, KGUI_FAULT_FACE_FAILED, now);
             KLOG_W(TAG, "fault: no answer to the report in %u ms",
                    (unsigned)KGUI_FAULT_SEND_GUARD_MS);
             (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
