@@ -27251,7 +27251,8 @@ static bool gui_fault_sent_up(Gui const * const me)
 /**
  * @brief The card takes a face in place of another: what it says is new, so
  *        it refuses input for KGUI_RISE_INPUT_MS, as a card that has just
- *        risen does, and a press that is down clicks nothing.
+ *        risen does, and a press that is down acts on nothing: a finger's
+ *        lift clicks nothing and a side button's release finds nothing armed.
  *
  * @param me   The AO, the fault notice on the glass.
  * @param face The face it takes.
@@ -27262,6 +27263,7 @@ static void gui_fault_face_take(Gui * const me, kgui_fault_face_t face, uint32_t
     me->fault_face    = (uint8_t)face;
     me->fault_face_ms = now;
     gui_syscard_press_drop(me);
+    gui_press_disarm(me);
     kgui_rise_gate(&me->rise, now);
 }
 
