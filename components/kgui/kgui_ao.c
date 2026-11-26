@@ -14975,8 +14975,9 @@ static void gui_battery_fill(Gui * const me)
  *
  * The card is not raised over a locked card (a write is running), over
  * another system card (it would take the pairing's code or a question away)
- * but the card at boot, whose place it takes, while a guided test has the
- * glass, or while the board rests with the glass
+ * but the update card and a fault notice that yields, whose place it takes -
+ * the notice stays due and rises again on the next free glass -, while a
+ * guided test has the glass, or while the board rests with the glass
  * parked; the reading or the wake that finds the way clear raises it, because
  * the entry is only counted once it has risen. Nor is it raised while the
  * cable is in: it asks for the cable.
@@ -14994,7 +14995,8 @@ static void gui_battery_check(Gui * const me, bool critical)
         parked = me->lp_parked;
 #endif
         if ( kgui_crit_waits(me->sheet_locked, gui_sheet_is_system(me->sheet),
-                             GUI_SHEET_UPDATE == me->sheet, gui_in_guided_test(), parked) )
+                             (GUI_SHEET_UPDATE == me->sheet) || gui_sheet_unasked(me),
+                             gui_in_guided_test(), parked) )
         {
             KLOG_D(TAG, "battery: critical at %u %%; the glass is taken, the card waits",
                    (unsigned)me->soc);

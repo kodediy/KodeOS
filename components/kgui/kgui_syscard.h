@@ -102,14 +102,15 @@ void kgui_crit_taken(kgui_crit_t *c);
  *
  * @param locked  A locked card is up: a write is running.
  * @param system  Another system card is up: it would take a question away.
- * @param offer   That card is the offer of a newer kodeOS, which gives way:
- *                the charge is the more urgent word.
+ * @param yields  That card gives way - the offer of a newer kodeOS, or the
+ *                fault notice while no send runs: the charge is the more
+ *                urgent word.
  * @param guided  A guided test has the glass.
  * @param parked  The board rests with the glass handed over: nothing would
  *                answer the card, and nobody would see it.
  * @return true when the card has to wait.
  */
-bool kgui_crit_waits(bool locked, bool system, bool offer, bool guided, bool parked);
+bool kgui_crit_waits(bool locked, bool system, bool yields, bool guided, bool parked);
 
 /* ---- The factory reset ----------------------------------------------------- */
 
