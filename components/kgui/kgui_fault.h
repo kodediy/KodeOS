@@ -242,7 +242,9 @@ const char *kgui_fault_send_words(uint8_t result);
  * @param face    The card's face, a kgui_fault_face_t; receives the new one.
  * @param card_up The fault notice is the card on the glass.
  * @param result  A kgui_fault_send_t.
- * @return true when the answer was taken; false for a NULL @p face.
+ * @return true when the answer was taken: the card is up with the sending
+ *         face; false for a NULL @p face, no card on the glass, or any other
+ *         face.
  */
 bool kgui_fault_on_answer(uint8_t *face, bool card_up, uint8_t result);
 
