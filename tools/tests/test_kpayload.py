@@ -134,6 +134,15 @@ class AssetsPlan(unittest.TestCase):
                       {"w.json": b"1", "l.json": b"2", "x.json": b"3"})
         self.assertEqual([n for n, _ in assets_plan(d)], ["kode.json", "w.json", "l.json", "x.json"])
 
+    def test_the_fault_role_s_file_is_sent_when_the_manifest_names_one(self):
+        scenes = [{"name": "a", "wake": "w.json", "loop": "l.json"}]
+        files = {"w.json": b"1", "l.json": b"2", "e.json": b"3", "f.json.z": b"4"}
+        d = self.pack({"format": 1, "scenes": scenes, "empty": "e.json", "fault": "f.json.z"}, files)
+        self.assertEqual([n for n, _ in assets_plan(d)],
+                         ["kode.json", "w.json", "l.json", "e.json", "f.json.z"])
+        d = self.pack({"format": 1, "scenes": scenes, "empty": "e.json"}, files)
+        self.assertEqual([n for n, _ in assets_plan(d)], ["kode.json", "w.json", "l.json", "e.json"])
+
     def test_a_digest_that_does_not_match_is_refused(self):
         d = self.pack({"format": 1, "scenes": [{"name": "a", "wake": "w.json", "loop": "l.json"}],
                        "sha256": {"w.json": "00" * 32}},
