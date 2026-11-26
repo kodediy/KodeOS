@@ -23,6 +23,8 @@ extern "C" {
 #define KGUI_FAULT_NET_WAIT_MS   30000U  /**< The most the card waits for the channel since it became due, in milliseconds. */
 #define KGUI_FAULT_HOLD_MS        1200U  /**< After the play, when Kody is paused: frame 36 of 72, up with the X, in milliseconds. */
 #define KGUI_FAULT_KODY_WAIT_MS   5000U  /**< The most the card waits for the pack's fault animation to be read since it became due, in milliseconds. */
+#define KGUI_FAULT_SENT_MS        1500U  /**< How long "Report sent" stays before the card leaves, in milliseconds. */
+#define KGUI_FAULT_SEND_GUARD_MS 75000U  /**< The most the card waits for AO_Net's answer to a send, in milliseconds: longer than KODE_NET_GUARD_MS, within which AO_Net answers every request it took, so it covers only an answer lost on its way. */
 
 #define KGUI_FAULT_KEY           "fault" /**< The record's byte: a u8 in the kgui NVS namespace, kgui_fault_pack()'s. */
 
@@ -80,7 +82,7 @@ typedef enum {
 
 /** @brief What the card's verdict is decided from. */
 typedef struct {
-    bool     dump;       /**< The record says a dump, and one of a kodeOS image is in flash. */
+    bool     dump;       /**< The record says the fault left a dump, and a dump of a kodeOS image is in flash now. */
     bool     built;      /**< The build can send: the channel and the upload are in it. */
     bool     wifi_on;    /**< Wi-Fi is switched on. */
     uint8_t  chan;       /**< A kgui_fault_chan_t. */
@@ -92,14 +94,14 @@ typedef struct {
 typedef enum {
     KGUI_FAULT_WAIT = 0,   /**< Not yet: the channel is on its way. */
     KGUI_FAULT_RISE_OK,    /**< It rises with OK alone. */
-    KGUI_FAULT_RISE_SEND   /**< It rises with OK and Send report. */
+    KGUI_FAULT_RISE_SEND   /**< It rises with OK and Send. */
 } kgui_fault_verdict_t;
 
 /**
  * @brief Whether the card rises, and with what.
  *
  * No dump, a build that cannot send, Wi-Fi off or a channel that will not
- * come: OK alone at once. The channel up: Send report as well when the
+ * come: OK alone at once. The channel up: Send as well when the
  * session names a `dumps` link. The channel on its way: wait, up to
  * KGUI_FAULT_NET_WAIT_MS, then OK alone.
  *
@@ -108,15 +110,46 @@ typedef enum {
  */
 kgui_fault_verdict_t kgui_fault_verdict(const kgui_fault_net_t *n);
 
+/**
+ * @brief Read a radio not heard yet this boot as one on its way.
+ *
+ * Before its first state arrives a field reads its zero: Wi-Fi off and the
+ * channel KGUI_FAULT_CHAN_NEVER. Unknown is not never: until it is heard,
+ * Wi-Fi counts as on and the channel as coming, so the card waits for the
+ * network's verdict up to KGUI_FAULT_NET_WAIT_MS.
+ *
+ * @param n          The inputs, as the fields read; NULL does nothing.
+ * @param wifi_heard Wi-Fi's state was heard this boot.
+ * @param chan_heard The channel's state was heard this boot.
+ */
+void kgui_fault_net_unheard(kgui_fault_net_t *n, bool wifi_heard, bool chan_heard);
+
 /* ---- The notice -------------------------------------------------------------------- */
 
 /** @brief What the card shows. */
 typedef enum {
-    KGUI_FAULT_FACE_NOTICE = 0,  /**< The notice: OK, and Send report when offered. */
+    KGUI_FAULT_FACE_NOTICE = 0,  /**< The notice: OK, and Send when offered. */
     KGUI_FAULT_FACE_SENDING,     /**< "Sending report...", the edge spinning. */
     KGUI_FAULT_FACE_SENT,        /**< "Report sent", the edge closed green. */
     KGUI_FAULT_FACE_FAILED       /**< "Couldn't send the report", Close and Retry. */
 } kgui_fault_face_t;
+
+/** @brief How a send ended, as the card reads AO_Net's answer. */
+typedef enum {
+    KGUI_FAULT_SEND_OK = 0,     /**< The service took the report. */
+    KGUI_FAULT_SEND_REFUSED,    /**< The service answered something else. */
+    KGUI_FAULT_SEND_NO_ANSWER,  /**< No answer came: TLS, socket, timeout, or the card's guard. */
+    KGUI_FAULT_SEND_BUSY,       /**< The network was taken by other work. */
+    KGUI_FAULT_SEND_CHANNEL,    /**< The channel is down or names no `dumps` link. */
+    KGUI_FAULT_SEND_NONE        /**< No dump of a kodeOS image is in flash. */
+} kgui_fault_send_t;
+
+/** @brief What the card's clock asks of a face. */
+typedef enum {
+    KGUI_FAULT_STEP_STAY = 0,   /**< Nothing: the face stays. */
+    KGUI_FAULT_STEP_FAIL,       /**< The send had no answer in time: the failure face. */
+    KGUI_FAULT_STEP_CLOSE       /**< "Report sent" has been read: the card leaves. */
+} kgui_fault_step_t;
 
 /** @brief Where the notice stands. */
 typedef struct {
@@ -159,7 +192,7 @@ void kgui_fault_taken_down(kgui_fault_t *f);
 void kgui_fault_input(kgui_fault_t *f, uint32_t now_ms);
 
 /**
- * @brief OK, Send report, BOT or HOME answered the card: nothing is owed and
+ * @brief OK, Send, BOT or HOME answered the card: nothing is owed and
  *        nothing is to be stored.
  * @param f The notice; NULL does nothing.
  */
@@ -172,6 +205,41 @@ void kgui_fault_answered(kgui_fault_t *f);
  *         while a send runs and for any other value.
  */
 bool kgui_fault_yields(uint8_t face);
+
+/**
+ * @brief The card's words for how a send ended.
+ * @param result A kgui_fault_send_t.
+ * @return "Report sent" for OK; the one line of why for the rest: "The service
+ *         refused it", "No answer", "Busy. Try again", "No connection",
+ *         "Nothing to send"; "No answer" for any other value. Never NULL.
+ */
+const char *kgui_fault_send_words(uint8_t result);
+
+/**
+ * @brief What the card does with AO_Net's answer to a send.
+ *
+ * Only the card on the glass with the sending face takes it: OK turns it to
+ * the sent face, anything else to the failure face. Any other face, or no
+ * card, leaves @p face as it was.
+ *
+ * @param face    The card's face, a kgui_fault_face_t; receives the new one.
+ * @param card_up The fault notice is the card on the glass.
+ * @param result  A kgui_fault_send_t.
+ * @return true when the answer was taken; false for a NULL @p face.
+ */
+bool kgui_fault_on_answer(uint8_t *face, bool card_up, uint8_t result);
+
+/**
+ * @brief What the clock asks of a face that has stood @p since_ms.
+ *
+ * The sending face fails at KGUI_FAULT_SEND_GUARD_MS; the sent face closes
+ * at KGUI_FAULT_SENT_MS; the notice and the failure wait for a person.
+ *
+ * @param face     A kgui_fault_face_t.
+ * @param since_ms Since the face was taken, in milliseconds.
+ * @return The step.
+ */
+kgui_fault_step_t kgui_fault_face_step(uint8_t face, uint32_t since_ms);
 
 #ifdef __cplusplus
 }

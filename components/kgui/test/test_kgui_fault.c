@@ -278,6 +278,136 @@ void test_a_record_with_a_dump_gone_rises_with_ok_alone(void)
     TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
 }
 
+void test_the_sends_timings(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(1500U, KGUI_FAULT_SENT_MS);
+    TEST_ASSERT_EQUAL_UINT32(75000U, KGUI_FAULT_SEND_GUARD_MS);
+}
+
+void test_a_radio_not_heard_yet_is_waited_for(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    /* What the fields read before the first state of this boot. */
+    n.wifi_on = false;
+    n.chan    = (uint8_t)KGUI_FAULT_CHAN_NEVER;
+    kgui_fault_net_unheard(&n, false, false);
+    TEST_ASSERT_TRUE(n.wifi_on);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CHAN_COMING, n.chan);
+    TEST_ASSERT_EQUAL(KGUI_FAULT_WAIT, kgui_fault_verdict(&n));
+    n.waited_ms = KGUI_FAULT_NET_WAIT_MS;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+void test_a_radio_heard_is_taken_as_it_is(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.wifi_on = false;
+    n.chan    = (uint8_t)KGUI_FAULT_CHAN_NEVER;
+    kgui_fault_net_unheard(&n, true, true);
+    TEST_ASSERT_FALSE(n.wifi_on);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CHAN_NEVER, n.chan);
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+
+    /* Wi-Fi heard off decides at once, the channel unheard or not. */
+    n.chan = (uint8_t)KGUI_FAULT_CHAN_NEVER;
+    kgui_fault_net_unheard(&n, true, false);
+    TEST_ASSERT_FALSE(n.wifi_on);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CHAN_COMING, n.chan);
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+
+    /* A channel heard to be up is kept up while Wi-Fi is not heard. */
+    n.chan = (uint8_t)KGUI_FAULT_CHAN_UP;
+    kgui_fault_net_unheard(&n, false, true);
+    TEST_ASSERT_TRUE(n.wifi_on);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CHAN_UP, n.chan);
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_SEND, kgui_fault_verdict(&n));
+    kgui_fault_net_unheard(NULL, false, false);
+}
+
+void test_a_sends_end_has_its_words(void)
+{
+    TEST_ASSERT_EQUAL_STRING("Report sent", kgui_fault_send_words((uint8_t)KGUI_FAULT_SEND_OK));
+    TEST_ASSERT_EQUAL_STRING("The service refused it",
+                             kgui_fault_send_words((uint8_t)KGUI_FAULT_SEND_REFUSED));
+    TEST_ASSERT_EQUAL_STRING("No answer", kgui_fault_send_words((uint8_t)KGUI_FAULT_SEND_NO_ANSWER));
+    TEST_ASSERT_EQUAL_STRING("Busy. Try again", kgui_fault_send_words((uint8_t)KGUI_FAULT_SEND_BUSY));
+    TEST_ASSERT_EQUAL_STRING("No connection", kgui_fault_send_words((uint8_t)KGUI_FAULT_SEND_CHANNEL));
+    TEST_ASSERT_EQUAL_STRING("Nothing to send", kgui_fault_send_words((uint8_t)KGUI_FAULT_SEND_NONE));
+    /* An end this build does not know reads as no answer. */
+    TEST_ASSERT_EQUAL_STRING("No answer", kgui_fault_send_words(6U));
+    TEST_ASSERT_EQUAL_STRING("No answer", kgui_fault_send_words(0xFFU));
+}
+
+void test_a_sending_card_takes_the_answer(void)
+{
+    uint8_t face = (uint8_t)KGUI_FAULT_FACE_SENDING;
+
+    TEST_ASSERT_TRUE(kgui_fault_on_answer(&face, true, (uint8_t)KGUI_FAULT_SEND_OK));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_FACE_SENT, face);
+
+    face = (uint8_t)KGUI_FAULT_FACE_SENDING;
+    TEST_ASSERT_TRUE(kgui_fault_on_answer(&face, true, (uint8_t)KGUI_FAULT_SEND_REFUSED));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_FACE_FAILED, face);
+
+    face = (uint8_t)KGUI_FAULT_FACE_SENDING;
+    TEST_ASSERT_TRUE(kgui_fault_on_answer(&face, true, 0xFFU));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_FACE_FAILED, face);
+}
+
+void test_an_answer_with_no_sending_card_is_dropped(void)
+{
+    uint8_t face = (uint8_t)KGUI_FAULT_FACE_SENDING;
+
+    /* The card was closed while it sent. */
+    TEST_ASSERT_FALSE(kgui_fault_on_answer(&face, false, (uint8_t)KGUI_FAULT_SEND_OK));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_FACE_SENDING, face);
+
+    /* The guard already turned it to the failure. */
+    face = (uint8_t)KGUI_FAULT_FACE_FAILED;
+    TEST_ASSERT_FALSE(kgui_fault_on_answer(&face, true, (uint8_t)KGUI_FAULT_SEND_OK));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_FACE_FAILED, face);
+
+    face = (uint8_t)KGUI_FAULT_FACE_NOTICE;
+    TEST_ASSERT_FALSE(kgui_fault_on_answer(&face, true, (uint8_t)KGUI_FAULT_SEND_OK));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_FACE_NOTICE, face);
+
+    face = (uint8_t)KGUI_FAULT_FACE_SENT;
+    TEST_ASSERT_FALSE(kgui_fault_on_answer(&face, true, (uint8_t)KGUI_FAULT_SEND_REFUSED));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_FACE_SENT, face);
+
+    TEST_ASSERT_FALSE(kgui_fault_on_answer(NULL, true, (uint8_t)KGUI_FAULT_SEND_OK));
+}
+
+void test_a_send_with_no_answer_fails_at_the_guard(void)
+{
+    uint8_t const sending = (uint8_t)KGUI_FAULT_FACE_SENDING;
+
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_STAY, kgui_fault_face_step(sending, 0U));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_STAY,
+                      kgui_fault_face_step(sending, KGUI_FAULT_SEND_GUARD_MS - 1U));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_FAIL,
+                      kgui_fault_face_step(sending, KGUI_FAULT_SEND_GUARD_MS));
+}
+
+void test_the_sent_card_leaves_by_itself(void)
+{
+    uint8_t const sent = (uint8_t)KGUI_FAULT_FACE_SENT;
+
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_STAY, kgui_fault_face_step(sent, KGUI_FAULT_SENT_MS - 1U));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_CLOSE, kgui_fault_face_step(sent, KGUI_FAULT_SENT_MS));
+}
+
+void test_the_notice_and_the_failure_wait_for_a_person(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_STAY,
+                      kgui_fault_face_step((uint8_t)KGUI_FAULT_FACE_NOTICE, 0xFFFFFFFFU));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_STAY,
+                      kgui_fault_face_step((uint8_t)KGUI_FAULT_FACE_FAILED, 0xFFFFFFFFU));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_STAY, kgui_fault_face_step(4U, 0xFFFFFFFFU));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -300,5 +430,14 @@ int main(void)
     RUN_TEST(test_an_answer_ends_the_notice);
     RUN_TEST(test_only_the_notice_and_its_result_yield);
     RUN_TEST(test_a_record_with_a_dump_gone_rises_with_ok_alone);
+    RUN_TEST(test_the_sends_timings);
+    RUN_TEST(test_a_radio_not_heard_yet_is_waited_for);
+    RUN_TEST(test_a_radio_heard_is_taken_as_it_is);
+    RUN_TEST(test_a_sends_end_has_its_words);
+    RUN_TEST(test_a_sending_card_takes_the_answer);
+    RUN_TEST(test_an_answer_with_no_sending_card_is_dropped);
+    RUN_TEST(test_a_send_with_no_answer_fails_at_the_guard);
+    RUN_TEST(test_the_sent_card_leaves_by_itself);
+    RUN_TEST(test_the_notice_and_the_failure_wait_for_a_person);
     return UNITY_END();
 }

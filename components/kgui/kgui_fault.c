@@ -95,6 +95,21 @@ kgui_fault_verdict_t kgui_fault_verdict(const kgui_fault_net_t *n)
     return verdict;
 }
 
+void kgui_fault_net_unheard(kgui_fault_net_t *n, bool wifi_heard, bool chan_heard)
+{
+    if ( NULL != n )
+    {
+        if ( !wifi_heard )
+        {
+            n->wifi_on = true;
+        }
+        if ( !chan_heard )
+        {
+            n->chan = (uint8_t)KGUI_FAULT_CHAN_COMING;
+        }
+    }
+}
+
 void kgui_fault_begin(kgui_fault_t *f, bool kept, uint8_t kept_byte,
                       kgui_fault_rec_t boot, uint32_t now_ms)
 {
@@ -162,4 +177,75 @@ bool kgui_fault_yields(uint8_t face)
 {
     return ((uint8_t)KGUI_FAULT_FACE_NOTICE == face) || ((uint8_t)KGUI_FAULT_FACE_SENT == face)
            || ((uint8_t)KGUI_FAULT_FACE_FAILED == face);
+}
+
+const char *kgui_fault_send_words(uint8_t result)
+{
+    const char *words = KGUI_FAULT_WHY_NO_ANSWER;
+
+    switch ( result )
+    {
+        case (uint8_t)KGUI_FAULT_SEND_OK: {
+            words = KGUI_FAULT_SENT;
+            break;
+        }
+        case (uint8_t)KGUI_FAULT_SEND_REFUSED: {
+            words = KGUI_FAULT_WHY_REFUSED;
+            break;
+        }
+        case (uint8_t)KGUI_FAULT_SEND_BUSY: {
+            words = KGUI_CARD_BUSY;
+            break;
+        }
+        case (uint8_t)KGUI_FAULT_SEND_CHANNEL: {
+            words = KGUI_FAULT_WHY_CHANNEL;
+            break;
+        }
+        case (uint8_t)KGUI_FAULT_SEND_NONE: {
+            words = KGUI_FAULT_WHY_NONE;
+            break;
+        }
+        default: {
+            /* No answer, or an end this build does not know. */
+            break;
+        }
+    }
+    return words;
+}
+
+bool kgui_fault_on_answer(uint8_t *face, bool card_up, uint8_t result)
+{
+    bool const taken = (NULL != face) && card_up && ((uint8_t)KGUI_FAULT_FACE_SENDING == *face);
+
+    if ( taken )
+    {
+        if ( (uint8_t)KGUI_FAULT_SEND_OK == result )
+        {
+            *face = (uint8_t)KGUI_FAULT_FACE_SENT;
+        }
+        else
+        {
+            *face = (uint8_t)KGUI_FAULT_FACE_FAILED;
+        }
+    }
+    return taken;
+}
+
+kgui_fault_step_t kgui_fault_face_step(uint8_t face, uint32_t since_ms)
+{
+    kgui_fault_step_t step = KGUI_FAULT_STEP_STAY;
+
+    if ( ((uint8_t)KGUI_FAULT_FACE_SENDING == face) && ((uint32_t)KGUI_FAULT_SEND_GUARD_MS <= since_ms) )
+    {
+        step = KGUI_FAULT_STEP_FAIL;
+    }
+    else if ( ((uint8_t)KGUI_FAULT_FACE_SENT == face) && ((uint32_t)KGUI_FAULT_SENT_MS <= since_ms) )
+    {
+        step = KGUI_FAULT_STEP_CLOSE;
+    }
+    else
+    {
+        /* The notice and the failure wait for a person; the rest wait on. */
+    }
+    return step;
 }

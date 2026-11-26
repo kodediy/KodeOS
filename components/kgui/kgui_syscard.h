@@ -52,6 +52,15 @@ const char *kgui_stopped_reason(int end);
 /* ---- kodeOS's own fault ---------------------------------------------------- */
 
 #define KGUI_FAULT_NAME        "kodeOS restarted"       /**< The fault notice's name; its second line is the Stopped card's why. */
+#define KGUI_FAULT_REPORT      "A report is a copy of kodeOS's memory." /**< The notice's line when it offers to send the report: two lines of the body face. */
+#define KGUI_FAULT_REPORT_SEND "Send"                   /**< The notice's right pill, beside OK: it sends the report. */
+#define KGUI_FAULT_SENDING     "Sending report..."      /**< The card while the report goes. */
+#define KGUI_FAULT_SENT        "Report sent"            /**< ...once the service has it. */
+#define KGUI_FAULT_UNSENT      "Couldn't send the report" /**< The failure's title. */
+#define KGUI_FAULT_WHY_REFUSED "The service refused it" /**< Why: the service answered something else. */
+#define KGUI_FAULT_WHY_NO_ANSWER "No answer"            /**< Why: no answer came. */
+#define KGUI_FAULT_WHY_CHANNEL "No connection"          /**< Why: the channel is down or names no link for reports. */
+#define KGUI_FAULT_WHY_NONE    "Nothing to send"        /**< Why: no dump of a kodeOS image is in flash. */
 
 /* ---- The battery ----------------------------------------------------------- */
 
