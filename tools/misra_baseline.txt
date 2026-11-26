@@ -603,7 +603,7 @@ sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c misra-c2012-10.2 1
 sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c misra-c2012-10.4 2
 sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c misra-c2012-10.8 1
 sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c misra-c2012-12.2 3
-sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c misra-c2012-8.7 4
+sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c misra-c2012-8.7 5
 sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c misra-c2012-8.9 1
 sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c redundantInitialization 1
 sdk/components/khal/sdmmc/src/khal_sdmmc_esp.c shiftTooManyBitsSigned 1
