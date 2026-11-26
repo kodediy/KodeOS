@@ -108,7 +108,7 @@ void kgui_fault_begin(kgui_fault_t *f, bool kept, uint8_t kept_byte,
         f->store  = false;
         f->due    = false;
         f->due_ms = 0U;
-        if ( (uint8_t)KGUI_FAULT_NONE != boot.cls )
+        if ( fault_class_ok(boot.cls) )
         {
             f->rec   = boot;
             f->owed  = true;

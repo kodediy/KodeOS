@@ -137,7 +137,8 @@ typedef struct {
  * @param f         The notice; NULL does nothing.
  * @param kept      A byte is kept in NVS.
  * @param kept_byte That byte.
- * @param boot      This boot's record; class KGUI_FAULT_NONE for no fault.
+ * @param boot      This boot's record; a class that is neither CRASHED nor
+ *                  HUNG (KGUI_FAULT_NONE for no fault) owes nothing of its own.
  * @param now_ms    The time now, in milliseconds.
  */
 void kgui_fault_begin(kgui_fault_t *f, bool kept, uint8_t kept_byte,

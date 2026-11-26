@@ -32,7 +32,7 @@ static kgui_fault_rec_t rec(kgui_fault_class_t cls, bool dump)
 }
 
 /** @brief A net with everything on: a dump, a build that sends, Wi-Fi on,
- *         the channel on its way with no link yet, nothing waited. */
+ *         the channel on its way, a link, nothing waited. */
 static kgui_fault_net_t net_waiting(void)
 {
     kgui_fault_net_t n;
@@ -213,6 +213,26 @@ void test_a_boot_with_nothing_kept_and_no_fault_owes_nothing(void)
     TEST_ASSERT_FALSE(f.store);
 }
 
+void test_a_boot_class_that_is_no_class_owes_nothing_of_its_own(void)
+{
+    kgui_fault_rec_t const boot = { 3U, true };
+    kgui_fault_t           f;
+
+    (void)memset(&f, 0xFF, sizeof(f));
+    kgui_fault_begin(&f, false, 0U, boot, BOOT_MS);
+    TEST_ASSERT_FALSE(f.owed);
+    TEST_ASSERT_FALSE(f.due);
+    TEST_ASSERT_FALSE(f.store);
+
+    /* With a record kept, the kept one is owed, and nothing is stored. */
+    kgui_fault_begin(&f, true, 0x81U, boot, BOOT_MS);
+    TEST_ASSERT_TRUE(f.owed);
+    TEST_ASSERT_TRUE(f.due);
+    TEST_ASSERT_FALSE(f.store);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CRASHED, f.rec.cls);
+    TEST_ASSERT_TRUE(f.rec.dump);
+}
+
 void test_a_card_taken_down_waits_for_an_input(void)
 {
     kgui_fault_t f = notice_owed();
@@ -275,6 +295,7 @@ int main(void)
     RUN_TEST(test_a_newer_fault_replaces_the_record);
     RUN_TEST(test_a_kept_record_is_due_at_a_boot_that_is_no_fault);
     RUN_TEST(test_a_boot_with_nothing_kept_and_no_fault_owes_nothing);
+    RUN_TEST(test_a_boot_class_that_is_no_class_owes_nothing_of_its_own);
     RUN_TEST(test_a_card_taken_down_waits_for_an_input);
     RUN_TEST(test_an_answer_ends_the_notice);
     RUN_TEST(test_only_the_notice_and_its_result_yield);
