@@ -93,6 +93,9 @@ run_suite kgui_osrel test_kgui_osrel.c ../kgui_osrel.c
 # The radio's own update: the question, the answer, the start; it reads its
 # answers with kgui_osrel's parser.
 run_suite kgui_c5up test_kgui_c5up.c ../kgui_c5up.c ../kgui_osrel.c
+# The fault notice: its record, when its card rises and what it offers. The
+# Stopped card's words come from kgui_syscard.h's macros; no SDK header.
+run_suite kgui_fault test_kgui_fault.c ../kgui_fault.c
 # The Time page's steps, zones and prompt: the C library's mktime and nothing else.
 run_suite kgui_clock -I"$sdk/kdrv/clocks/include" test_kgui_clock.c ../kgui_clock.c
 # The spaces a typed name loses at both ends.

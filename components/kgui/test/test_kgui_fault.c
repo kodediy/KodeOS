@@ -1,0 +1,283 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/**
+ * @file test_kgui_fault.c
+ * @brief Host tests of the fault notice: its record, when its card rises and
+ *        what it offers (kgui_fault.h).
+ */
+#include <string.h>
+
+#include "unity.h"
+
+#include "kgui_fault.h"
+
+#define BOOT_MS   1200U   /**< The time of the boot's begin in these cases. */
+#define INPUT_MS  5000U   /**< The time of the input after the card was taken down. */
+
+void setUp(void)
+{
+}
+
+void tearDown(void)
+{
+}
+
+/** @brief A record of @p cls, with or without a dump. */
+static kgui_fault_rec_t rec(kgui_fault_class_t cls, bool dump)
+{
+    kgui_fault_rec_t r;
+
+    r.cls  = (uint8_t)cls;
+    r.dump = dump;
+    return r;
+}
+
+/** @brief A net with everything on: a dump, a build that sends, Wi-Fi on,
+ *         the channel on its way with no link yet, nothing waited. */
+static kgui_fault_net_t net_waiting(void)
+{
+    kgui_fault_net_t n;
+
+    n.dump      = true;
+    n.built     = true;
+    n.wifi_on   = true;
+    n.chan      = (uint8_t)KGUI_FAULT_CHAN_COMING;
+    n.link      = true;
+    n.waited_ms = 0U;
+    return n;
+}
+
+/** @brief A notice begun from a boot with nothing kept and a crash with a dump. */
+static kgui_fault_t notice_owed(void)
+{
+    kgui_fault_t f;
+
+    (void)memset(&f, 0, sizeof(f));
+    kgui_fault_begin(&f, false, 0U, rec(KGUI_FAULT_CRASHED, true), BOOT_MS);
+    return f;
+}
+
+void test_a_record_packs_and_unpacks(void)
+{
+    kgui_fault_rec_t back;
+
+    TEST_ASSERT_EQUAL_HEX8(0x81U, kgui_fault_pack(rec(KGUI_FAULT_CRASHED, true)));
+    TEST_ASSERT_EQUAL_HEX8(0x02U, kgui_fault_pack(rec(KGUI_FAULT_HUNG, false)));
+
+    (void)memset(&back, 0, sizeof(back));
+    TEST_ASSERT_TRUE(kgui_fault_unpack(0x81U, &back));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CRASHED, back.cls);
+    TEST_ASSERT_TRUE(back.dump);
+
+    TEST_ASSERT_TRUE(kgui_fault_unpack(0x02U, &back));
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_HUNG, back.cls);
+    TEST_ASSERT_FALSE(back.dump);
+}
+
+void test_a_byte_that_is_no_record_is_refused(void)
+{
+    kgui_fault_rec_t back = rec(KGUI_FAULT_HUNG, true);
+
+    TEST_ASSERT_FALSE(kgui_fault_unpack(0x00U, &back));
+    TEST_ASSERT_FALSE(kgui_fault_unpack(0x03U, &back));
+    TEST_ASSERT_FALSE(kgui_fault_unpack(0x41U, &back));
+    TEST_ASSERT_FALSE(kgui_fault_unpack(0xFFU, &back));
+    /* A refusal leaves the record as it was. */
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_HUNG, back.cls);
+    TEST_ASSERT_TRUE(back.dump);
+    TEST_ASSERT_FALSE(kgui_fault_unpack(0x81U, NULL));
+}
+
+void test_the_words_follow_the_class(void)
+{
+    TEST_ASSERT_EQUAL_STRING("It crashed", kgui_fault_words((uint8_t)KGUI_FAULT_CRASHED));
+    TEST_ASSERT_EQUAL_STRING("It stopped responding", kgui_fault_words((uint8_t)KGUI_FAULT_HUNG));
+    TEST_ASSERT_EQUAL_STRING("", kgui_fault_words((uint8_t)KGUI_FAULT_NONE));
+    TEST_ASSERT_EQUAL_STRING("", kgui_fault_words(3U));
+}
+
+void test_no_dump_rises_at_once_with_ok_alone(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.dump = false;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+void test_a_build_that_cannot_send_rises_at_once(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.built = false;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+void test_the_channel_up_with_the_link_offers_the_send(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.chan = (uint8_t)KGUI_FAULT_CHAN_UP;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_SEND, kgui_fault_verdict(&n));
+}
+
+void test_the_channel_up_with_no_link_is_ok_alone(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.chan = (uint8_t)KGUI_FAULT_CHAN_UP;
+    n.link = false;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+void test_wifi_off_is_ok_alone_at_once(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.wifi_on = false;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+void test_a_channel_that_will_not_come_is_ok_alone_at_once(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.chan = (uint8_t)KGUI_FAULT_CHAN_NEVER;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+void test_a_channel_on_its_way_is_waited_for(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    TEST_ASSERT_EQUAL(KGUI_FAULT_WAIT, kgui_fault_verdict(&n));
+    n.waited_ms = 29999U;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_WAIT, kgui_fault_verdict(&n));
+    n.waited_ms = 30000U;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+    TEST_ASSERT_EQUAL_UINT32(30000U, KGUI_FAULT_NET_WAIT_MS);
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(NULL));
+}
+
+void test_a_fault_boot_writes_its_record_and_is_due(void)
+{
+    kgui_fault_t f = notice_owed();
+
+    TEST_ASSERT_TRUE(f.owed);
+    TEST_ASSERT_TRUE(f.due);
+    TEST_ASSERT_TRUE(f.store);
+    TEST_ASSERT_EQUAL_UINT32(BOOT_MS, f.due_ms);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CRASHED, f.rec.cls);
+    TEST_ASSERT_TRUE(f.rec.dump);
+}
+
+void test_a_newer_fault_replaces_the_record(void)
+{
+    kgui_fault_t f;
+
+    (void)memset(&f, 0, sizeof(f));
+    kgui_fault_begin(&f, true, 0x02U, rec(KGUI_FAULT_CRASHED, true), BOOT_MS);
+    TEST_ASSERT_TRUE(f.owed);
+    TEST_ASSERT_TRUE(f.due);
+    TEST_ASSERT_TRUE(f.store);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CRASHED, f.rec.cls);
+    TEST_ASSERT_TRUE(f.rec.dump);
+}
+
+void test_a_kept_record_is_due_at_a_boot_that_is_no_fault(void)
+{
+    kgui_fault_t f;
+
+    (void)memset(&f, 0, sizeof(f));
+    kgui_fault_begin(&f, true, 0x81U, rec(KGUI_FAULT_NONE, false), BOOT_MS);
+    TEST_ASSERT_TRUE(f.owed);
+    TEST_ASSERT_TRUE(f.due);
+    TEST_ASSERT_FALSE(f.store);
+    TEST_ASSERT_EQUAL_UINT32(BOOT_MS, f.due_ms);
+    TEST_ASSERT_EQUAL_UINT8(KGUI_FAULT_CRASHED, f.rec.cls);
+    TEST_ASSERT_TRUE(f.rec.dump);
+}
+
+void test_a_boot_with_nothing_kept_and_no_fault_owes_nothing(void)
+{
+    kgui_fault_t f;
+
+    (void)memset(&f, 0xFF, sizeof(f));
+    kgui_fault_begin(&f, false, 0x81U, rec(KGUI_FAULT_NONE, false), BOOT_MS);
+    TEST_ASSERT_FALSE(f.owed);
+    TEST_ASSERT_FALSE(f.due);
+    TEST_ASSERT_FALSE(f.store);
+
+    /* A kept byte that is no record owes nothing either. */
+    kgui_fault_begin(&f, true, 0x41U, rec(KGUI_FAULT_NONE, false), BOOT_MS);
+    TEST_ASSERT_FALSE(f.owed);
+    TEST_ASSERT_FALSE(f.due);
+    TEST_ASSERT_FALSE(f.store);
+}
+
+void test_a_card_taken_down_waits_for_an_input(void)
+{
+    kgui_fault_t f = notice_owed();
+
+    kgui_fault_taken_down(&f);
+    TEST_ASSERT_TRUE(f.owed);
+    TEST_ASSERT_FALSE(f.due);
+    kgui_fault_input(&f, INPUT_MS);
+    TEST_ASSERT_TRUE(f.due);
+    TEST_ASSERT_EQUAL_UINT32(INPUT_MS, f.due_ms);
+    /* A later input does not move the time it became due. */
+    kgui_fault_input(&f, INPUT_MS + 1000U);
+    TEST_ASSERT_EQUAL_UINT32(INPUT_MS, f.due_ms);
+}
+
+void test_an_answer_ends_the_notice(void)
+{
+    kgui_fault_t f = notice_owed();
+
+    kgui_fault_answered(&f);
+    TEST_ASSERT_FALSE(f.owed);
+    TEST_ASSERT_FALSE(f.due);
+    kgui_fault_input(&f, INPUT_MS);
+    TEST_ASSERT_FALSE(f.owed);
+    TEST_ASSERT_FALSE(f.due);
+}
+
+void test_only_the_notice_and_its_result_yield(void)
+{
+    TEST_ASSERT_TRUE(kgui_fault_yields((uint8_t)KGUI_FAULT_FACE_NOTICE));
+    TEST_ASSERT_FALSE(kgui_fault_yields((uint8_t)KGUI_FAULT_FACE_SENDING));
+    TEST_ASSERT_TRUE(kgui_fault_yields((uint8_t)KGUI_FAULT_FACE_SENT));
+    TEST_ASSERT_TRUE(kgui_fault_yields((uint8_t)KGUI_FAULT_FACE_FAILED));
+}
+
+void test_a_record_with_a_dump_gone_rises_with_ok_alone(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    n.chan = (uint8_t)KGUI_FAULT_CHAN_UP;
+    n.link = true;
+    n.dump = false;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+int main(void)
+{
+    UNITY_BEGIN();
+    RUN_TEST(test_a_record_packs_and_unpacks);
+    RUN_TEST(test_a_byte_that_is_no_record_is_refused);
+    RUN_TEST(test_the_words_follow_the_class);
+    RUN_TEST(test_no_dump_rises_at_once_with_ok_alone);
+    RUN_TEST(test_a_build_that_cannot_send_rises_at_once);
+    RUN_TEST(test_the_channel_up_with_the_link_offers_the_send);
+    RUN_TEST(test_the_channel_up_with_no_link_is_ok_alone);
+    RUN_TEST(test_wifi_off_is_ok_alone_at_once);
+    RUN_TEST(test_a_channel_that_will_not_come_is_ok_alone_at_once);
+    RUN_TEST(test_a_channel_on_its_way_is_waited_for);
+    RUN_TEST(test_a_fault_boot_writes_its_record_and_is_due);
+    RUN_TEST(test_a_newer_fault_replaces_the_record);
+    RUN_TEST(test_a_kept_record_is_due_at_a_boot_that_is_no_fault);
+    RUN_TEST(test_a_boot_with_nothing_kept_and_no_fault_owes_nothing);
+    RUN_TEST(test_a_card_taken_down_waits_for_an_input);
+    RUN_TEST(test_an_answer_ends_the_notice);
+    RUN_TEST(test_only_the_notice_and_its_result_yield);
+    RUN_TEST(test_a_record_with_a_dump_gone_rises_with_ok_alone);
+    return UNITY_END();
+}
