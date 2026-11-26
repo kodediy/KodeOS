@@ -8,7 +8,14 @@ unity="$IDF_PATH/components/unity/unity/src"
 out="${TMPDIR:-/tmp}/kode_kgui_tests"
 mkdir -p "$out"
 
-inc="-I.. -I../include -I../screens -I$unity \
+# The configuration every binary here is built with, in the sdkconfig.h the
+# firmware's headers include: the send of the fault's report is on, so every
+# case of it is built and run. One file for all of them, as one sdkconfig is
+# for the firmware: the option decides what the headers declare.
+mkdir -p "$out/config"
+printf '#define CONFIG_KODEOS_DUMP_HTTP 1\n' > "$out/config/sdkconfig.h"
+
+inc="-I.. -I../include -I../screens -I$out/config -I$unity \
  -I$sdk/kui/core/include -I$sdk/kdefs/include -I$sdk/klog/include -I$sdk/kdrv/apps/include \
  -I$sdk/khal/nvs/include -I$sdk/khal/sync/include -I$sdk/khal/system/include"
 

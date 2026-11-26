@@ -3571,9 +3571,9 @@ static bool gui_update_boot_card(Gui const * const me);
 static bool gui_sheet_unasked(Gui const * const me);
 static void gui_fault_fill(Gui * const me);
 static void gui_fault_answer(Gui * const me, const char *what);
+#if CONFIG_KODEOS_DUMP_HTTP
 static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
                                  const char *what);
-#if CONFIG_KODEOS_DUMP_HTTP
 static bool gui_fault_sent_up(Gui const * const me);
 static void gui_fault_report_answer(Gui * const me, NetDumpRspEvt const * const r);
 #endif
@@ -20565,6 +20565,7 @@ static void gui_sheet_keep_act(Gui * const me)
         KLOG_D(TAG, "sheet: the card is already leaving; this answer is ignored");
         return;
     }
+#if CONFIG_KODEOS_DUMP_HTTP
     if ( GUI_SHEET_FAULT == me->sheet )
     {
         /* The fault notice's OK beside Send, or Close beside Retry: they
@@ -20573,6 +20574,7 @@ static void gui_sheet_keep_act(Gui * const me)
         gui_fault_pill_press(me, KGUI_FAULT_PILL_LEFT, true, "the left pill");
         return;
     }
+#endif
     me->pair_done = true;
     (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
     KLOG_D(TAG, "sheet: the left pill keeps; the card closes");
@@ -20586,8 +20588,9 @@ static void gui_sheet_keep_act(Gui * const me)
  * the listing sheets have one case per row tag, so a sheet's answer lives
  * beside the sentence that asked for it.
  *
- * The fault notice's answer is decided by kgui_fault_press(), and a remote
- * line's press is refused what needs a person (gui_fault_pill_press()).
+ * With the send in the build, the fault notice's answer is decided by
+ * kgui_fault_press(), and a remote line's press is refused what needs a
+ * person (gui_fault_pill_press()); without it, its one OK answers.
  *
  * @param me     The AO.
  * @param remote A remote line made the press: ButtonEvt.remote of the
@@ -20597,8 +20600,16 @@ static void gui_sheet_action_act(Gui * const me, bool remote)
 {
     if ( GUI_SHEET_FAULT == me->sheet )
     {
+#if CONFIG_KODEOS_DUMP_HTTP
         /* Before the buzz: a refused press buzzes nothing. */
         gui_fault_pill_press(me, KGUI_FAULT_PILL_ANSWER, remote, "the answer pill");
+#else
+        /* OK alone answers whoever pressed it. */
+        (void)remote;
+        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+        gui_fault_answer(me, KGUI_CARD_OK);
+        gui_sheet_close(me);
+#endif
         return;
     }
     if ( GUI_SHEET_UPDATE != me->sheet )
@@ -22145,16 +22156,22 @@ static bool gui_sheet_framed(GuiSheet kind)
  * @brief Whether the edge along the glass stays as it is across a card's
  *        being written again.
  *
- * The write, the pairing, the factory reset's wait and the fault notice's
- * send draw it; the notice's own face takes it off (gui_fault_fill()).
+ * The write, the pairing, the factory reset's wait and, with the send in the
+ * build, the fault notice's send draw it; the notice's own face takes it off
+ * (gui_fault_notice_fill()).
  *
  * @param kind Which sheet.
  * @return true when the card owns the edge.
  */
 static bool gui_sheet_edged(GuiSheet kind)
 {
-    return (GUI_SHEET_OPENING == kind) || (GUI_SHEET_PAIRING == kind)
-           || (GUI_SHEET_RESETTING == kind) || (GUI_SHEET_FAULT == kind);
+    bool edged = (GUI_SHEET_OPENING == kind) || (GUI_SHEET_PAIRING == kind)
+                 || (GUI_SHEET_RESETTING == kind);
+
+#if CONFIG_KODEOS_DUMP_HTTP
+    edged = edged || (GUI_SHEET_FAULT == kind);    /* the send's faces */
+#endif
+    return edged;
 }
 
 /**
@@ -26990,11 +27007,9 @@ _Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_WORDS_H) / 2)
 _Static_assert(((KGUI_SYS_ROOM_END - KGUI_SYS_ROOM_TOP - GUI_FAULT_UNSENT_H) / 2)
                >= (KGUI_SYS_PILL_RING + GUI_FAULT_AIR),
                "with the X, air stays between the failure's words and the pair's focus ring");
-#endif
 _Static_assert(KGUI_FAULT_SEND_GUARD_MS > KODE_NET_GUARD_MS,
                "AO_Net answers every request it took within its own guard: the card's covers a lost answer");
 _Static_assert(KGUI_FAULT_SENT_MS >= KGUI_EDGE_DONE_MS, "\"Report sent\" stays until its edge has closed");
-#if CONFIG_KODEOS_DUMP_HTTP
 _Static_assert((uint32_t)KGUI_FAULT_SEND_OK == (uint32_t)KDUMP_R_OK, "the card reads AO_Net's results as they are");
 _Static_assert((uint32_t)KGUI_FAULT_SEND_REFUSED == (uint32_t)KDUMP_R_REFUSED, "the card reads AO_Net's results as they are");
 _Static_assert((uint32_t)KGUI_FAULT_SEND_NO_ANSWER == (uint32_t)KDUMP_R_NO_ANSWER, "the card reads AO_Net's results as they are");
@@ -27030,9 +27045,11 @@ static void gui_fault_notice_fill(Gui * const me)
     int32_t                       end    = KGUI_SYS_BAND_PILL_Y;
     bool                          kody   = false;
 
+#if CONFIG_KODEOS_DUMP_HTTP
+    /* The card owns the edge for the send's faces (gui_sheet_edged()): the
+     * notice's own face takes it off. */
     kgui_ring_cancel(&me->glass);
     kgui_ring_show(&me->glass, false);
-#if CONFIG_KODEOS_DUMP_HTTP
     if ( me->fault_offer )
     {
         report = KGUI_FAULT_REPORT;
@@ -27160,19 +27177,16 @@ static void gui_fault_send_fill(Gui * const me)
  */
 static void gui_fault_fill(Gui * const me)
 {
-    bool notice = true;
-
     gui_idle_rearm(me);
     me->sheet_locked = false;
     gui_frame_begin(me);
 #if CONFIG_KODEOS_DUMP_HTTP
-    notice = ((uint8_t)KGUI_FAULT_FACE_NOTICE == me->fault_face);
-    if ( !notice )
+    if ( (uint8_t)KGUI_FAULT_FACE_NOTICE != me->fault_face )
     {
         gui_fault_send_fill(me);
     }
+    else
 #endif
-    if ( notice )
     {
         gui_fault_notice_fill(me);
     }
@@ -27203,11 +27217,13 @@ static void gui_fault_answer(Gui * const me, const char *what)
         }
         KLOG_N(TAG, "fault: %s answered the notice", what);
     }
+#if CONFIG_KODEOS_DUMP_HTTP
     else if ( (uint8_t)KGUI_FAULT_FACE_SENDING == me->fault_face )
     {
         KLOG_N(TAG, "fault: %s closed the card while the report goes; its answer goes "
                     "to the log", what);
     }
+#endif
     else
     {
         KLOG_D(TAG, "fault: %s closed the card", what);
@@ -27346,6 +27362,7 @@ static void gui_fault_send_tick(Gui * const me)
 }
 #endif
 
+#if CONFIG_KODEOS_DUMP_HTTP
 /**
  * @brief A press on the fault notice does what kgui_fault_press() says: OK
  *        answers the notice and Close the failure, and the card closes, as it
@@ -27364,12 +27381,8 @@ static void gui_fault_send_tick(Gui * const me)
 static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
                                  const char *what)
 {
-#if CONFIG_KODEOS_DUMP_HTTP
-    bool const offer = me->fault_offer;
-#else
-    bool const offer = false;
-#endif
-    kgui_fault_do_t const act = kgui_fault_press(me->fault_face, offer, (uint8_t)pill, remote);
+    kgui_fault_do_t const act = kgui_fault_press(me->fault_face, me->fault_offer, (uint8_t)pill,
+                                                 remote);
 
     switch ( act )
     {
@@ -27381,7 +27394,6 @@ static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool re
             gui_sheet_close(me);
             break;
         }
-#if CONFIG_KODEOS_DUMP_HTTP
         case KGUI_FAULT_DO_SEND: {
             /* The notice is answered first: the record is erased and the
              * notice never rises again, whatever the send's end. */
@@ -27396,7 +27408,6 @@ static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool re
             gui_fault_send(me);
             break;
         }
-#endif
         case KGUI_FAULT_DO_REFUSED: {
             KLOG_N(TAG, "fault: a remote press does not send a report (%s)", what);
             break;
@@ -27407,6 +27418,8 @@ static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool re
         }
     }
 }
+
+#endif
 
 /**
  * @brief Whether the card on the glass rose with nobody asking: the card at
@@ -29177,11 +29190,13 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
             {
                 gui_sheet_action_act(me, me->btn_remote);
             }
+#if CONFIG_KODEOS_DUMP_HTTP
             else if ( GUI_SHEET_FAULT == me->sheet )
             {
                 /* No pill on the glass: "Report sent" leaves at any press. */
                 gui_fault_pill_press(me, KGUI_FAULT_PILL_NONE, me->btn_remote, "the top button");
             }
+#endif
             else
             {
                 /* No answer on the glass. */
@@ -41187,14 +41202,16 @@ static QState gui_sheet_events(Gui * const me, QEvt const * const e,
                  * glass. The offer is spent for this boot. */
                 KLOG_N(TAG, "update: the card closed; offered again at the next boot");
             }
-            /* Kody on the fault notice stands still with the card gone, and
-             * the send's edge goes with it. */
+            /* Kody on the fault notice stands still with the card gone. */
             gui_fault_kody_still(me);
+#if CONFIG_KODEOS_DUMP_HTTP
+            /* The send's edge goes with the card. */
             if ( GUI_SHEET_FAULT == me->sheet )
             {
                 kgui_ring_cancel(&me->glass);
                 kgui_ring_show(&me->glass, false);
             }
+#endif
             if ( over_face )
             {
                 /* The face is uncovered: its next tick wakes Kody, who goes

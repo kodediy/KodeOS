@@ -6,13 +6,17 @@
  *
  * Pure: no LVGL, no SDK type and no I/O. AO_Gui reads and writes the record's
  * byte in NVS, maps the boot's end and the network's state into these types,
- * and does what the answers here say.
+ * and does what the answers here say. The send's part - its faces' clock, its
+ * words and what a press does on the pair - is built only with
+ * CONFIG_KODEOS_DUMP_HTTP.
  */
 #ifndef KGUI_FAULT_H
 #define KGUI_FAULT_H
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "sdkconfig.h" /* CONFIG_KODEOS_DUMP_HTTP */
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,8 +27,10 @@ extern "C" {
 #define KGUI_FAULT_NET_WAIT_MS   30000U  /**< The most the card waits for the channel since it became due, in milliseconds. */
 #define KGUI_FAULT_HOLD_MS        1200U  /**< After the play, when Kody is paused: frame 36 of 72, up with the X, in milliseconds. */
 #define KGUI_FAULT_KODY_WAIT_MS   5000U  /**< The most the card waits for the pack's fault animation to be read since it became due, in milliseconds. */
+#if CONFIG_KODEOS_DUMP_HTTP
 #define KGUI_FAULT_SENT_MS        1500U  /**< How long "Report sent" stays before the card leaves, in milliseconds. */
 #define KGUI_FAULT_SEND_GUARD_MS 75000U  /**< The most the card waits for AO_Net's answer to a send, in milliseconds: longer than KODE_NET_GUARD_MS, within which AO_Net answers every request it took, so it covers only an answer lost on its way. */
+#endif
 
 #define KGUI_FAULT_KEY           "fault" /**< The record's byte: a u8 in the kgui NVS namespace, kgui_fault_pack()'s. */
 
@@ -110,6 +116,7 @@ typedef enum {
  */
 kgui_fault_verdict_t kgui_fault_verdict(const kgui_fault_net_t *n);
 
+#if CONFIG_KODEOS_DUMP_HTTP
 /**
  * @brief Read a radio not heard yet this boot as one on its way.
  *
@@ -123,6 +130,7 @@ kgui_fault_verdict_t kgui_fault_verdict(const kgui_fault_net_t *n);
  * @param chan_heard The channel's state was heard this boot.
  */
 void kgui_fault_net_unheard(kgui_fault_net_t *n, bool wifi_heard, bool chan_heard);
+#endif
 
 /* ---- The notice -------------------------------------------------------------------- */
 
@@ -134,6 +142,7 @@ typedef enum {
     KGUI_FAULT_FACE_FAILED       /**< "Couldn't send the report", Close and Retry. */
 } kgui_fault_face_t;
 
+#if CONFIG_KODEOS_DUMP_HTTP
 /** @brief How a send ended, as the card reads AO_Net's answer. */
 typedef enum {
     KGUI_FAULT_SEND_OK = 0,     /**< The service took the report. */
@@ -167,6 +176,7 @@ typedef enum {
     KGUI_FAULT_DO_CLOSE,        /**< Close, or any press on "Report sent": the card closes. */
     KGUI_FAULT_DO_REFUSED       /**< Send or Retry pressed by a remote line: the card stays. */
 } kgui_fault_do_t;
+#endif
 
 /** @brief Where the notice stands. */
 typedef struct {
@@ -223,6 +233,7 @@ void kgui_fault_answered(kgui_fault_t *f);
  */
 bool kgui_fault_yields(uint8_t face);
 
+#if CONFIG_KODEOS_DUMP_HTTP
 /**
  * @brief The card's words for how a send ended.
  * @param result A kgui_fault_send_t.
@@ -279,6 +290,7 @@ kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool re
  * @return The step.
  */
 kgui_fault_step_t kgui_fault_face_step(uint8_t face, uint32_t since_ms);
+#endif
 
 #ifdef __cplusplus
 }

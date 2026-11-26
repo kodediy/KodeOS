@@ -95,6 +95,7 @@ kgui_fault_verdict_t kgui_fault_verdict(const kgui_fault_net_t *n)
     return verdict;
 }
 
+#if CONFIG_KODEOS_DUMP_HTTP
 void kgui_fault_net_unheard(kgui_fault_net_t *n, bool wifi_heard, bool chan_heard)
 {
     if ( NULL != n )
@@ -109,6 +110,7 @@ void kgui_fault_net_unheard(kgui_fault_net_t *n, bool wifi_heard, bool chan_hear
         }
     }
 }
+#endif
 
 void kgui_fault_begin(kgui_fault_t *f, bool kept, uint8_t kept_byte,
                       kgui_fault_rec_t boot, uint32_t now_ms)
@@ -179,6 +181,7 @@ bool kgui_fault_yields(uint8_t face)
            || ((uint8_t)KGUI_FAULT_FACE_FAILED == face);
 }
 
+#if CONFIG_KODEOS_DUMP_HTTP
 const char *kgui_fault_send_words(uint8_t result)
 {
     const char *words = KGUI_FAULT_WHY_NO_ANSWER;
@@ -322,3 +325,5 @@ kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool re
     }
     return act;
 }
+
+#endif

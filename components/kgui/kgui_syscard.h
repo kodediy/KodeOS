@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "sdkconfig.h" /* CONFIG_KODEOS_DUMP_HTTP */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +54,7 @@ const char *kgui_stopped_reason(int end);
 /* ---- kodeOS's own fault ---------------------------------------------------- */
 
 #define KGUI_FAULT_NAME        "kodeOS restarted"       /**< The fault notice's name; its second line is the Stopped card's why. */
+#if CONFIG_KODEOS_DUMP_HTTP
 #define KGUI_FAULT_REPORT      "A report is a copy of kodeOS's memory." /**< The notice's line when it offers to send the report: two lines of the body face. */
 #define KGUI_FAULT_REPORT_SEND "Send"                   /**< The notice's right pill, beside OK: it sends the report. */
 #define KGUI_FAULT_SENDING     "Sending report..."      /**< The card while the report goes. */
@@ -61,6 +64,7 @@ const char *kgui_stopped_reason(int end);
 #define KGUI_FAULT_WHY_NO_ANSWER "No answer"            /**< Why: no answer came. */
 #define KGUI_FAULT_WHY_CHANNEL "No connection"          /**< Why: the channel is down or names no link for reports. */
 #define KGUI_FAULT_WHY_NONE    "Nothing to send"        /**< Why: no dump of a kodeOS image is in flash. */
+#endif
 
 /* ---- The battery ----------------------------------------------------------- */
 
