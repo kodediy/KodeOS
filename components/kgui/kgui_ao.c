@@ -30837,9 +30837,11 @@ static void gui_rest_knock(Gui * const me, bool on)
  * rests on the glass or a button is held down, while a card is up (but a
  * card that rose with nobody asking, which the door takes down,
  * gui_sheet_events()) or a write
- * runs or a curtain moves, and while a look waits or plays, which is Kody's
- * answer to an input. While a cable keeps the Lock awake (`usb_awake` with
- * VBUS present) nothing is asked and the count is left as it stands, so the
+ * runs or a curtain moves, and while a look waits or plays with no card over
+ * the face, which is Kody's answer to an input: a card pauses Kody without
+ * ending the look he took, so under one that rose unasked the look would hold
+ * the count for as long as the card stays. While a cable keeps the Lock
+ * awake (`usb_awake` with VBUS present) nothing is asked and the count is left as it stands, so the
  * day the cable's hold ends - the setting off, the cable out - the time is
  * judged from the last input: a Lock idle for longer than that rests at once.
  * The time is gui_rest_after_ms(); set to
@@ -30854,7 +30856,7 @@ static void gui_rest_check(Gui * const me)
     uint32_t const after = gui_rest_after_ms(me);
     bool           look  = false;
 
-    if ( NULL != me->face_kody )
+    if ( (NULL != me->face_kody) && (GUI_SHEET_NONE == me->sheet) )
     {
         look = kui_kody_is_reacting(me->face_kody);
     }
