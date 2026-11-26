@@ -151,6 +151,23 @@ typedef enum {
     KGUI_FAULT_STEP_CLOSE       /**< "Report sent" has been read: the card leaves. */
 } kgui_fault_step_t;
 
+/** @brief Where on the card a press landed. */
+typedef enum {
+    KGUI_FAULT_PILL_LEFT = 0,   /**< The left pill of a pair: OK beside Send, Close beside Retry. */
+    KGUI_FAULT_PILL_ANSWER,     /**< The answer pill: the notice's one OK, Send, or Retry. */
+    KGUI_FAULT_PILL_NONE        /**< No pill: the glass, the pad, or TOP with no pill standing. */
+} kgui_fault_pill_t;
+
+/** @brief What a press does on the card. */
+typedef enum {
+    KGUI_FAULT_DO_NOTHING = 0,  /**< Nothing: no pill stands where it landed. */
+    KGUI_FAULT_DO_ANSWER,       /**< OK: the notice is answered and the card closes. */
+    KGUI_FAULT_DO_SEND,         /**< Send: the notice is answered and the report goes. */
+    KGUI_FAULT_DO_RETRY,        /**< Retry: the report goes again. */
+    KGUI_FAULT_DO_CLOSE,        /**< Close, or any press on "Report sent": the card closes. */
+    KGUI_FAULT_DO_REFUSED       /**< Send or Retry pressed by a remote line: the card stays. */
+} kgui_fault_do_t;
+
 /** @brief Where the notice stands. */
 typedef struct {
     kgui_fault_rec_t rec;     /**< What is owed. */
@@ -228,6 +245,26 @@ const char *kgui_fault_send_words(uint8_t result);
  * @return true when the answer was taken; false for a NULL @p face.
  */
 bool kgui_fault_on_answer(uint8_t *face, bool card_up, uint8_t result);
+
+/**
+ * @brief What a press on the card does.
+ *
+ * Nothing leaves the board without a person's press: Send and Retry pressed
+ * by a remote line (a console line from the Kode channel or a scheduled
+ * entry) are refused, and the card stays as it is. OK and Close answer any
+ * press. On the notice the left pill is OK and the answer pill Send when the
+ * send is offered, OK alone when not; on the failure they are Close and
+ * Retry. "Report sent" closes at any press; while the report goes no pill
+ * stands.
+ *
+ * @param face   A kgui_fault_face_t.
+ * @param offer  The notice offers the send (a pair, OK and Send).
+ * @param pill   A kgui_fault_pill_t.
+ * @param remote A remote line made the press.
+ * @return What the press does; KGUI_FAULT_DO_NOTHING for any other face or
+ *         pill.
+ */
+kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool remote);
 
 /**
  * @brief What the clock asks of a face that has stood @p since_ms.

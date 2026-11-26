@@ -408,6 +408,109 @@ void test_the_notice_and_the_failure_wait_for_a_person(void)
     TEST_ASSERT_EQUAL(KGUI_FAULT_STEP_STAY, kgui_fault_face_step(4U, 0xFFFFFFFFU));
 }
 
+/** The press on the card, as kgui_fault_press() reads it. */
+static kgui_fault_do_t press(kgui_fault_face_t face, bool offer, kgui_fault_pill_t pill,
+                             bool remote)
+{
+    return kgui_fault_press((uint8_t)face, offer, (uint8_t)pill, remote);
+}
+
+void test_a_person_sends_the_report_from_the_notice(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_SEND,
+                      press(KGUI_FAULT_FACE_NOTICE, true, KGUI_FAULT_PILL_ANSWER, false));
+}
+
+void test_a_remote_send_is_refused(void)
+{
+    /* The first refusal: Send pressed by a line from the channel or a cron. */
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_REFUSED,
+                      press(KGUI_FAULT_FACE_NOTICE, true, KGUI_FAULT_PILL_ANSWER, true));
+}
+
+void test_a_person_retries_from_the_failure(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_RETRY,
+                      press(KGUI_FAULT_FACE_FAILED, false, KGUI_FAULT_PILL_ANSWER, false));
+    /* The notice's offer is no part of the failure. */
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_RETRY,
+                      press(KGUI_FAULT_FACE_FAILED, true, KGUI_FAULT_PILL_ANSWER, false));
+}
+
+void test_a_remote_retry_is_refused(void)
+{
+    /* The second refusal: Retry pressed by a remote line. */
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_REFUSED,
+                      press(KGUI_FAULT_FACE_FAILED, false, KGUI_FAULT_PILL_ANSWER, true));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_REFUSED,
+                      press(KGUI_FAULT_FACE_FAILED, true, KGUI_FAULT_PILL_ANSWER, true));
+}
+
+void test_ok_answers_the_notice_whoever_presses(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_ANSWER,
+                      press(KGUI_FAULT_FACE_NOTICE, true, KGUI_FAULT_PILL_LEFT, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_ANSWER,
+                      press(KGUI_FAULT_FACE_NOTICE, true, KGUI_FAULT_PILL_LEFT, true));
+    /* OK alone is the answer pill. */
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_ANSWER,
+                      press(KGUI_FAULT_FACE_NOTICE, false, KGUI_FAULT_PILL_ANSWER, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_ANSWER,
+                      press(KGUI_FAULT_FACE_NOTICE, false, KGUI_FAULT_PILL_ANSWER, true));
+}
+
+void test_close_leaves_the_failure_whoever_presses(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_CLOSE,
+                      press(KGUI_FAULT_FACE_FAILED, false, KGUI_FAULT_PILL_LEFT, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_CLOSE,
+                      press(KGUI_FAULT_FACE_FAILED, false, KGUI_FAULT_PILL_LEFT, true));
+}
+
+void test_the_sent_card_closes_at_any_press(void)
+{
+    kgui_fault_pill_t const pills[] = { KGUI_FAULT_PILL_LEFT, KGUI_FAULT_PILL_ANSWER,
+                                        KGUI_FAULT_PILL_NONE };
+    uint32_t i;
+
+    for ( i = 0U; i < (sizeof(pills) / sizeof(pills[0])); i++ )
+    {
+        TEST_ASSERT_EQUAL(KGUI_FAULT_DO_CLOSE, press(KGUI_FAULT_FACE_SENT, false, pills[i], false));
+        TEST_ASSERT_EQUAL(KGUI_FAULT_DO_CLOSE, press(KGUI_FAULT_FACE_SENT, false, pills[i], true));
+    }
+}
+
+void test_a_press_off_the_pills_does_nothing_elsewhere(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      press(KGUI_FAULT_FACE_NOTICE, true, KGUI_FAULT_PILL_NONE, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      press(KGUI_FAULT_FACE_FAILED, false, KGUI_FAULT_PILL_NONE, false));
+    /* The notice with OK alone has no left pill. */
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      press(KGUI_FAULT_FACE_NOTICE, false, KGUI_FAULT_PILL_LEFT, false));
+}
+
+void test_no_pill_stands_while_the_report_goes(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      press(KGUI_FAULT_FACE_SENDING, true, KGUI_FAULT_PILL_LEFT, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      press(KGUI_FAULT_FACE_SENDING, true, KGUI_FAULT_PILL_ANSWER, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      press(KGUI_FAULT_FACE_SENDING, true, KGUI_FAULT_PILL_NONE, true));
+}
+
+void test_a_face_or_pill_that_is_none_does_nothing(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      kgui_fault_press(4U, true, (uint8_t)KGUI_FAULT_PILL_ANSWER, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      kgui_fault_press((uint8_t)KGUI_FAULT_FACE_NOTICE, true, 3U, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING,
+                      kgui_fault_press((uint8_t)KGUI_FAULT_FACE_SENT, true, 3U, false));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -439,5 +542,15 @@ int main(void)
     RUN_TEST(test_a_send_with_no_answer_fails_at_the_guard);
     RUN_TEST(test_the_sent_card_leaves_by_itself);
     RUN_TEST(test_the_notice_and_the_failure_wait_for_a_person);
+    RUN_TEST(test_a_person_sends_the_report_from_the_notice);
+    RUN_TEST(test_a_remote_send_is_refused);
+    RUN_TEST(test_a_person_retries_from_the_failure);
+    RUN_TEST(test_a_remote_retry_is_refused);
+    RUN_TEST(test_ok_answers_the_notice_whoever_presses);
+    RUN_TEST(test_close_leaves_the_failure_whoever_presses);
+    RUN_TEST(test_the_sent_card_closes_at_any_press);
+    RUN_TEST(test_a_press_off_the_pills_does_nothing_elsewhere);
+    RUN_TEST(test_no_pill_stands_while_the_report_goes);
+    RUN_TEST(test_a_face_or_pill_that_is_none_does_nothing);
     return UNITY_END();
 }

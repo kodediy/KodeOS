@@ -249,3 +249,76 @@ kgui_fault_step_t kgui_fault_face_step(uint8_t face, uint32_t since_ms)
     }
     return step;
 }
+
+/**
+ * @brief The answer pill's press: what it asks for, or the refusal when a
+ *        remote line made it.
+ * @param asks   What the pill asks for: send or retry.
+ * @param remote A remote line made the press.
+ * @return @p asks, or KGUI_FAULT_DO_REFUSED.
+ */
+static kgui_fault_do_t fault_send_press(kgui_fault_do_t asks, bool remote)
+{
+    kgui_fault_do_t act = asks;
+
+    if ( remote )
+    {
+        act = KGUI_FAULT_DO_REFUSED;
+    }
+    return act;
+}
+
+kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool remote)
+{
+    kgui_fault_do_t act = KGUI_FAULT_DO_NOTHING;
+
+    if ( (uint8_t)KGUI_FAULT_FACE_SENT == face )
+    {
+        if ( (uint8_t)KGUI_FAULT_PILL_NONE >= pill )
+        {
+            act = KGUI_FAULT_DO_CLOSE;
+        }
+    }
+    else if ( (uint8_t)KGUI_FAULT_FACE_NOTICE == face )
+    {
+        if ( (uint8_t)KGUI_FAULT_PILL_ANSWER == pill )
+        {
+            if ( offer )
+            {
+                act = fault_send_press(KGUI_FAULT_DO_SEND, remote);
+            }
+            else
+            {
+                act = KGUI_FAULT_DO_ANSWER;
+            }
+        }
+        else if ( ((uint8_t)KGUI_FAULT_PILL_LEFT == pill) && offer )
+        {
+            act = KGUI_FAULT_DO_ANSWER;
+        }
+        else
+        {
+            /* Off the pills, or a left pill that does not stand. */
+        }
+    }
+    else if ( (uint8_t)KGUI_FAULT_FACE_FAILED == face )
+    {
+        if ( (uint8_t)KGUI_FAULT_PILL_ANSWER == pill )
+        {
+            act = fault_send_press(KGUI_FAULT_DO_RETRY, remote);
+        }
+        else if ( (uint8_t)KGUI_FAULT_PILL_LEFT == pill )
+        {
+            act = KGUI_FAULT_DO_CLOSE;
+        }
+        else
+        {
+            /* Off the pills. */
+        }
+    }
+    else
+    {
+        /* Sending, or no face: no pill stands. */
+    }
+    return act;
+}

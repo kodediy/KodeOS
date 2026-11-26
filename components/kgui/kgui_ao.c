@@ -1901,6 +1901,8 @@ typedef struct {
     int16_t   touch_x;
     int16_t   touch_y;
     bool      touch_pressed;
+    bool      touch_remote;  /**< A remote line injected the press on the glass that is down, or the last one that lifted (TouchEvt.remote of any of its samples). */
+    bool      btn_remote;    /**< A remote line injected the button event being handled (ButtonEvt.remote). */
 
     /* The scanned files, KODE_APP_LIST_MAX of them, in PSRAM: taken once by
      * gui_lists_alloc() and never freed, because at 64 rows the two lists
@@ -3398,7 +3400,7 @@ static void gui_sheet_code(Gui * const me, const char *digits,
 static void gui_sheet_action(Gui * const me, const char *word,
                              GuiActRole role);
 static lv_obj_t *gui_sheet_action_btn(Gui const * const me);
-static void gui_sheet_action_act(Gui * const me);
+static void gui_sheet_action_act(Gui * const me, bool remote);
 static void gui_sheet_pair(Gui * const me, const char *keep_word, GuiActRole keep_role,
                            const char *act_word, GuiActRole act_role, bool act_dim);
 static void gui_pair_focus(Gui * const me, uint8_t which);
@@ -3570,8 +3572,9 @@ static bool gui_sheet_unasked(Gui const * const me);
 static void gui_fault_fill(Gui * const me);
 static void gui_fault_answer(Gui * const me, const char *what);
 static bool gui_fault_sent_up(Gui const * const me);
+static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
+                                 const char *what);
 #if CONFIG_KODEOS_DUMP_HTTP
-static bool gui_fault_send_act(Gui * const me);
 static void gui_fault_report_answer(Gui * const me, NetDumpRspEvt const * const r);
 #endif
 static void gui_fault_info(Gui const * const me);
@@ -9624,6 +9627,14 @@ static void gui_gesture_end(Gui * const me, int32_t x, int32_t y)
             {
                 count->taps = gui_count_up(count->taps);
                 gui_face_tap(me);
+#if CONFIG_KODEOS_DUMP_HTTP
+                if ( gui_fault_sent_up(me) && gui_syscard_input_open(me) )
+                {
+                    /* "Report sent" leaves at any press, a tap anywhere on
+                     * the glass included: it stands no pill. */
+                    gui_fault_pill_press(me, KGUI_FAULT_PILL_NONE, me->touch_remote, "a tap");
+                }
+#endif
             }
             break;
         }
@@ -18875,7 +18886,8 @@ static bool gui_ring_hidden_press(Gui const * const me, kdrv_button_t b, bool pr
  * the face, the launcher, the settings screen and a card over any of them -
  * so btn_held follows the hand across a screen change: a button pressed on
  * one screen and let go on another clears its bit where it is let go. A press
- * also brings the focus rings back (gui_pad_mode()). The
+ * also brings the focus rings back (gui_pad_mode()), and every edge notes
+ * whether a remote line injected it (`btn_remote`). The
  * guided tests hear no edge of their own, and clear the lot as they take the
  * glass.
  *
@@ -18884,6 +18896,9 @@ static bool gui_ring_hidden_press(Gui const * const me, kdrv_button_t b, bool pr
  */
 static void gui_btn_track(Gui * const me, ButtonEvt const * const b)
 {
+    /* Who made this edge: whatever acts on it reads the mark, and the next
+     * edge writes its own, so a remote one never sticks. */
+    me->btn_remote = b->remote;
     if ( (uint8_t)KDRV_BTN_COUNT > b->id )
     {
         uint8_t const bit = (uint8_t)(1U << b->id);
@@ -20550,11 +20565,17 @@ static void gui_sheet_keep_act(Gui * const me)
         KLOG_D(TAG, "sheet: the card is already leaving; this answer is ignored");
         return;
     }
+    if ( GUI_SHEET_FAULT == me->sheet )
+    {
+        /* The fault notice's OK beside Send, or Close beside Retry: they
+         * answer any press (kgui_fault_press()), so the press is judged as the
+         * strictest source would be, a remote line's. */
+        gui_fault_pill_press(me, KGUI_FAULT_PILL_LEFT, true, "the left pill");
+        return;
+    }
     me->pair_done = true;
     (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
     KLOG_D(TAG, "sheet: the left pill keeps; the card closes");
-    /* The fault notice's OK beside Send, or Close beside Retry. */
-    gui_fault_answer(me, "the left pill");
     gui_sheet_close(me);
 }
 
@@ -20565,10 +20586,21 @@ static void gui_sheet_keep_act(Gui * const me)
  * the listing sheets have one case per row tag, so a sheet's answer lives
  * beside the sentence that asked for it.
  *
- * @param me The AO.
+ * The fault notice's answer is decided by kgui_fault_press(), and a remote
+ * line's press is refused what needs a person (gui_fault_pill_press()).
+ *
+ * @param me     The AO.
+ * @param remote A remote line made the press: ButtonEvt.remote of the
+ *               release that acts, or TouchEvt.remote of the tap.
  */
-static void gui_sheet_action_act(Gui * const me)
+static void gui_sheet_action_act(Gui * const me, bool remote)
 {
+    if ( GUI_SHEET_FAULT == me->sheet )
+    {
+        /* Before the buzz: a refused press buzzes nothing. */
+        gui_fault_pill_press(me, KGUI_FAULT_PILL_ANSWER, remote, "the answer pill");
+        return;
+    }
     if ( GUI_SHEET_UPDATE != me->sheet )
     {
         /* The card at boot buzzes by what its button did (gui_update_act()). */
@@ -20662,21 +20694,6 @@ static void gui_sheet_action_act(Gui * const me)
             /* Update: About's install of the release the card names; grey,
              * the log says why and the card stays (gui_update_act()). */
             gui_update_act(me);
-            break;
-        }
-        case GUI_SHEET_FAULT: {
-            /* Send and Retry ask for the report (gui_fault_send_act());
-             * OK answers the notice, and the card goes. */
-            bool took = false;
-
-#if CONFIG_KODEOS_DUMP_HTTP
-            took = gui_fault_send_act(me);
-#endif
-            if ( !took )
-            {
-                gui_fault_answer(me, "OK");
-                gui_sheet_close(me);
-            }
             break;
         }
         default: {
@@ -27215,43 +27232,6 @@ static void gui_fault_send(Gui * const me)
 }
 
 /**
- * @brief The fault notice's right pill: Send on the notice, Retry on the
- *        failure.
- *
- * Send answers the notice first (gui_fault_answer()): the record is
- * erased and the notice never rises again, whatever the send's end.
- *
- * @param me The AO.
- * @return true when the press was taken here; false for the notice's one OK,
- *         which the caller answers.
- */
-static bool gui_fault_send_act(Gui * const me)
-{
-    kgui_fault_face_t const face = (kgui_fault_face_t)me->fault_face;
-    bool                    took = true;
-
-    if ( (KGUI_FAULT_FACE_NOTICE == face) && me->fault_offer )
-    {
-        gui_fault_answer(me, "Send");
-        gui_fault_send(me);
-    }
-    else if ( KGUI_FAULT_FACE_FAILED == face )
-    {
-        KLOG_N(TAG, "fault: Retry sends the report again");
-        gui_fault_send(me);
-    }
-    else if ( KGUI_FAULT_FACE_NOTICE == face )
-    {
-        took = false;    /* the notice's OK alone */
-    }
-    else
-    {
-        /* Sending or sent: no pill stands on the glass. */
-    }
-    return took;
-}
-
-/**
  * @brief How a send ended: the card turns to "Report sent" or to why not.
  *
  * Taken only by the card on the glass with the sending face
@@ -27326,6 +27306,64 @@ static void gui_fault_send_tick(Gui * const me)
     }
 }
 #endif
+
+/**
+ * @brief A press on the fault notice does what kgui_fault_press() says: OK
+ *        answers the notice and Close the failure, and the card closes, as it
+ *        does at any press on "Report sent"; Send and Retry send the report.
+ *
+ * Send or Retry pressed by a remote line leaves the card as it is: one
+ * NOTICE in the log, no buzz, no words on the glass. Nothing leaves the board
+ * without a person's press.
+ *
+ * @param me     The AO, the fault notice on the glass.
+ * @param pill   Where the press landed.
+ * @param remote A remote line made the press (ButtonEvt.remote,
+ *               TouchEvt.remote).
+ * @param what   What was pressed, for the log.
+ */
+static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
+                                 const char *what)
+{
+    bool const offer = me->fault_offer;
+    kgui_fault_do_t const act = kgui_fault_press(me->fault_face, offer, (uint8_t)pill, remote);
+
+    switch ( act )
+    {
+        case KGUI_FAULT_DO_ANSWER:
+        case KGUI_FAULT_DO_CLOSE: {
+            me->pair_done = true;
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+            gui_fault_answer(me, what);
+            gui_sheet_close(me);
+            break;
+        }
+#if CONFIG_KODEOS_DUMP_HTTP
+        case KGUI_FAULT_DO_SEND: {
+            /* The notice is answered first: the record is erased and the
+             * notice never rises again, whatever the send's end. */
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+            gui_fault_answer(me, what);
+            gui_fault_send(me);
+            break;
+        }
+        case KGUI_FAULT_DO_RETRY: {
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+            KLOG_N(TAG, "fault: %s sends the report again", what);
+            gui_fault_send(me);
+            break;
+        }
+#endif
+        case KGUI_FAULT_DO_REFUSED: {
+            KLOG_N(TAG, "fault: a remote press does not send a report (%s)", what);
+            break;
+        }
+        default: {
+            /* No pill stands where the press landed. */
+            break;
+        }
+    }
+}
 
 /**
  * @brief Whether the card on the glass rose with nobody asking: the card at
@@ -28891,7 +28929,7 @@ static void on_sheet_action_clicked(lv_event_t *e)
     {
         return;
     }
-    gui_sheet_action_act(&l_gui);
+    gui_sheet_action_act(&l_gui, l_gui.touch_remote);
 }
 
 /**
@@ -29080,11 +29118,6 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
             gui_fault_answer(me, "the bottom button");
             gui_sheet_close(me);
         }
-        else if ( gui_fault_sent_up(me) )
-        {
-            /* "Report sent" leaves at any press. */
-            gui_sheet_close(me);
-        }
 #if CONFIG_KODEOS_WIFI
         else if ( GUI_SHEET_KEYPAD == me->sheet )
         {
@@ -29099,7 +29132,12 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
             }
             else if ( gui_sheet_action_btn(me) != NULL )
             {
-                gui_sheet_action_act(me);
+                gui_sheet_action_act(me, me->btn_remote);
+            }
+            else if ( GUI_SHEET_FAULT == me->sheet )
+            {
+                /* No pill on the glass: "Report sent" leaves at any press. */
+                gui_fault_pill_press(me, KGUI_FAULT_PILL_NONE, me->btn_remote, "the top button");
             }
             else
             {
@@ -29124,12 +29162,14 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
         return;
     }
 #endif
+#if CONFIG_KODEOS_DUMP_HTTP
     if ( gui_fault_sent_up(me) )
     {
         /* "Report sent" leaves at any press, the pad's included. */
-        gui_sheet_close(me);
+        gui_fault_pill_press(me, KGUI_FAULT_PILL_NONE, me->btn_remote, "the pad");
         return;
     }
+#endif
     if ( speaks )
     {
         /* One answer wears the ring and the pad has nowhere to move it; a
@@ -36259,6 +36299,8 @@ void Gui_ctor(void)
     me->fault_kody      = NULL;
     me->fault_kody_live = false;
     me->fault_kody_ms   = 0U;
+    me->touch_remote    = false;
+    me->btn_remote      = false;
 #if CONFIG_KODEOS_DUMP_HTTP
     me->fault_face_ms    = 0U;
     me->fault_why        = (uint8_t)KGUI_FAULT_SEND_OK;
@@ -37207,6 +37249,15 @@ static QState Gui_running(Gui * const me, QEvt const * const e)
                  * was already whole on the glass - must not swallow the end
                  * of the drag starting here. */
                 me->sheet_placed = false;
+                /* Who made this press: a new press starts from its own
+                 * mark, so a remote one never sticks to the next. */
+                me->touch_remote = t->remote;
+            }
+            else
+            {
+                /* Any remote sample marks the press it belongs to, its
+                 * lift included: the click LVGL raises from it reads that. */
+                me->touch_remote = me->touch_remote || t->remote;
             }
             /* The recognizer sees every sample before LVGL reads it
              * (gui_gesture_feed()), and every door and every tap is its:
