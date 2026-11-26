@@ -3125,9 +3125,6 @@ typedef struct {
     QTimeEvt c5_again;       /**< The radio's question goes out again (KGUI_OSREL_BOOT_AGAIN_MS). */
     kgui_fault_t fault;      /**< The fault notice: what is owed and whether it is due. */
     uint8_t  fault_face;     /**< kgui_fault_face_t: what the notice's card shows. */
-    uint8_t  fault_verdict;  /**< kgui_fault_verdict_t taken when the card was asked for, kept while it is up. */
-    bool     fault_dump_read;/**< The core dump was looked at once this boot. */
-    bool     fault_dump_ok;  /**< ...and one of a kodeOS image is in flash. */
     lv_obj_t *fault_kody;    /**< The card band's player: made the first time the card is filled, kept. */
     bool     fault_kody_live;/**< It plays, to be paused KGUI_FAULT_HOLD_MS after the play. */
     uint32_t fault_kody_ms;  /**< When the play began. */
@@ -26726,17 +26723,17 @@ static kgui_fault_chan_t gui_fault_chan(uint8_t state)
 #endif
 
 /**
- * @brief What the notice's verdict is decided from, now.
+ * @brief What the notice's verdict is decided from, now: the record's word on
+ *        the dump, the radios, the channel and the time waited.
  *
- * The dump is looked for in flash once a boot, and only when the record says
- * the fault left one: it counts when it is there and is a kodeOS image's.
- * This build sends no report, so the verdict is OK alone.
+ * Nothing in this build sends a report (`built` is false), so the verdict is
+ * OK alone.
  *
  * @param me        The AO.
  * @param waited_ms Since the notice became due, in milliseconds.
  * @param n         Receives it.
  */
-static void gui_fault_net(Gui * const me, uint32_t waited_ms, kgui_fault_net_t *n)
+static void gui_fault_net(Gui const * const me, uint32_t waited_ms, kgui_fault_net_t *n)
 {
 #if CONFIG_KODEOS_CHANNEL
     kgui_fault_chan_t const chan = gui_fault_chan(me->chan_state);
@@ -26744,22 +26741,10 @@ static void gui_fault_net(Gui * const me, uint32_t waited_ms, kgui_fault_net_t *
     kgui_fault_chan_t const chan = KGUI_FAULT_CHAN_NEVER;    /* no channel in the build */
 #endif
 
-    n->dump = false;
-    if ( me->fault.rec.dump )
-    {
-        if ( !me->fault_dump_read )
-        {
-            kdrv_coredump_t cd;
-
-            (void)memset(&cd, 0, sizeof(cd));
-            me->fault_dump_read = true;
-            me->fault_dump_ok   = (kdrv_slot_coredump(&cd) == KODE_OK) && cd.present && cd.kodeos;
-        }
-        n->dump = me->fault_dump_ok;
-    }
-    n->built   = false;
-    n->wifi_on = me->wifi_on;
-    n->chan    = (uint8_t)chan;
+    n->dump      = me->fault.rec.dump;
+    n->built     = false;
+    n->wifi_on   = me->wifi_on;
+    n->chan      = (uint8_t)chan;
     n->link      = false;
     n->waited_ms = waited_ms;
 }
@@ -26783,8 +26768,7 @@ static bool gui_fault_glass_free(Gui const * const me)
  *
  * It waits on a free glass only for the pack's animation, while it is still
  * being read, KGUI_FAULT_KODY_WAIT_MS at most, and for the channel while the
- * verdict says so. The verdict taken here is the card's while it is up.
- * Posted (gui_sheet_open_kind()), and asked again where the open is
+ * verdict says so. Posted (gui_sheet_open_kind()), and asked again where the open is
  * answered (gui_sheet_open_taken()): a card refused there stays due.
  *
  * @param me The AO.
@@ -26816,8 +26800,7 @@ static bool gui_fault_tick(Gui * const me)
             verdict = kgui_fault_verdict(&n);
             if ( KGUI_FAULT_WAIT != verdict )
             {
-                me->fault_verdict = (uint8_t)verdict;
-                me->fault_face    = (uint8_t)KGUI_FAULT_FACE_NOTICE;
+                me->fault_face = (uint8_t)KGUI_FAULT_FACE_NOTICE;
                 gui_sheet_open_kind(me, GUI_SHEET_FAULT);
                 asked = true;
             }
@@ -35878,9 +35861,6 @@ void Gui_ctor(void)
     me->sys.shown       = (uint8_t)KGUI_SYS_FIGURE_NONE;
     (void)memset(&me->fault, 0, sizeof(me->fault));
     me->fault_face      = (uint8_t)KGUI_FAULT_FACE_NOTICE;
-    me->fault_verdict   = (uint8_t)KGUI_FAULT_RISE_OK;
-    me->fault_dump_read = false;
-    me->fault_dump_ok   = false;
     me->fault_kody      = NULL;
     me->fault_kody_live = false;
     me->fault_kody_ms   = 0U;
