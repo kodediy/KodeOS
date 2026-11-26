@@ -73,12 +73,12 @@ LV_FONT_DECLARE(kgui_font_figure_128);
 #define KGUI_SYS_ASK_TITLE_N  2     /**< Lines a question's title may take: the rest is dotted. */
 #define KGUI_SYS_ASK_BODY_N   3     /**< Lines a question's body may take. */
 #define KGUI_SYS_FIGURE_NONE  255U  /**< The share the figure shows when it shows none. */
-#define KGUI_SYS_BAND_Y       24    /**< The top of the band on a card: its middle is the protagonist's. */
 #define KGUI_SYS_BAND_W       410   /**< The band's width: the pack's card band (KUI_PACK_CARD_W). */
 #define KGUI_SYS_BAND_H       160   /**< ...and its height (KUI_PACK_CARD_H). */
-#define KGUI_SYS_BAND_NAME_X  26    /**< The left of the name in the band's free left half. */
-#define KGUI_SYS_BAND_NAME_W  186   /**< ...and its width: it ends at x 212. */
-#define KGUI_SYS_BAND_NAME_N  2     /**< Lines the name in the band may take: the rest is dotted. */
+#define KGUI_SYS_BAND_Y       (KGUI_SYS_GLASS_H - KGUI_SYS_BAND_H) /**< The top of the band on a card: it stands on the glass's lower edge, where the pack draws Kody coming in. */
+#define KGUI_SYS_BAND_GAP     14    /**< On a card with a band, from the pill's foot to the band's top. */
+#define KGUI_SYS_BAND_PILL_Y  (KGUI_SYS_BAND_Y - KGUI_SYS_PILL_H - KGUI_SYS_BAND_GAP) /**< ...the top of its answer pill, or pair: above the band. */
+#define KGUI_SYS_BAND_ROOM_TOP KGUI_SYS_ASK_Y /**< ...and where the room for its words begins, as a question's title does; the room ends at the pill's top. */
 
 /** @brief The frame's objects. */
 typedef struct {
@@ -95,7 +95,6 @@ typedef struct {
     lv_obj_t   *detail;   /**< The lines under them, three at most, the last one dotted when there is more. */
     lv_obj_t   *note;     /**< A write's small print, under its second line. */
     lv_obj_t   *band;     /**< The band Kody's player stands in. */
-    lv_obj_t   *band_name;/**< The name in the band's free left half. */
     uint8_t     shown;    /**< The share the figure says, or KGUI_SYS_FIGURE_NONE. */
     bool        made;     /**< Every object stands. */
 } kgui_sys_t;
@@ -155,24 +154,19 @@ void kgui_sys_app(kgui_sys_t *s, const kgui_icon_spec_t *look);
 void kgui_sys_glyph(kgui_sys_t *s, const lv_image_dsc_t *img, lv_color_t ink);
 
 /**
- * @brief The protagonist is a band across the card's top, for a player of
- *        the pack's card canvas: the box is shown, empty, and the other
- *        protagonists are taken off.
+ * @brief The protagonist is a band across the card's foot, standing on the
+ *        glass's lower edge, for a player of the pack's card canvas: the box
+ *        is shown, empty, and the other protagonists are taken off.
+ *
+ * The card's words go in the room from KGUI_SYS_BAND_ROOM_TOP to
+ * KGUI_SYS_BAND_PILL_Y, and its answer at KGUI_SYS_BAND_PILL_Y
+ * (kgui_sys_pill_at()).
  *
  * @param s The frame.
  * @return The KGUI_SYS_BAND_W x KGUI_SYS_BAND_H box, at KGUI_SYS_BAND_Y;
  *         NULL when the frame is not made.
  */
 lv_obj_t *kgui_sys_band(kgui_sys_t *s);
-
-/**
- * @brief The card's name in the band's free left half: up to
- *        KGUI_SYS_BAND_NAME_N lines of the name's face, centred down the band.
- *
- * @param s    The frame.
- * @param name The name; NULL or "" takes it away.
- */
-void kgui_sys_band_name(kgui_sys_t *s, const char *name);
 
 /**
  * @brief The protagonist is the red battery, nearly empty.
@@ -295,6 +289,19 @@ void kgui_sys_pair(const lv_obj_t *card, const char *left, const char *right);
  * @param word   What the button says, for the pill's width; NULL keeps it.
  */
 void kgui_sys_pill(const lv_obj_t *card, bool framed, const char *word);
+
+/**
+ * @brief Stand the frame's answer - the pill or the pair - with its top at
+ *        @p top instead of KGUI_SYS_PILL_Y.
+ *
+ * Called after kgui_sys_pill() or kgui_sys_pair(): the row moves whole, so
+ * the focus rings and the touch go with the pills. The next kgui_sys_pill()
+ * or kgui_sys_pair(), and the sheet's clear, put it back.
+ *
+ * @param card The card of the sheet.
+ * @param top  The pills' top.
+ */
+void kgui_sys_pill_at(const lv_obj_t *card, int32_t top);
 
 #ifdef __cplusplus
 }

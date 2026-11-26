@@ -26895,8 +26895,9 @@ static bool gui_fault_kody_play(Gui * const me, const kui_kody_anim_t *anim)
 }
 
 /**
- * @brief Write the fault notice: Kody in the band with the name beside him,
- *        or the X with the name under it, the class's words, and OK.
+ * @brief Write the fault notice: the name and the class's words over OK,
+ *        over Kody in the band on the glass's lower edge; or the X with the
+ *        name, the words and OK under it.
  *
  * Kody plays the pack's fault animation once and is paused with the X on
  * the glass (gui_fault_kody_tick()). With no animation - the pack has none,
@@ -26923,9 +26924,8 @@ static void gui_fault_fill(Gui * const me)
     if ( kody )
     {
         look = "Kody plays";
-        kgui_sys_band_name(&me->sys, KGUI_FAULT_NAME);
-        kgui_sys_text(&me->sys, KGUI_SYS_BAND_Y + KGUI_SYS_BAND_H, KGUI_SYS_ROOM_END,
-                      NULL, words, NULL);
+        kgui_sys_text(&me->sys, KGUI_SYS_BAND_ROOM_TOP, KGUI_SYS_BAND_PILL_Y, KGUI_FAULT_NAME,
+                      words, NULL);
     }
     else
     {
@@ -26935,6 +26935,11 @@ static void gui_fault_fill(Gui * const me)
                       words, NULL);
     }
     gui_sheet_action(me, KGUI_CARD_OK, GUI_ACT_PRIMARY);
+    if ( kody )
+    {
+        /* Over the band, which stands on the glass's lower edge. */
+        kgui_sys_pill_at(me->sheet_card, KGUI_SYS_BAND_PILL_Y);
+    }
     KLOG_N(TAG, "fault: the notice is on the glass (%s), %s",
            gui_fault_class_word((kgui_fault_class_t)me->fault.rec.cls), look);
 }
