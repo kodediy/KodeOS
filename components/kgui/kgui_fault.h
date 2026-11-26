@@ -21,8 +21,6 @@ extern "C" {
 /* ---- The numbers of the notice ----------------------------------------------- */
 
 #define KGUI_FAULT_NET_WAIT_MS   30000U  /**< The most the card waits for the channel since it became due, in milliseconds. */
-#define KGUI_FAULT_SENT_MS        1500U  /**< How long "Report sent" stays before the card leaves, in milliseconds. */
-#define KGUI_FAULT_SEND_GUARD_MS 45000U  /**< The wait for AO_Net's answer to a send before the card says "No answer", in milliseconds. */
 #define KGUI_FAULT_HOLD_MS        1200U  /**< After the play, when Kody is paused: frame 36 of 72, up with the X, in milliseconds. */
 #define KGUI_FAULT_KODY_WAIT_MS   5000U  /**< The most the card waits for the pack's fault animation to be read since it became due, in milliseconds. */
 
