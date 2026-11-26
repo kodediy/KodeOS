@@ -79,7 +79,7 @@
 #include "kgui_wifi.h"     /* the radios' rows' words, and why a join failed */
 #include "kgui_trim.h"     /* a name without the spaces at its ends */
 #include "kgui_selftest.h" /* what the Self-test page says about the last run */
-#include "kgui_syscard.h"  /* the words of the system cards, their plain OK among them, and their decisions */
+#include "kgui_syscard.h"  /* the words of the system cards, the ones they share among them, and their decisions */
 #include "kgui_sysscreen.h" /* the frame of a system screen: protagonist, figure, words, pill */
 #include "kgui_fault.h"    /* the fault notice: the record kept until a person answers */
 #if CONFIG_KODE_TEST_DOT
@@ -1093,7 +1093,6 @@ _Static_assert(sizeof(GuiAssetsCmdEvt) <= sizeof(ConsoleLineEvt),
 #define GUI_WHY_REST_BOT    "bottom released"                /**< What it says of Rest asked for with the bottom button on the face. */
 #define GUI_WHY_REST_IDLE   "kody_sleep"                     /**< What it says of Rest asked for by the time without input. */
 #define GUI_WHY_REST_WOKEN  "woken and left alone"           /**< What it says of Rest asked for again by a Lock that was woken and nothing touched. */
-#define GUI_HINT_ROOM_BUSY  "Busy. Try again"                /**< What an install, Pair new device or a radio's request says when its owner stays busy. */
 #define GUI_HINT_CARD_FULL  "SD card is full"                /**< What the glass says when an app's copy does not fit the card. */
 #define GUI_OFF_IDLE        0U                               /**< The face's red arc is not drawn. */
 #define GUI_OFF_FILL        1U                               /**< It fills while the bottom button stays down. */
@@ -1424,8 +1423,6 @@ typedef enum {
 #define GUI_FORGET_BLE_TITLE   "Forget all devices?"        /**< The paired devices' question's title. */
 #define GUI_FORGET_BLE_BODY    "You'll need to pair them again." /**< ...and its body. */
 #define GUI_FORGET_TITLE_MAX   48U                          /**< Room for the network question's title: the words and a 32 byte name. */
-#define GUI_FAIL_RETRY         "Retry"      /**< The failure screen's right pill when the card was busy: the request is made again. */
-#define GUI_FAIL_CLOSE         "Close"      /**< ...and its left pill: the screen is left. */
 #define GUI_FAIL_TITLE_APP     "Couldn't "  /**< The failure's title of an app, before its verb. */
 #define GUI_FAIL_TITLE_OS      "Couldn't update kodeOS"     /**< The failure's title of a kodeOS update. */
 #define GUI_FAIL_TITLE_RADIO   "Couldn't update the radio"  /**< The failure's title of a radio update. */
@@ -12835,7 +12832,7 @@ static void gui_launch_installed(Gui * const me, uint8_t idx, const char *source
     if ( gui_install_deciding(me) )
     {
         KLOG_I(TAG, "launch refused: %s is being decided already", me->inst_file);
-        kgui_hint(GUI_HINT_ROOM_BUSY);
+        kgui_hint(KGUI_CARD_BUSY);
         return;
     }
     if ( idx >= me->installed_count )
@@ -12934,7 +12931,7 @@ static void gui_launch_selection(Gui * const me, const char *source)
          * file to be installed all belong to the install being decided, and
          * a second Run would take them from it. */
         KLOG_I(TAG, "launch refused: %s is being decided already", me->inst_file);
-        kgui_hint(GUI_HINT_ROOM_BUSY);
+        kgui_hint(KGUI_CARD_BUSY);
         return;
     }
     if ( 0 > me->sel_idx )
@@ -14378,7 +14375,7 @@ static void gui_evict_ask(Gui * const me)
     if ( me->inst_out )
     {
         KLOG_N(TAG, "install: AO_AppMgr has not ended the last question; not asking");
-        gui_install_stop(me, GUI_HINT_ROOM_BUSY);
+        gui_install_stop(me, KGUI_CARD_BUSY);
     }
     else
     {
@@ -14489,7 +14486,7 @@ static void gui_evict_end(Gui * const me, AppEvictEndEvt const * const e)
         }
         else
         {
-            gui_install_stop(me, GUI_HINT_ROOM_BUSY);
+            gui_install_stop(me, KGUI_CARD_BUSY);
         }
     }
     else if ( !e->fits )
@@ -14507,7 +14504,7 @@ static void gui_evict_end(Gui * const me, AppEvictEndEvt const * const e)
          * over its locked card. */
         KLOG_N(TAG, "install: %u app(s) would go, but a write holds the card",
                (unsigned)e->victims);
-        gui_install_stop(me, GUI_HINT_ROOM_BUSY);
+        gui_install_stop(me, KGUI_CARD_BUSY);
     }
     else
     {
@@ -22455,7 +22452,7 @@ static void gui_failure_fill(Gui * const me)
      * the earlier launch last_launch still names. */
     if ( gui_failure_retries(me) && ((uint8_t)KFAIL_BUSY == me->fail_why) )
     {
-        gui_sheet_pair(me, GUI_FAIL_CLOSE, GUI_ACT_NEUTRAL, GUI_FAIL_RETRY, GUI_ACT_PRIMARY, false);
+        gui_sheet_pair(me, KGUI_CARD_CLOSE, GUI_ACT_NEUTRAL, KGUI_CARD_RETRY, GUI_ACT_PRIMARY, false);
     }
     else
     {
@@ -23874,7 +23871,7 @@ static void gui_wifi_leave_tick(Gui * const me)
     {
         me->leave = (uint8_t)GUI_LEAVE_NONE;
         KLOG_I(TAG, "leave of '%s': the radio did not make it", me->wifi_ssid);
-        kgui_hint(GUI_HINT_ROOM_BUSY);
+        kgui_hint(KGUI_CARD_BUSY);
         gui_wifi_link_row(me);
     }
     else if ( ((uint8_t)GUI_LEAVE_OWED == me->leave) && (!me->scan_out) )
@@ -24686,7 +24683,7 @@ static void gui_wifi_chan_switch(Gui * const me)
         /* AO_Net had no room: nothing was asked. */
         KLOG_N(TAG, "the Kode channel's switch refused: AO_Net had no room");
         (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
-        kgui_hint(GUI_HINT_ROOM_BUSY);
+        kgui_hint(KGUI_CARD_BUSY);
     }
     else
     {
@@ -25159,7 +25156,7 @@ static void gui_ble_act(Gui * const me, uint16_t tag)
             /* AO_Radio's queue had no room: nothing was asked, so the row
              * would wait for an answer that never comes. */
             KLOG_N(TAG, "pair new device: AO_Radio is busy");
-            kgui_hint(GUI_HINT_ROOM_BUSY);
+            kgui_hint(KGUI_CARD_BUSY);
         }
     }
     else if ( (uint16_t)GUI_TAG_BLE_FORGET == tag )
@@ -25218,7 +25215,7 @@ static void gui_radio_refused(const char *what)
 {
     KLOG_N(TAG, "%s refused: AO_Radio had no room", what);
     (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
-    kgui_hint(GUI_HINT_ROOM_BUSY);
+    kgui_hint(KGUI_CARD_BUSY);
 }
 #endif
 

@@ -16,6 +16,9 @@ extern "C" {
 /* ---- Every card ------------------------------------------------------------ */
 
 #define KGUI_CARD_OK           "OK"                     /**< A card's plain answer, its one button: the card is left. */
+#define KGUI_CARD_CLOSE        "Close"                  /**< The left pill of a failure that can be tried again: the card is left. */
+#define KGUI_CARD_RETRY        "Retry"                  /**< ...and its right pill: the request is made again. */
+#define KGUI_CARD_BUSY         "Busy. Try again"        /**< What a request says when its owner had no room for it, on a card or a hint. */
 
 /* ---- The app that stopped -------------------------------------------------- */
 

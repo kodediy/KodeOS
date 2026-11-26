@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "kode_defs.h"
+#include "kgui_syscard.h"   /* the word a busy owner's refusal says */
 
 #define DT_BYTES_KB    1024U                  /**< Bytes in a KB. */
 #define DT_BYTES_MB    (1024U * 1024U)        /**< Bytes in a MB. */
@@ -17,7 +18,6 @@
 #define DT_CAT_LONG    "Communication"        /**< The store category too long for the line beside a version and a size. */
 #define DT_CAT_SHORT   "Comms"                /**< What the line says in its place. */
 #define DT_RM_LEFT     "Some files could not be removed" /**< A Remove that left a file or a folder behind. */
-#define DT_RM_BUSY     "Busy. Try again"      /**< A Remove refused by a busy owner. */
 #define DT_RM_NOTHING  "Nothing to remove"    /**< A Remove that found nothing of that name. */
 #define DT_RM_SILENT   "No answer. Try again" /**< A Remove whose files were not looked at. */
 
@@ -185,7 +185,7 @@ const char *kgui_dtext_remove_end(uint8_t status)
     }
     else if ( (uint8_t)KODE_DENIED == status )
     {
-        words = DT_RM_BUSY;
+        words = KGUI_CARD_BUSY;   /* a Remove refused by a busy owner */
     }
     else if ( (uint8_t)KODE_ERROR == status )
     {
