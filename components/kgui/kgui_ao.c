@@ -3406,7 +3406,7 @@ static void gui_sheet_pair(Gui * const me, const char *keep_word, GuiActRole kee
 static void gui_pair_focus(Gui * const me, uint8_t which);
 static void gui_forget_go(Gui * const me);
 static void gui_forget_fill(Gui * const me);
-static void gui_sheet_keep_act(Gui * const me);
+static void gui_sheet_keep_act(Gui * const me, bool remote);
 static void on_sheet_keep_clicked(lv_event_t *e);
 static void gui_more_fill(Gui * const me);
 static void gui_time_fill(Gui * const me);
@@ -3964,7 +3964,7 @@ static void gui_recents_load(Gui * const me);
 static void on_shelf_clicked(lv_event_t *e);
 static void on_shelf_pressed(lv_event_t *e);
 static void gui_list_finish(Gui * const me);
-static void gui_details_act(Gui * const me, kgui_details_pill_t which);
+static void gui_details_act(Gui * const me, kgui_details_pill_t which, bool remote);
 static void gui_remove_go(Gui * const me);
 static void gui_remove_done(Gui * const me, uint8_t status);
 static void gui_remove_tick(Gui * const me);
@@ -13197,7 +13197,7 @@ static void gui_details_tapped(kgui_details_pill_t which)
 
     if ( !me->sheet_locked && gui_click_is_tap("the details' pill") )
     {
-        gui_details_act(me, which);
+        gui_details_act(me, which, me->touch_remote);
     }
 }
 
@@ -13392,10 +13392,11 @@ static void gui_removing_fill(Gui * const me)
  * the question, Keep leaves as the bottom button does and Delete sends the
  * erase (gui_remove_go()).
  *
- * @param me    The AO.
- * @param which The pill: left is Open or Keep, right is Delete.
+ * @param me     The AO.
+ * @param which  The pill: left is Open or Keep, right is Delete.
+ * @param remote A remote line made the press, for Keep (gui_sheet_keep_act()).
  */
-static void gui_details_act(Gui * const me, kgui_details_pill_t which)
+static void gui_details_act(Gui * const me, kgui_details_pill_t which, bool remote)
 {
     if ( me->rm_busy )
     {
@@ -13419,7 +13420,7 @@ static void gui_details_act(Gui * const me, kgui_details_pill_t which)
     }
     else if ( (GUI_SHEET_REMOVE == me->sheet) && (KGUI_DETAILS_PILL_LEFT == which) )
     {
-        gui_sheet_keep_act(me);
+        gui_sheet_keep_act(me, remote);
     }
     else if ( me->rm_out )
     {
@@ -13841,7 +13842,7 @@ static void gui_details_navigate(Gui * const me, kdrv_button_t b, bool pressed)
             me->top_armed = false;
             KLOG_D(TAG, "sheet: top released after %u ms",
                    (unsigned)(khal_time_ms() - me->top_press_ms));
-            gui_details_act(me, kgui_details_focus());
+            gui_details_act(me, kgui_details_focus(), me->btn_remote);
         }
         else
         {
@@ -20556,9 +20557,11 @@ static void gui_pair_focus(Gui * const me, uint8_t which)
  * The same as the bottom button on the card: it closes it, and the card
  * under it is as it was.
  *
- * @param me The AO.
+ * @param me     The AO.
+ * @param remote A remote line made the press: ButtonEvt.remote of the
+ *               release that acts, or TouchEvt.remote of the tap.
  */
-static void gui_sheet_keep_act(Gui * const me)
+static void gui_sheet_keep_act(Gui * const me, bool remote)
 {
     if ( me->pair_done )
     {
@@ -20568,12 +20571,13 @@ static void gui_sheet_keep_act(Gui * const me)
 #if CONFIG_KODEOS_DUMP_HTTP
     if ( GUI_SHEET_FAULT == me->sheet )
     {
-        /* The fault notice's OK beside Send, or Close beside Retry: they
-         * answer any press (kgui_fault_press()), so the press is judged as the
-         * strictest source would be, a remote line's. */
-        gui_fault_pill_press(me, KGUI_FAULT_PILL_LEFT, true, "the left pill");
+        /* The fault notice's OK beside Send, or Close beside Retry
+         * (kgui_fault_press()). */
+        gui_fault_pill_press(me, KGUI_FAULT_PILL_LEFT, remote, "the left pill");
         return;
     }
+#else
+    (void)remote;    /* only the fault notice's pair reads who pressed */
 #endif
     me->pair_done = true;
     (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
@@ -29021,7 +29025,7 @@ static void on_sheet_keep_clicked(lv_event_t *e)
     {
         return;
     }
-    gui_sheet_keep_act(&l_gui);
+    gui_sheet_keep_act(&l_gui, l_gui.touch_remote);
 }
 
 
@@ -29192,7 +29196,7 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
         {
             if ( me->pair_on && ((uint8_t)GUI_PAIR_LEFT == me->pair_focus) )
             {
-                gui_sheet_keep_act(me);
+                gui_sheet_keep_act(me, me->btn_remote);
             }
             else if ( gui_sheet_action_btn(me) != NULL )
             {
