@@ -548,6 +548,33 @@ void test_a_face_or_pill_that_is_none_does_nothing(void)
                       kgui_fault_press((uint8_t)KGUI_FAULT_FACE_SENT, true, 3U, false));
 }
 
+void test_a_person_moves_the_focus_with_the_pad(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_FOCUS, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_NOTICE, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_FOCUS, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_FAILED, false));
+}
+
+void test_a_remote_pad_press_moves_no_focus(void)
+{
+    /* The refusal: a line from the channel or a cron cannot put the focus on
+     * Send or Retry for the person's next TOP. */
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_STILL, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_NOTICE, true));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_STILL, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_FAILED, true));
+}
+
+void test_the_pad_closes_the_sent_card_whoever_presses(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_CLOSE, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_SENT, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_CLOSE, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_SENT, true));
+}
+
+void test_the_pad_does_nothing_while_the_report_goes(void)
+{
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_SENDING, false));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING, kgui_fault_pad((uint8_t)KGUI_FAULT_FACE_SENDING, true));
+    TEST_ASSERT_EQUAL(KGUI_FAULT_DO_NOTHING, kgui_fault_pad(4U, false));
+}
+
 void test_a_pill_is_named_by_what_it_shows(void)
 {
     uint8_t const notice = (uint8_t)KGUI_FAULT_FACE_NOTICE;
@@ -618,6 +645,10 @@ int main(void)
     RUN_TEST(test_a_press_off_the_pills_does_nothing_elsewhere);
     RUN_TEST(test_no_pill_stands_while_the_report_goes);
     RUN_TEST(test_a_face_or_pill_that_is_none_does_nothing);
+    RUN_TEST(test_a_person_moves_the_focus_with_the_pad);
+    RUN_TEST(test_a_remote_pad_press_moves_no_focus);
+    RUN_TEST(test_the_pad_closes_the_sent_card_whoever_presses);
+    RUN_TEST(test_the_pad_does_nothing_while_the_report_goes);
     RUN_TEST(test_a_pill_is_named_by_what_it_shows);
     RUN_TEST(test_no_word_where_no_pill_stands);
     return UNITY_END();

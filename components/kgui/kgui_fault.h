@@ -175,7 +175,9 @@ typedef enum {
     KGUI_FAULT_DO_SEND,         /**< Send: the notice is answered and the report goes. */
     KGUI_FAULT_DO_RETRY,        /**< Retry: the report goes again. */
     KGUI_FAULT_DO_CLOSE,        /**< Close, or any press on "Report sent": the card closes. */
-    KGUI_FAULT_DO_REFUSED       /**< Send or Retry pressed by a remote line: the card stays. */
+    KGUI_FAULT_DO_REFUSED,      /**< Send or Retry pressed by a remote line: the card stays. */
+    KGUI_FAULT_DO_FOCUS,        /**< A pad press: the focus moves between the pair as on any card. */
+    KGUI_FAULT_DO_STILL         /**< A pad press by a remote line: no focus moves and no ring shows. */
 } kgui_fault_do_t;
 #endif
 
@@ -291,6 +293,21 @@ kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool re
  * @return The step.
  */
 kgui_fault_step_t kgui_fault_face_step(uint8_t face, uint32_t since_ms);
+
+/**
+ * @brief What a press of the pad (up, down, left or right) does on the card.
+ *
+ * A remote line moves no focus: otherwise it could put the focus on Send, and
+ * the person's next TOP, meant as OK, would send the report. "Report sent"
+ * closes at any press; while the report goes the pad does nothing.
+ *
+ * @param face   A kgui_fault_face_t.
+ * @param remote A remote line made the press.
+ * @return KGUI_FAULT_DO_FOCUS or, for a remote press, KGUI_FAULT_DO_STILL on
+ *         the notice and the failure; KGUI_FAULT_DO_CLOSE on the sent card;
+ *         KGUI_FAULT_DO_NOTHING while the report goes and for any other face.
+ */
+kgui_fault_do_t kgui_fault_pad(uint8_t face, bool remote);
 
 /**
  * @brief The word a pill shows, for the log.

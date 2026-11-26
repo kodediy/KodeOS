@@ -326,6 +326,32 @@ kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool re
     return act;
 }
 
+kgui_fault_do_t kgui_fault_pad(uint8_t face, bool remote)
+{
+    kgui_fault_do_t act = KGUI_FAULT_DO_NOTHING;
+
+    if ( (uint8_t)KGUI_FAULT_FACE_SENT == face )
+    {
+        act = KGUI_FAULT_DO_CLOSE;
+    }
+    else if ( ((uint8_t)KGUI_FAULT_FACE_NOTICE == face) || ((uint8_t)KGUI_FAULT_FACE_FAILED == face) )
+    {
+        if ( remote )
+        {
+            act = KGUI_FAULT_DO_STILL;
+        }
+        else
+        {
+            act = KGUI_FAULT_DO_FOCUS;
+        }
+    }
+    else
+    {
+        /* Sending, or no face: the pad has nothing to move. */
+    }
+    return act;
+}
+
 const char *kgui_fault_pill_word(uint8_t face, bool offer, uint8_t pill)
 {
     const char *word = NULL;

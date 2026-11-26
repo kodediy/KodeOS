@@ -3575,6 +3575,8 @@ static void gui_fault_answer(Gui * const me, const char *what);
 static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
                                  const char *what);
 static bool gui_fault_sent_up(Gui const * const me);
+static bool gui_fault_pad_still(Gui const * const me, ButtonEvt const * const b);
+static bool gui_fault_pad_taken(Gui * const me);
 static void gui_fault_report_answer(Gui * const me, NetDumpRspEvt const * const r);
 #endif
 static void gui_fault_info(Gui const * const me);
@@ -18907,10 +18909,22 @@ static void gui_btn_track(Gui * const me, ButtonEvt const * const b)
         if ( b->pressed )
         {
             me->btn_held = (uint8_t)(me->btn_held | bit);
-            /* A button is the input in use, on whatever screen or card heard
-             * it: the focus rings come back on the selection they were on. */
-            me->ring_woke = !me->pad;
-            gui_pad_mode(me, true);
+#if CONFIG_KODEOS_DUMP_HTTP
+            if ( gui_fault_pad_still(me, b) )
+            {
+                /* A remote line's pad press on the fault notice moves no
+                 * focus, so it shows no ring either (gui_fault_pad_taken()). */
+                me->ring_woke = false;
+            }
+            else
+#endif
+            {
+                /* A button is the input in use, on whatever screen or card
+                 * heard it: the focus rings come back on the selection they
+                 * were on. */
+                me->ring_woke = !me->pad;
+                gui_pad_mode(me, true);
+            }
         }
         else
         {
@@ -27438,6 +27452,49 @@ static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool re
     }
 }
 
+/**
+ * @brief Whether a press is the pad's, by a remote line, on the fault notice
+ *        or its failure: it moves no focus (kgui_fault_pad()), and so it
+ *        wakes no ring either.
+ *
+ * @param me The AO.
+ * @param b  The button event.
+ * @return true for such a press.
+ */
+static bool gui_fault_pad_still(Gui const * const me, ButtonEvt const * const b)
+{
+    return (GUI_SHEET_FAULT == me->sheet) && b->pressed && ((uint8_t)KDRV_BTN_RIGHT >= b->id)
+           && (KGUI_FAULT_DO_STILL == kgui_fault_pad(me->fault_face, b->remote));
+}
+
+/**
+ * @brief The pad's press on the fault notice (kgui_fault_pad()): "Report
+ *        sent" closes; a remote line's press moves no focus, said once in the
+ *        log; a person's moves the focus as on any card.
+ *
+ * @param me The AO, the fault notice on the glass, the press in `btn_remote`.
+ * @return true when the press was taken here; false when the pad's own
+ *         grammar moves the focus.
+ */
+static bool gui_fault_pad_taken(Gui * const me)
+{
+    kgui_fault_do_t const act   = kgui_fault_pad(me->fault_face, me->btn_remote);
+    bool                  taken = true;
+
+    if ( KGUI_FAULT_DO_CLOSE == act )
+    {
+        gui_fault_pill_press(me, KGUI_FAULT_PILL_NONE, me->btn_remote, "the pad");
+    }
+    else if ( KGUI_FAULT_DO_STILL == act )
+    {
+        KLOG_N(TAG, "fault: a remote press moves no focus");
+    }
+    else
+    {
+        taken = false;
+    }
+    return taken;
+}
 #endif
 
 /**
@@ -29240,10 +29297,9 @@ static void gui_sheet_navigate(Gui * const me, kdrv_button_t b, bool pressed)
     }
 #endif
 #if CONFIG_KODEOS_DUMP_HTTP
-    if ( gui_fault_sent_up(me) )
+    if ( (GUI_SHEET_FAULT == me->sheet) && gui_fault_pad_taken(me) )
     {
-        /* "Report sent" leaves at any press, the pad's included. */
-        gui_fault_pill_press(me, KGUI_FAULT_PILL_NONE, me->btn_remote, "the pad");
+        /* "Report sent" left, or a remote line's press moved nothing. */
         return;
     }
 #endif
