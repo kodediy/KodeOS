@@ -326,4 +326,51 @@ kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool re
     return act;
 }
 
+const char *kgui_fault_pill_word(uint8_t face, bool offer, uint8_t pill)
+{
+    const char *word = NULL;
+
+    if ( (uint8_t)KGUI_FAULT_FACE_NOTICE == face )
+    {
+        if ( (uint8_t)KGUI_FAULT_PILL_ANSWER == pill )
+        {
+            if ( offer )
+            {
+                word = KGUI_FAULT_REPORT_SEND;
+            }
+            else
+            {
+                word = KGUI_CARD_OK;
+            }
+        }
+        else if ( ((uint8_t)KGUI_FAULT_PILL_LEFT == pill) && offer )
+        {
+            word = KGUI_CARD_OK;
+        }
+        else
+        {
+            /* Off the pills, or a left pill that does not stand. */
+        }
+    }
+    else if ( (uint8_t)KGUI_FAULT_FACE_FAILED == face )
+    {
+        if ( (uint8_t)KGUI_FAULT_PILL_ANSWER == pill )
+        {
+            word = KGUI_CARD_RETRY;
+        }
+        else if ( (uint8_t)KGUI_FAULT_PILL_LEFT == pill )
+        {
+            word = KGUI_CARD_CLOSE;
+        }
+        else
+        {
+            /* Off the pills. */
+        }
+    }
+    else
+    {
+        /* Sending or sent: no pill stands. */
+    }
+    return word;
+}
 #endif

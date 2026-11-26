@@ -27382,27 +27382,34 @@ static void gui_fault_send_tick(Gui * const me)
  *
  * Send or Retry pressed by a remote line leaves the card as it is: one
  * NOTICE in the log, no buzz, no words on the glass. Nothing leaves the board
- * without a person's press.
+ * without a person's press. The log names a pill by the word it shows
+ * (kgui_fault_pill_word()).
  *
  * @param me     The AO, the fault notice on the glass.
  * @param pill   Where the press landed.
  * @param remote A remote line made the press (ButtonEvt.remote,
  *               TouchEvt.remote).
- * @param what   What was pressed, for the log.
+ * @param what   What was pressed, for the log, where no pill stands.
  */
 static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool remote,
                                  const char *what)
 {
-    kgui_fault_do_t const act = kgui_fault_press(me->fault_face, me->fault_offer, (uint8_t)pill,
-                                                 remote);
+    kgui_fault_do_t const act  = kgui_fault_press(me->fault_face, me->fault_offer,
+                                                  (uint8_t)pill, remote);
+    const char           *word = kgui_fault_pill_word(me->fault_face, me->fault_offer,
+                                                      (uint8_t)pill);
 
+    if ( NULL == word )
+    {
+        word = what;
+    }
     switch ( act )
     {
         case KGUI_FAULT_DO_ANSWER:
         case KGUI_FAULT_DO_CLOSE: {
             me->pair_done = true;
             (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
-            gui_fault_answer(me, what);
+            gui_fault_answer(me, word);
             gui_sheet_close(me);
             break;
         }
@@ -27410,18 +27417,18 @@ static void gui_fault_pill_press(Gui * const me, kgui_fault_pill_t pill, bool re
             /* The notice is answered first: the record is erased and the
              * notice never rises again, whatever the send's end. */
             (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
-            gui_fault_answer(me, what);
+            gui_fault_answer(me, word);
             gui_fault_send(me);
             break;
         }
         case KGUI_FAULT_DO_RETRY: {
             (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
-            KLOG_N(TAG, "fault: %s sends the report again", what);
+            KLOG_N(TAG, "fault: %s sends the report again", word);
             gui_fault_send(me);
             break;
         }
         case KGUI_FAULT_DO_REFUSED: {
-            KLOG_N(TAG, "fault: a remote press does not send a report (%s)", what);
+            KLOG_N(TAG, "fault: a remote press does not send a report (%s)", word);
             break;
         }
         default: {

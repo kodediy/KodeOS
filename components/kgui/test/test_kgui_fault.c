@@ -548,6 +548,33 @@ void test_a_face_or_pill_that_is_none_does_nothing(void)
                       kgui_fault_press((uint8_t)KGUI_FAULT_FACE_SENT, true, 3U, false));
 }
 
+void test_a_pill_is_named_by_what_it_shows(void)
+{
+    uint8_t const notice = (uint8_t)KGUI_FAULT_FACE_NOTICE;
+    uint8_t const failed = (uint8_t)KGUI_FAULT_FACE_FAILED;
+    uint8_t const left   = (uint8_t)KGUI_FAULT_PILL_LEFT;
+    uint8_t const answer = (uint8_t)KGUI_FAULT_PILL_ANSWER;
+
+    TEST_ASSERT_EQUAL_STRING("OK", kgui_fault_pill_word(notice, true, left));
+    TEST_ASSERT_EQUAL_STRING("Send", kgui_fault_pill_word(notice, true, answer));
+    TEST_ASSERT_EQUAL_STRING("OK", kgui_fault_pill_word(notice, false, answer));
+    TEST_ASSERT_EQUAL_STRING("Close", kgui_fault_pill_word(failed, false, left));
+    TEST_ASSERT_EQUAL_STRING("Retry", kgui_fault_pill_word(failed, false, answer));
+}
+
+void test_no_word_where_no_pill_stands(void)
+{
+    TEST_ASSERT_NULL(kgui_fault_pill_word((uint8_t)KGUI_FAULT_FACE_NOTICE, false,
+                                          (uint8_t)KGUI_FAULT_PILL_LEFT));
+    TEST_ASSERT_NULL(kgui_fault_pill_word((uint8_t)KGUI_FAULT_FACE_NOTICE, true,
+                                          (uint8_t)KGUI_FAULT_PILL_NONE));
+    TEST_ASSERT_NULL(kgui_fault_pill_word((uint8_t)KGUI_FAULT_FACE_SENDING, true,
+                                          (uint8_t)KGUI_FAULT_PILL_ANSWER));
+    TEST_ASSERT_NULL(kgui_fault_pill_word((uint8_t)KGUI_FAULT_FACE_SENT, true,
+                                          (uint8_t)KGUI_FAULT_PILL_LEFT));
+    TEST_ASSERT_NULL(kgui_fault_pill_word(4U, true, (uint8_t)KGUI_FAULT_PILL_ANSWER));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -591,5 +618,7 @@ int main(void)
     RUN_TEST(test_a_press_off_the_pills_does_nothing_elsewhere);
     RUN_TEST(test_no_pill_stands_while_the_report_goes);
     RUN_TEST(test_a_face_or_pill_that_is_none_does_nothing);
+    RUN_TEST(test_a_pill_is_named_by_what_it_shows);
+    RUN_TEST(test_no_word_where_no_pill_stands);
     return UNITY_END();
 }

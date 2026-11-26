@@ -291,6 +291,15 @@ kgui_fault_do_t kgui_fault_press(uint8_t face, bool offer, uint8_t pill, bool re
  * @return The step.
  */
 kgui_fault_step_t kgui_fault_face_step(uint8_t face, uint32_t since_ms);
+
+/**
+ * @brief The word a pill shows, for the log.
+ * @param face  A kgui_fault_face_t.
+ * @param offer The notice offers the send (a pair, OK and Send).
+ * @param pill  A kgui_fault_pill_t.
+ * @return "OK", "Send", "Close" or "Retry"; NULL where no pill stands.
+ */
+const char *kgui_fault_pill_word(uint8_t face, bool offer, uint8_t pill);
 #endif
 
 #ifdef __cplusplus
