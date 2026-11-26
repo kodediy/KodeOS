@@ -224,6 +224,7 @@ jobs:
           path: |
             dist/kodeos-factory-v${{ steps.ver.outputs.version }}.zip
             dist/*-v${{ steps.ver.outputs.version }}.bin
+            dist/*-v${{ steps.ver.outputs.version }}.elf
             dist/*-v${{ steps.ver.outputs.version }}-appdata.zip
             dist/SHA256SUMS.txt
             dist/BUILD_INFO.txt
@@ -258,5 +259,6 @@ jobs:
              --title "kodeOS v$VERSION" --generate-notes \
              "dist/kodeos-factory-v$VERSION.zip" \
              dist/*-v"$VERSION".bin \
+             dist/*-v"$VERSION".elf \
              dist/*-v"$VERSION"-appdata.zip \
              dist/SHA256SUMS.txt dist/BUILD_INFO.txt
