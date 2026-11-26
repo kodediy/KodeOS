@@ -88,6 +88,7 @@ typedef enum {
 
 /** @brief What the card's verdict is decided from. */
 typedef struct {
+    bool     offered;    /**< This build offers the report (CONFIG_KGUI_FAULT_REPORT). */
     bool     dump;       /**< The record says the fault left a dump, and a dump of a kodeOS image is in flash now. */
     bool     built;      /**< The build can send: the channel and the upload are in it. */
     bool     wifi_on;    /**< Wi-Fi is switched on. */
@@ -106,8 +107,8 @@ typedef enum {
 /**
  * @brief Whether the card rises, and with what.
  *
- * No dump, a build that cannot send, Wi-Fi off or a channel that will not
- * come: OK alone at once. The channel up: Send as well when the
+ * A build that offers no report, no dump, a build that cannot send, Wi-Fi
+ * off or a channel that will not come: OK alone at once. The channel up: Send as well when the
  * session names a `dumps` link. The channel on its way: wait, up to
  * KGUI_FAULT_NET_WAIT_MS, then OK alone.
  *

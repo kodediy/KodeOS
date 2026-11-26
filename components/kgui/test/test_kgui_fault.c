@@ -31,12 +31,13 @@ static kgui_fault_rec_t rec(kgui_fault_class_t cls, bool dump)
     return r;
 }
 
-/** @brief A net with everything on: a dump, a build that sends, Wi-Fi on,
+/** @brief A net with everything on: the offer in the build, a dump, a build that sends, Wi-Fi on,
  *         the channel on its way, a link, nothing waited. */
 static kgui_fault_net_t net_waiting(void)
 {
     kgui_fault_net_t n;
 
+    n.offered   = true;
     n.dump      = true;
     n.built     = true;
     n.wifi_on   = true;
@@ -108,6 +109,42 @@ void test_a_build_that_cannot_send_rises_at_once(void)
     kgui_fault_net_t n = net_waiting();
 
     n.built = false;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+}
+
+void test_a_build_that_offers_no_report_rises_at_once_with_ok_alone(void)
+{
+    /* Every network that would otherwise offer the send or wait for it. */
+    uint8_t const chans[3] = { (uint8_t)KGUI_FAULT_CHAN_COMING, (uint8_t)KGUI_FAULT_CHAN_UP,
+                               (uint8_t)KGUI_FAULT_CHAN_NEVER };
+    uint32_t      i;
+    uint32_t      bits;
+
+    for ( i = 0U; i < 3U; i++ )
+    {
+        for ( bits = 0U; bits < 16U; bits++ )
+        {
+            kgui_fault_net_t n = net_waiting();
+
+            n.offered = false;
+            n.chan    = chans[i];
+            n.dump    = (0U != (bits & 1U));
+            n.built   = (0U != (bits & 2U));
+            n.wifi_on = (0U != (bits & 4U));
+            n.link    = (0U != (bits & 8U));
+            TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+        }
+    }
+}
+
+void test_a_build_that_offers_no_report_waits_for_nothing(void)
+{
+    kgui_fault_net_t n = net_waiting();
+
+    /* The channel on its way and nothing waited: the notice rises at once. */
+    n.offered = false;
+    TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
+    n.chan = (uint8_t)KGUI_FAULT_CHAN_UP;
     TEST_ASSERT_EQUAL(KGUI_FAULT_RISE_OK, kgui_fault_verdict(&n));
 }
 
@@ -519,6 +556,8 @@ int main(void)
     RUN_TEST(test_the_words_follow_the_class);
     RUN_TEST(test_no_dump_rises_at_once_with_ok_alone);
     RUN_TEST(test_a_build_that_cannot_send_rises_at_once);
+    RUN_TEST(test_a_build_that_offers_no_report_rises_at_once_with_ok_alone);
+    RUN_TEST(test_a_build_that_offers_no_report_waits_for_nothing);
     RUN_TEST(test_the_channel_up_with_the_link_offers_the_send);
     RUN_TEST(test_the_channel_up_with_no_link_is_ok_alone);
     RUN_TEST(test_wifi_off_is_ok_alone_at_once);

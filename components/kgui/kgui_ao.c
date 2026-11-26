@@ -26822,10 +26822,11 @@ static bool gui_fault_dump_now(Gui * const me)
  * @brief What the notice's verdict is decided from, now: the dump, the
  *        radios, the channel and the time waited.
  *
- * A build without CONFIG_KODEOS_DUMP_HTTP sends nothing (`built` is false),
- * so its verdict is OK alone. With it, a radio not heard yet this boot counts
- * as on its way (kgui_fault_net_unheard()), and the dump is looked at in
- * flash (gui_fault_dump_now()).
+ * A build without CONFIG_KGUI_FAULT_REPORT offers no report (`offered` is
+ * false), and one without CONFIG_KODEOS_DUMP_HTTP sends nothing (`built` is
+ * false): the verdict of either is OK alone, at once. With both, a radio not
+ * heard yet this boot counts as on its way (kgui_fault_net_unheard()), and
+ * the dump is looked at in flash (gui_fault_dump_now()).
  *
  * @param me        The AO.
  * @param waited_ms Since the notice became due, in milliseconds.
@@ -26839,6 +26840,11 @@ static void gui_fault_net(Gui * const me, uint32_t waited_ms, kgui_fault_net_t *
     kgui_fault_chan_t const chan = KGUI_FAULT_CHAN_NEVER;    /* no channel in the build */
 #endif
 
+#ifdef CONFIG_KGUI_FAULT_REPORT
+    n->offered   = true;
+#else
+    n->offered   = false;    /* the notice has OK alone */
+#endif
     n->wifi_on   = me->wifi_on;
     n->chan      = (uint8_t)chan;
     n->waited_ms = waited_ms;

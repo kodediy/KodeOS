@@ -55,4 +55,15 @@ menu "kodeOS interface"
             about 60 ms; a pack on the card is read once the card mounts, and
             wins then.
 
+    config KGUI_FAULT_REPORT
+        bool "The fault notice offers to send the fault's report"
+        depends on KODEOS_DUMP_HTTP
+        default n
+        help
+            With it, the notice kodeOS raises after a fault of its own offers
+            OK and Send when the fault left a core dump and the network
+            reaches the Kode channel, which names a link for reports: Send
+            hands the dump to AO_Net (CONFIG_KODEOS_DUMP_HTTP). Without it,
+            the notice rises with OK alone at once and waits for no network.
+
 endmenu

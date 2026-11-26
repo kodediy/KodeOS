@@ -72,9 +72,9 @@ kgui_fault_verdict_t kgui_fault_verdict(const kgui_fault_net_t *n)
 {
     kgui_fault_verdict_t verdict = KGUI_FAULT_RISE_OK;
 
-    if ( (NULL == n) || (!n->dump) || (!n->built) || (!n->wifi_on) )
+    if ( (NULL == n) || (!n->offered) || (!n->dump) || (!n->built) || (!n->wifi_on) )
     {
-        /* Nothing to send, or no way to send it: OK alone, at once. */
+        /* No offer, nothing to send, or no way to send it: OK alone, at once. */
     }
     else if ( (uint8_t)KGUI_FAULT_CHAN_UP == n->chan )
     {
