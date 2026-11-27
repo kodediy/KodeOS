@@ -137,6 +137,17 @@ void kgui_list_row_disc(lv_obj_t const *row, lv_color_t ground, const lv_image_d
 void kgui_list_row_disc_art(lv_obj_t const *row, lv_color_t ground, const lv_image_dsc_t *art);
 
 /**
+ * @brief Show or take away the ground under a row's disc.
+ *
+ * A folder's emoji stands bare on the page, and its disc is drawn only under
+ * the one the focus is on. What is already so is not written again.
+ *
+ * @param row   The row.
+ * @param shown true to draw the disc's ground, false for the emoji alone.
+ */
+void kgui_list_row_disc_ground(lv_obj_t const *row, bool shown);
+
+/**
  * @brief Write a row's name and how it stands: focused or not.
  *
  * Focused it is Light Grey; otherwise it is Medium Grey; both on one line,

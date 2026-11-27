@@ -10,8 +10,9 @@ Each folder (the keys of s_art, kgui_group.c) wears an emoji of Microsoft's
 Fluent Emoji, the Flat style (https://github.com/microsoft/fluentui-emoji,
 MIT): a picture in its own colours, which a person tells apart at a glance.
 The sources are glyphs/assets/folder_<key>.svg, one a folder, on a 32 x 32
-grid. The image is the emoji alone, on transparent; the screen draws the Off
-Grey disc under it, dark so that every colour of an emoji stands off it.
+grid. The image is the emoji alone, on transparent, and that is how a folder
+stands on the page. The screen draws the Off Grey disc under the folder in
+focus only, dark so that every colour of an emoji stands off it.
 
 Each is drawn at 8x and brought down in premultiplied alpha, so an edge
 against the transparent ground stays clean and the alpha stays straight. Fully

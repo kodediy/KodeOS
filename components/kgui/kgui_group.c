@@ -36,8 +36,9 @@ typedef struct {
  * thirteen new words whenever an app's category says them, before the
  * marketplace takes them. The names come from here and never from a rule, so
  * no folder is given a plural nobody wrote (`ai` is AI, not Ais). Every folder
- * wears the same Off Grey disc, dark under a drawing in colour: a folder is
- * told by its drawing, a colour emoji, and its name (kgui_folder_art()). A word
+ * is told by its drawing, a colour emoji that stands bare on the page, and its
+ * name (kgui_folder_art()). The disc is the focus's: Off Grey, dark under a
+ * drawing in colour, and drawn only under the folder in focus. A word
  * that is not here has no drawing and its disc wears its letters
  * (kgui_group_mono()).
  */

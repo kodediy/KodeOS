@@ -307,6 +307,30 @@ void kgui_list_row_disc_art(lv_obj_t const *row, lv_color_t ground, const lv_ima
     }
 }
 
+void kgui_list_row_disc_ground(lv_obj_t const *row, bool shown)
+{
+    lv_obj_t * slot = NULL;
+
+    if ( NULL != row )
+    {
+        slot = lv_obj_find_by_name(row, "slot");
+    }
+    if ( NULL != slot )
+    {
+        lv_opa_t opa = LV_OPA_TRANSP;
+
+        if ( shown )
+        {
+            opa = LV_OPA_COVER;
+        }
+        /* A value LVGL already has is not written again: a write redraws the row. */
+        if ( lv_obj_get_style_bg_opa(slot, LV_PART_MAIN) != opa )
+        {
+            lv_obj_set_style_bg_opa(slot, opa, 0);
+        }
+    }
+}
+
 void kgui_list_row_name(lv_obj_t const *row, const char *text, bool focused, int32_t narrow)
 {
     lv_obj_t * name = NULL;
