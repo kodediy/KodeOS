@@ -111,6 +111,9 @@ run_suite kgui_trim test_kgui_trim.c ../kgui_trim.c
 run_suite kgui_selftest test_kgui_selftest.c ../kgui_selftest.c
 # Kody's line drawing at Rest is pure too.
 run_suite kgui_rest test_kgui_rest.c ../kgui_rest.c
+# What the motor does for the volume's stop and the Vibration row, and the
+# scale apps' buzzes get.
+run_suite kgui_vib test_kgui_vib.c ../kgui_vib.c
 
 # The shelf of recents reads the rail's numbers (kgui_motion.h), whose headers
 # name the board's glass and the display's frame.
