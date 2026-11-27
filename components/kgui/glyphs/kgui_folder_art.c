@@ -10,27 +10,27 @@
 #include <stddef.h>
 #include <string.h>
 
-extern const lv_image_dsc_t kgui_folder_games; /**< The pad with the one button you are about to press lit. */
-extern const lv_image_dsc_t kgui_folder_tools; /**< The wrench tightening a yellow nut. */
-extern const lv_image_dsc_t kgui_folder_communication; /**< A big bubble, and the small one that answers it. */
-extern const lv_image_dsc_t kgui_folder_wireless; /**< The signal fan, its nearest wave a warm wedge. */
-extern const lv_image_dsc_t kgui_folder_creative; /**< A brush just dipped in the yellow. */
-extern const lv_image_dsc_t kgui_folder_maker; /**< A chip the moment you give it power. */
-extern const lv_image_dsc_t kgui_folder_ai; /**< The small spark jumping off the big one. */
-extern const lv_image_dsc_t kgui_folder_sensors; /**< The needle: the only thing on the dial that moves. */
-extern const lv_image_dsc_t kgui_folder_radio; /**< A mast and the wave that has just left it. */
-extern const lv_image_dsc_t kgui_folder_security; /**< A shield whose keyhole has the light behind it. */
-extern const lv_image_dsc_t kgui_folder_music; /**< A note whose flag is the part that dances. */
-extern const lv_image_dsc_t kgui_folder_camera; /**< A lens looking back at you. */
-extern const lv_image_dsc_t kgui_folder_robotics; /**< A robot that winks at you. */
-extern const lv_image_dsc_t kgui_folder_home; /**< The window with the light on: somebody is home. */
-extern const lv_image_dsc_t kgui_folder_health; /**< A heart with its pulse going through it. */
-extern const lv_image_dsc_t kgui_folder_navigation; /**< A pin landing on the yellow spot where you are going. */
-extern const lv_image_dsc_t kgui_folder_time; /**< The sand still falling. */
-extern const lv_image_dsc_t kgui_folder_productivity; /**< The task, done. */
-extern const lv_image_dsc_t kgui_folder_education; /**< The ribbon that keeps your page. */
-extern const lv_image_dsc_t kgui_folder_developer; /**< A prompt, and the cursor blinking on it. */
-extern const lv_image_dsc_t kgui_folder_all; /**< Every app, and the one that will not sit still. */
+extern const lv_image_dsc_t kgui_folder_games; /**< Video game. */
+extern const lv_image_dsc_t kgui_folder_tools; /**< Hammer and wrench. */
+extern const lv_image_dsc_t kgui_folder_communication; /**< Speech balloon. */
+extern const lv_image_dsc_t kgui_folder_wireless; /**< Antenna bars. */
+extern const lv_image_dsc_t kgui_folder_creative; /**< Artist palette. */
+extern const lv_image_dsc_t kgui_folder_maker; /**< Electric plug. */
+extern const lv_image_dsc_t kgui_folder_ai; /**< Sparkles. */
+extern const lv_image_dsc_t kgui_folder_sensors; /**< Thermometer. */
+extern const lv_image_dsc_t kgui_folder_radio; /**< Satellite antenna. */
+extern const lv_image_dsc_t kgui_folder_security; /**< Shield. */
+extern const lv_image_dsc_t kgui_folder_music; /**< Musical notes. */
+extern const lv_image_dsc_t kgui_folder_camera; /**< Camera. */
+extern const lv_image_dsc_t kgui_folder_robotics; /**< Robot. */
+extern const lv_image_dsc_t kgui_folder_home; /**< House. */
+extern const lv_image_dsc_t kgui_folder_health; /**< Red heart. */
+extern const lv_image_dsc_t kgui_folder_navigation; /**< Round pushpin. */
+extern const lv_image_dsc_t kgui_folder_time; /**< Hourglass not done. */
+extern const lv_image_dsc_t kgui_folder_productivity; /**< Clipboard. */
+extern const lv_image_dsc_t kgui_folder_education; /**< Open book. */
+extern const lv_image_dsc_t kgui_folder_developer; /**< Laptop. */
+extern const lv_image_dsc_t kgui_folder_all; /**< Card file box. */
 
 /** @brief A folder's key and its image. */
 typedef struct {

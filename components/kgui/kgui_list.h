@@ -127,8 +127,8 @@ void kgui_list_row_disc(lv_obj_t const *row, lv_color_t ground, const lv_image_d
 /**
  * @brief Put a folder's art on a row's disc, in the art's own colours.
  *
- * The art is the ink alone on transparent, at its own 40 px (kgui_folder_art()):
- * a glyph's tint would flatten its two inks into one.
+ * The art is a colour emoji on transparent, at its own 48 px (kgui_folder_art()):
+ * a glyph's tint would flatten its colours into one.
  *
  * @param row    The row.
  * @param ground The disc's colour.

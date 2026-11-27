@@ -46,6 +46,7 @@ CONTENTS
 18. Proxmark3 Mifare Classic key dictionary - GPL-3.0 (data, see note)
 19. Outfit - OFL-1.1
 20. DM Sans - OFL-1.1
+21. Fluent Emoji - MIT
     Components confirmed NOT compiled into this image
     Licence texts (reproduced once per distinct text)
 
@@ -390,6 +391,20 @@ SPDX:      OFL-1.1
 Copyright 2014 The DM Sans Project Authors (https://github.com/googlefonts/dm-fonts)
 
 Licence text: see "SIL Open Font License 1.1" in the licence-text section below.
+
+
+================================================================================
+21. Fluent Emoji
+================================================================================
+Version:   twenty-one emoji of the Flat style, as bitmap pictures: the
+           launcher's folders (components/kgui/glyphs/assets/folder_*.svg)
+Upstream:  https://github.com/microsoft/fluentui-emoji
+SPDX:      MIT
+
+Copyright (c) Microsoft Corporation.
+
+Licence text: see "MIT License" in the licence-text section below (same
+text as FreeRTOS-Kernel's).
 
 
 ================================================================================

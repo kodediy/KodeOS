@@ -6421,14 +6421,14 @@ static void gui_row_disc(Gui * const me, uint8_t row)
     {
         const char * const name   = me->groups[r->idx].name;
         const lv_image_dsc_t * const art = kgui_folder_art(name);
-        /* The light disc, with each folder's own drawing in Soft Black and a
-         * touch of Bold Yellow. */
+        /* A folder's own drawing is a colour emoji, on the dark disc that
+         * every colour stands off. Letters keep the light disc and its ink. */
         lv_color_t const   ground = lv_color_hex(KUI_PALETTE_MEDIUM_GREY);
         lv_color_t const   ink    = KUI_COLOR_TEXT;
 
         if ( NULL != art )
         {
-            kgui_list_row_disc_art(me->pills[row], ground, art);
+            kgui_list_row_disc_art(me->pills[row], lv_color_hex(KUI_PALETTE_OFF_GREY), art);
         }
         else
         {
