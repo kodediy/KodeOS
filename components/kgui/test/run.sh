@@ -56,8 +56,9 @@ run_suite kgui_fluid test_kgui_fluid.c ../kgui_fluid.c -lm
 # The landing after Welcome: its mark, its clock and the ring's path.
 run_suite kgui_welcome test_kgui_welcome.c ../kgui_welcome.c
 
-# The system cards' words read two enums and one call of kaos.h, whose QP and
-# FreeRTOS the host has not got: they are cut out of the SDK's own sources.
+# The system cards' words read two enums and one call of kaos.h, and the Kode
+# ecosystem row a third enum, whose QP and FreeRTOS the host has not got: they
+# are cut out of the SDK's own sources.
 kaos="$sdk/kaos/core/include/kaos.h"
 boot="$sdk/kaos/boot/src/boot_ao.c"
 mkdir -p "$out/kaos"
@@ -65,7 +66,7 @@ mkdir -p "$out/kaos"
     printf '#ifndef KAOS_H\n#define KAOS_H\n#include <stdint.h>\n'
     awk '/^typedef enum \{/ { buf = ""; grab = 1 }
          grab { buf = buf $0 "\n" }
-         grab && /^\} / { if ($0 ~ /^\} kboot_(app_end|reset_step)_t;/) printf "%s", buf; grab = 0 }' "$kaos"
+         grab && /^\} / { if ($0 ~ /^\} (kboot_(app_end|reset_step)_t|chan_state_t);/) printf "%s", buf; grab = 0 }' "$kaos"
     printf 'const char *boot_reset_step_name(uint8_t step);\n#endif\n'
 } > "$out/kaos/kaos.h"
 {
@@ -75,8 +76,9 @@ mkdir -p "$out/kaos"
          grab && /^\}$/ { exit }' "$boot"
 } > "$out/boot_reset_step.c"
 if [ "$(grep -c '^} kboot_' "$out/kaos/kaos.h")" != 2 ] \
+   || ! grep -q '^} chan_state_t;' "$out/kaos/kaos.h" \
    || ! grep -q '^const char \*boot_reset_step_name' "$out/boot_reset_step.c"; then
-    echo "FAIL  kgui_reset: kaos.h or boot_ao.c no longer has what the cut expects"
+    echo "FAIL  kgui_reset, kgui_wifi: kaos.h or boot_ao.c no longer has what the cut expects"
     exit 1
 fi
 run_suite kgui_reset -I"$out/kaos" test_kgui_reset.c ../kgui_syscard.c "$out/boot_reset_step.c"
@@ -92,8 +94,9 @@ run_suite kgui_wface test_kgui_wface.c ../kgui_wface.c
 # When a pack is given up for its canvas.
 run_suite kgui_pack_fit test_kgui_pack_fit.c ../kgui_pack_fit.c
 
-# The radios' rows: their words read kdrv_wifi.h's reasons and nothing else.
-run_suite kgui_wifi -I"$sdk/kdrv/radio/include" test_kgui_wifi.c ../kgui_wifi.c
+# The radios' rows: their words read kdrv_wifi.h's reasons, and the Kode
+# ecosystem row's press the channel's states from the cut kaos.h.
+run_suite kgui_wifi -I"$sdk/kdrv/radio/include" -I"$out/kaos" test_kgui_wifi.c ../kgui_wifi.c
 # The update service's answer, About's row and the card at boot: no SDK
 # header at all.
 run_suite kgui_osrel test_kgui_osrel.c ../kgui_osrel.c

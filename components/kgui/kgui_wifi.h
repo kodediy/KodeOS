@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /**
  * @file kgui_wifi.h
- * @brief The words of the radios' rows: what Wi-Fi and Bluetooth are doing, and why a join failed.
+ * @brief The words of the radios' rows: what Wi-Fi and Bluetooth are doing, why a join
+ *        failed, and what a press on the Kode ecosystem row asks for.
  */
 #ifndef KGUI_WIFI_H
 #define KGUI_WIFI_H
@@ -147,6 +148,26 @@ typedef enum {
  * @return KGUI_SCAN_NEXT_CYCLE or KGUI_SCAN_NEXT_SOON.
  */
 kgui_scan_next_t kgui_wifi_scan_next(bool ok, bool cut, bool own_join);
+
+/** @brief What a press on the Kode ecosystem row asks for (kgui_wifi_chan_press()). */
+typedef enum {
+    KGUI_CHAN_PRESS_ON = 0,  /**< `chan=on`: join, or try again now.           */
+    KGUI_CHAN_PRESS_OFF,     /**< `chan=off`: leave.                           */
+    KGUI_CHAN_PRESS_NO_NET   /**< Nothing: the channel has no network to join. */
+} kgui_chan_press_t;
+
+/**
+ * @brief What a press on the Kode ecosystem row asks for, from the channel's state.
+ *
+ * A channel with nothing under way - off, waiting out a failed try, refused,
+ * with no identity - is asked `chan=on`: AO_Net joins, or tries again now. A
+ * channel joining or up is asked to leave. With no network there is nothing a
+ * press can start.
+ *
+ * @param state chan_state_t, as ChannelStateEvt carries it.
+ * @return What the press asks for; a state this build does not know leaves.
+ */
+kgui_chan_press_t kgui_wifi_chan_press(uint8_t state);
 
 #ifdef __cplusplus
 }
