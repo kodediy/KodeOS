@@ -58,7 +58,7 @@ menu "kodeOS interface"
     config KGUI_FAULT_REPORT
         bool "The fault notice offers to send the fault's report"
         depends on KODEOS_DUMP_HTTP
-        default n
+        default y
         help
             With it, the notice kodeOS raises after a fault of its own offers
             OK and Send when the fault left a core dump and the network
