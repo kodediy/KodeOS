@@ -24805,50 +24805,66 @@ static void gui_wifi_link_row(Gui * const me)
 
 #if CONFIG_KODEOS_CHANNEL
 /**
- * @brief The top button on the Kode ecosystem row: leave the channel, or join
- *        it again.
+ * @brief The top button on the Kode ecosystem row: join or try again now, or
+ *        leave.
  *
  * The row is the channel's switch, `config key="chan"`: its owner is asked as
- * the console asks (kode_config_post()), applies it and keeps it. A channel
- * that is off is switched on, and any other is switched off. The row's words
+ * the console asks (kode_config_post()), applies it and keeps it. What is asked
+ * is kgui_wifi_chan_press()'s: a channel with nothing under way is asked on,
+ * which joins it or has it try again now; one joining or up is asked off. With
+ * no network nothing is asked: a thud, and the hint says why. The row's words
  * follow the state AO_Net publishes.
  *
  * @param me The AO.
  */
 static void gui_wifi_chan_switch(Gui * const me)
 {
-    bool const               on = ((uint8_t)CHAN_OFF == me->chan_state);
-    KodeConfigReqEvt * const e  = Q_NEW_X(KodeConfigReqEvt, 1U, CONFIG_REQ_SIG);
-    bool                     posted = false;
+    kgui_chan_press_t const press = kgui_wifi_chan_press(me->chan_state);
 
-    if ( NULL != e )
+    if ( KGUI_CHAN_PRESS_NO_NET == press )
     {
-        e->seq  = GUI_CHAN_SEQ_SET;
-        e->set  = true;
-        (void)snprintf(e->key, sizeof(e->key), "%s", GUI_CHAN_KEY);
-        e->i    = 0;
-        e->b    = on;
-        e->e    = 0U;
-        e->s[0] = '\0';
-        posted  = kode_config_post(e, &me->super);
-    }
-    if ( !posted )
-    {
-        /* AO_Net had no room: nothing was asked. */
-        KLOG_N(TAG, "the Kode channel's switch refused: AO_Net had no room");
         (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
-        kgui_hint(KGUI_CARD_BUSY);
+        kgui_hint("No network");
     }
     else
     {
-        (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
-        if ( on )
+        bool const               on     = (KGUI_CHAN_PRESS_ON == press);
+        KodeConfigReqEvt * const e      = Q_NEW_X(KodeConfigReqEvt, 1U, CONFIG_REQ_SIG);
+        bool                     posted = false;
+
+        if ( NULL != e )
         {
-            KLOG_I(TAG, "Kode ecosystem: asked to join");
+            e->seq  = GUI_CHAN_SEQ_SET;
+            e->set  = true;
+            (void)snprintf(e->key, sizeof(e->key), "%s", GUI_CHAN_KEY);
+            e->i    = 0;
+            e->b    = on;
+            e->e    = 0U;
+            e->s[0] = '\0';
+            posted  = kode_config_post(e, &me->super);
+        }
+        if ( !posted )
+        {
+            /* AO_Net had no room: nothing was asked. */
+            KLOG_N(TAG, "the Kode channel's switch refused: AO_Net had no room");
+            (void)kgui_haptic_play(KGUI_HAPTIC_THUD);
+            kgui_hint(KGUI_CARD_BUSY);
         }
         else
         {
-            KLOG_I(TAG, "Kode ecosystem: asked to leave");
+            (void)kgui_haptic_play(KGUI_HAPTIC_CLICK);
+            if ( !on )
+            {
+                KLOG_I(TAG, "Kode ecosystem: asked to leave");
+            }
+            else if ( (uint8_t)CHAN_OFF == me->chan_state )
+            {
+                KLOG_I(TAG, "Kode ecosystem: asked to join");
+            }
+            else
+            {
+                KLOG_I(TAG, "Kode ecosystem: asked to try again now");
+            }
         }
     }
 }

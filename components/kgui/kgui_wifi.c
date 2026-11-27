@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "kaos.h"
 #include "kdrv_wifi.h"
 
 const char *kgui_radio_words(kgui_radio_view_t const *v)
@@ -164,4 +165,24 @@ kgui_scan_next_t kgui_wifi_scan_next(bool ok, bool cut, bool own_join)
         next = KGUI_SCAN_NEXT_SOON;
     }
     return next;
+}
+
+kgui_chan_press_t kgui_wifi_chan_press(uint8_t state)
+{
+    kgui_chan_press_t press = KGUI_CHAN_PRESS_OFF;
+
+    if ( ((uint8_t)CHAN_OFF == state) || ((uint8_t)CHAN_WAITING == state)
+         || ((uint8_t)CHAN_REFUSED == state) || ((uint8_t)CHAN_NO_IDENTITY == state) )
+    {
+        press = KGUI_CHAN_PRESS_ON;
+    }
+    else if ( (uint8_t)CHAN_NO_NET == state )
+    {
+        press = KGUI_CHAN_PRESS_NO_NET;
+    }
+    else
+    {
+        /* Joining, up, or a state this build does not know: the press leaves. */
+    }
+    return press;
 }

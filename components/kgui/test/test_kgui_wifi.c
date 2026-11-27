@@ -8,6 +8,7 @@
 
 #include "unity.h"
 
+#include "kaos.h"
 #include "kdrv_wifi.h"
 #include "kgui_wifi.h"
 
@@ -201,6 +202,29 @@ void test_a_sweep_the_pages_own_join_ended_is_asked_again_soon(void)
     TEST_ASSERT_EQUAL_INT(KGUI_SCAN_NEXT_SOON, kgui_wifi_scan_next(false, true, true));
 }
 
+void test_a_press_on_a_channel_that_is_not_trying_asks_it_to_join(void)
+{
+    /* Off, waiting out a failed try, refused, or with no identity: nothing is
+     * under way, so the press is `chan=on`, which joins or tries again now. */
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_ON, kgui_wifi_chan_press((uint8_t)CHAN_OFF));
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_ON, kgui_wifi_chan_press((uint8_t)CHAN_WAITING));
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_ON, kgui_wifi_chan_press((uint8_t)CHAN_REFUSED));
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_ON, kgui_wifi_chan_press((uint8_t)CHAN_NO_IDENTITY));
+}
+
+void test_a_press_on_a_channel_joining_or_up_asks_it_to_leave(void)
+{
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_OFF, kgui_wifi_chan_press((uint8_t)CHAN_JOINING));
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_OFF, kgui_wifi_chan_press((uint8_t)CHAN_UP));
+    /* A state this build does not know is a channel at work: the press leaves. */
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_OFF, kgui_wifi_chan_press(UINT8_MAX));
+}
+
+void test_a_press_with_no_network_asks_nothing(void)
+{
+    TEST_ASSERT_EQUAL_INT(KGUI_CHAN_PRESS_NO_NET, kgui_wifi_chan_press((uint8_t)CHAN_NO_NET));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -221,5 +245,8 @@ int main(void)
     RUN_TEST(test_a_sweep_ended_for_a_newer_request_is_not_asked_again_at_once);
     RUN_TEST(test_a_refused_or_failed_sweep_is_asked_again_soon);
     RUN_TEST(test_a_sweep_the_pages_own_join_ended_is_asked_again_soon);
+    RUN_TEST(test_a_press_on_a_channel_that_is_not_trying_asks_it_to_join);
+    RUN_TEST(test_a_press_on_a_channel_joining_or_up_asks_it_to_leave);
+    RUN_TEST(test_a_press_with_no_network_asks_nothing);
     return UNITY_END();
 }
