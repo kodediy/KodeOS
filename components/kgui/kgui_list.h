@@ -127,14 +127,25 @@ void kgui_list_row_disc(lv_obj_t const *row, lv_color_t ground, const lv_image_d
 /**
  * @brief Put a folder's art on a row's disc, in the art's own colours.
  *
- * The art is the ink alone on transparent, at its own 40 px (kgui_folder_art()):
- * a glyph's tint would flatten its two inks into one.
+ * The art is a colour emoji on transparent, at its own 48 px (kgui_folder_art()):
+ * a glyph's tint would flatten its colours into one.
  *
  * @param row    The row.
  * @param ground The disc's colour.
  * @param art    The image.
  */
 void kgui_list_row_disc_art(lv_obj_t const *row, lv_color_t ground, const lv_image_dsc_t *art);
+
+/**
+ * @brief Show or take away the ground under a row's disc.
+ *
+ * A folder's emoji stands bare on the page, and its disc is drawn only under
+ * the one the focus is on. What is already so is not written again.
+ *
+ * @param row   The row.
+ * @param shown true to draw the disc's ground, false for the emoji alone.
+ */
+void kgui_list_row_disc_ground(lv_obj_t const *row, bool shown);
 
 /**
  * @brief Write a row's name and how it stands: focused or not.

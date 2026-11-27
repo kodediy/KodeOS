@@ -6339,10 +6339,34 @@ static void gui_group_mono(Gui const * const me, uint8_t g, char *out)
 }
 
 /**
+ * @brief Whether a row is a folder that wears its own drawing.
+ *
+ * Such a row says where the focus is with its disc and not with the ring: its
+ * emoji stands bare on the page, and the Off Grey disc is drawn under the one
+ * in focus (gui_row_light()).
+ *
+ * @param me  The AO.
+ * @param row Which row; under 0 and out-of-range rows are no folder.
+ * @return true for a folder of the table's.
+ */
+static bool gui_row_has_art(Gui const * const me, int32_t row)
+{
+    bool art = false;
+
+    if ( (0 <= row) && ((int32_t)me->row_count > row) && (GUI_ROW_GROUP == me->rows[row].kind) )
+    {
+        art = (NULL != kgui_folder_art(me->groups[me->rows[row].idx].name));
+    }
+    return art;
+}
+
+/**
  * @brief Give a row the look that goes with the focus: what the focus moves.
  *
  * The focused row's name is Light Grey, any other's is Medium Grey, both on
- * one dotted line (kgui_list_row_name()). The disc is the same either way.
+ * one dotted line (kgui_list_row_name()). An app's disc is the same either
+ * way. A folder's emoji stands bare, and wears its disc while the focus is on
+ * it and the pad is in use, as a ring would be drawn (gui_pad_mode()).
  * The focus itself is the list's: the ring stands on the icon at u
  * (gui_list_place()), and the row nearest the focus line is the one that is
  * focused (gui_rows_light()).
@@ -6369,6 +6393,10 @@ static void gui_row_light(Gui * const me, uint8_t row, bool lit)
     }
     kgui_list_row_name(me->pills[row], title, lit,
                        lv_obj_get_style_x(me->pills[row], LV_PART_MAIN));
+    if ( gui_row_has_art(me, (int32_t)row) )
+    {
+        kgui_list_row_disc_ground(me->pills[row], lit && me->pad);
+    }
     me->row_lit[row] = (uint8_t)GUI_ROW_PLAIN;
     if ( lit )
     {
@@ -6428,14 +6456,15 @@ static void gui_row_disc(Gui * const me, uint8_t row)
     {
         const char * const name   = me->groups[r->idx].name;
         const lv_image_dsc_t * const art = kgui_folder_art(name);
-        /* The light disc, with each folder's own drawing in Soft Black and a
-         * touch of Bold Yellow. */
+        /* A folder's own drawing is a colour emoji. Its disc is the dark one
+         * that every colour stands off, drawn only under the folder in focus
+         * (gui_row_light()). Letters keep the light disc and its ink. */
         lv_color_t const   ground = lv_color_hex(KUI_PALETTE_MEDIUM_GREY);
         lv_color_t const   ink    = KUI_COLOR_TEXT;
 
         if ( NULL != art )
         {
-            kgui_list_row_disc_art(me->pills[row], ground, art);
+            kgui_list_row_disc_art(me->pills[row], lv_color_hex(KUI_PALETTE_OFF_GREY), art);
         }
         else
         {
@@ -7034,7 +7063,9 @@ static void gui_list_place(Gui * const me)
         if ( kgui_list_ring_place(&me->list,
                                  kgui_round_px(kgui_rows_light_y(me->list_u, me->row_count)),
                                  (0U < me->row_count) && !gui_shelf_on(me)
-                                 && !(me->shelf_ring_down && gui_shelf_shown(me))) )
+                                 && !(me->shelf_ring_down && gui_shelf_shown(me))
+                                 /* A folder with a drawing says it with its disc. */
+                                 && !gui_row_has_art(me, gui_light_row(me))) )
         {
             moved = true;
         }
@@ -16503,6 +16534,11 @@ static void gui_pad_mode(Gui * const me, bool pad)
     {
         me->pad = pad;
         gui_ring_visible(pad);
+        /* A folder in focus wears its disc with the rings, and loses it with them. */
+        if ( gui_row_has_art(me, gui_light_row(me)) )
+        {
+            gui_row_light(me, (uint8_t)gui_light_row(me), true);
+        }
         kgui_details_ring(pad);
         /* The focused recent's name stands with the ring, and goes with it. */
         gui_shelf_label_sync(me);

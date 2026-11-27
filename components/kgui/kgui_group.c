@@ -36,35 +36,35 @@ typedef struct {
  * thirteen new words whenever an app's category says them, before the
  * marketplace takes them. The names come from here and never from a rule, so
  * no folder is given a plural nobody wrote (`ai` is AI, not Ais). Every folder
- * wears the same Medium Grey disc, the apocrifa's disc of an app with no art:
- * a folder is told by its drawing and its name, in Soft Black with a touch of
- * Bold Yellow (kgui_folder_art()). A word
+ * is told by its drawing, a colour emoji that stands bare on the page, and its
+ * name (kgui_folder_art()). The disc is the focus's: Off Grey, dark under a
+ * drawing in colour, and drawn only under the folder in focus. A word
  * that is not here has no drawing and its disc wears its letters
  * (kgui_group_mono()).
  */
 static const group_art_t s_art[] = {
     /* All first: the one folder every root has. */
-    { KGUI_GROUP_ALL,  "other",          "All",           "apps",    KUI_PALETTE_MEDIUM_GREY },
-    { "games",         "game",           "Games",         "games",   KUI_PALETTE_MEDIUM_GREY },
-    { "tools",         "tool",           "Tools",         "tool",    KUI_PALETTE_MEDIUM_GREY },
-    { "communication", "communications", "Communication", "talk",    KUI_PALETTE_MEDIUM_GREY },
-    { "wireless",      "wirelesses",     "Wireless",      "wifi",    KUI_PALETTE_MEDIUM_GREY },
-    { "creative",      "creatives",      "Creative",      "brush",   KUI_PALETTE_MEDIUM_GREY },
-    { "maker",         "makers",         "Maker",         "maker",   KUI_PALETTE_MEDIUM_GREY },
-    { "ai",            "ais",            "AI",            "spark",   KUI_PALETTE_MEDIUM_GREY },
-    { "sensors",       "sensor",         "Sensors",       "gauge",   KUI_PALETTE_MEDIUM_GREY },
-    { "radio",         "sdr",            "Radio",         "antenna", KUI_PALETTE_MEDIUM_GREY },
-    { "security",      "infosec",        "Security",      "shield",  KUI_PALETTE_MEDIUM_GREY },
-    { "music",         "audio",          "Music",         "note",    KUI_PALETTE_MEDIUM_GREY },
-    { "camera",        "photo",          "Camera",        "camera",  KUI_PALETTE_MEDIUM_GREY },
-    { "robotics",      "robot",          "Robotics",      "robot",   KUI_PALETTE_MEDIUM_GREY },
-    { "home",          "smarthome",      "Home",          "home",    KUI_PALETTE_MEDIUM_GREY },
-    { "health",        "fitness",        "Health",        "heart",   KUI_PALETTE_MEDIUM_GREY },
-    { "navigation",    "maps",           "Navigation",    "pin",     KUI_PALETTE_MEDIUM_GREY },
-    { "time",          "clock",          "Time",          "clock",   KUI_PALETTE_MEDIUM_GREY },
-    { "productivity",  "office",         "Productivity",  "list",    KUI_PALETTE_MEDIUM_GREY },
-    { "education",     "learning",       "Education",     "book",    KUI_PALETTE_MEDIUM_GREY },
-    { "developer",     "dev",            "Developer",     "code",    KUI_PALETTE_MEDIUM_GREY },
+    { KGUI_GROUP_ALL,  "other",          "All",           "apps",    KUI_PALETTE_OFF_GREY },
+    { "games",         "game",           "Games",         "games",   KUI_PALETTE_OFF_GREY },
+    { "tools",         "tool",           "Tools",         "tool",    KUI_PALETTE_OFF_GREY },
+    { "communication", "communications", "Communication", "talk",    KUI_PALETTE_OFF_GREY },
+    { "wireless",      "wirelesses",     "Wireless",      "wifi",    KUI_PALETTE_OFF_GREY },
+    { "creative",      "creatives",      "Creative",      "brush",   KUI_PALETTE_OFF_GREY },
+    { "maker",         "makers",         "Maker",         "maker",   KUI_PALETTE_OFF_GREY },
+    { "ai",            "ais",            "AI",            "spark",   KUI_PALETTE_OFF_GREY },
+    { "sensors",       "sensor",         "Sensors",       "gauge",   KUI_PALETTE_OFF_GREY },
+    { "radio",         "sdr",            "Radio",         "antenna", KUI_PALETTE_OFF_GREY },
+    { "security",      "infosec",        "Security",      "shield",  KUI_PALETTE_OFF_GREY },
+    { "music",         "audio",          "Music",         "note",    KUI_PALETTE_OFF_GREY },
+    { "camera",        "photo",          "Camera",        "camera",  KUI_PALETTE_OFF_GREY },
+    { "robotics",      "robot",          "Robotics",      "robot",   KUI_PALETTE_OFF_GREY },
+    { "home",          "smarthome",      "Home",          "home",    KUI_PALETTE_OFF_GREY },
+    { "health",        "fitness",        "Health",        "heart",   KUI_PALETTE_OFF_GREY },
+    { "navigation",    "maps",           "Navigation",    "pin",     KUI_PALETTE_OFF_GREY },
+    { "time",          "clock",          "Time",          "clock",   KUI_PALETTE_OFF_GREY },
+    { "productivity",  "office",         "Productivity",  "list",    KUI_PALETTE_OFF_GREY },
+    { "education",     "learning",       "Education",     "book",    KUI_PALETTE_OFF_GREY },
+    { "developer",     "dev",            "Developer",     "code",    KUI_PALETTE_OFF_GREY },
 };
 
 #define GROUP_ART_N (sizeof(s_art) / sizeof(s_art[0]))  /**< How many folders the table names. */

@@ -29,27 +29,27 @@ typedef struct {
 
 /** @brief The table, in the root's order: All, then the marketplace's. */
 static const want_t s_want[TABLE_N] = {
-    { "all",           "other",          "All",           "apps",    KUI_PALETTE_MEDIUM_GREY },
-    { "games",         "game",           "Games",         "games",   KUI_PALETTE_MEDIUM_GREY },
-    { "tools",         "tool",           "Tools",         "tool",    KUI_PALETTE_MEDIUM_GREY },
-    { "communication", "communications", "Communication", "talk",    KUI_PALETTE_MEDIUM_GREY },
-    { "wireless",      "wirelesses",     "Wireless",      "wifi",    KUI_PALETTE_MEDIUM_GREY },
-    { "creative",      "creatives",      "Creative",      "brush",   KUI_PALETTE_MEDIUM_GREY },
-    { "maker",         "makers",         "Maker",         "maker",   KUI_PALETTE_MEDIUM_GREY },
-    { "ai",            "ais",            "AI",            "spark",   KUI_PALETTE_MEDIUM_GREY },
-    { "sensors",       "sensor",         "Sensors",       "gauge",   KUI_PALETTE_MEDIUM_GREY },
-    { "radio",         "sdr",            "Radio",         "antenna", KUI_PALETTE_MEDIUM_GREY },
-    { "security",      "infosec",        "Security",      "shield",  KUI_PALETTE_MEDIUM_GREY },
-    { "music",         "audio",          "Music",         "note",    KUI_PALETTE_MEDIUM_GREY },
-    { "camera",        "photo",          "Camera",        "camera",  KUI_PALETTE_MEDIUM_GREY },
-    { "robotics",      "robot",          "Robotics",      "robot",   KUI_PALETTE_MEDIUM_GREY },
-    { "home",          "smarthome",      "Home",          "home",    KUI_PALETTE_MEDIUM_GREY },
-    { "health",        "fitness",        "Health",        "heart",   KUI_PALETTE_MEDIUM_GREY },
-    { "navigation",    "maps",           "Navigation",    "pin",     KUI_PALETTE_MEDIUM_GREY },
-    { "time",          "clock",          "Time",          "clock",   KUI_PALETTE_MEDIUM_GREY },
-    { "productivity",  "office",         "Productivity",  "list",    KUI_PALETTE_MEDIUM_GREY },
-    { "education",     "learning",       "Education",     "book",    KUI_PALETTE_MEDIUM_GREY },
-    { "developer",     "dev",            "Developer",     "code",    KUI_PALETTE_MEDIUM_GREY },
+    { "all",           "other",          "All",           "apps",    KUI_PALETTE_OFF_GREY },
+    { "games",         "game",           "Games",         "games",   KUI_PALETTE_OFF_GREY },
+    { "tools",         "tool",           "Tools",         "tool",    KUI_PALETTE_OFF_GREY },
+    { "communication", "communications", "Communication", "talk",    KUI_PALETTE_OFF_GREY },
+    { "wireless",      "wirelesses",     "Wireless",      "wifi",    KUI_PALETTE_OFF_GREY },
+    { "creative",      "creatives",      "Creative",      "brush",   KUI_PALETTE_OFF_GREY },
+    { "maker",         "makers",         "Maker",         "maker",   KUI_PALETTE_OFF_GREY },
+    { "ai",            "ais",            "AI",            "spark",   KUI_PALETTE_OFF_GREY },
+    { "sensors",       "sensor",         "Sensors",       "gauge",   KUI_PALETTE_OFF_GREY },
+    { "radio",         "sdr",            "Radio",         "antenna", KUI_PALETTE_OFF_GREY },
+    { "security",      "infosec",        "Security",      "shield",  KUI_PALETTE_OFF_GREY },
+    { "music",         "audio",          "Music",         "note",    KUI_PALETTE_OFF_GREY },
+    { "camera",        "photo",          "Camera",        "camera",  KUI_PALETTE_OFF_GREY },
+    { "robotics",      "robot",          "Robotics",      "robot",   KUI_PALETTE_OFF_GREY },
+    { "home",          "smarthome",      "Home",          "home",    KUI_PALETTE_OFF_GREY },
+    { "health",        "fitness",        "Health",        "heart",   KUI_PALETTE_OFF_GREY },
+    { "navigation",    "maps",           "Navigation",    "pin",     KUI_PALETTE_OFF_GREY },
+    { "time",          "clock",          "Time",          "clock",   KUI_PALETTE_OFF_GREY },
+    { "productivity",  "office",         "Productivity",  "list",    KUI_PALETTE_OFF_GREY },
+    { "education",     "learning",       "Education",     "book",    KUI_PALETTE_OFF_GREY },
+    { "developer",     "dev",            "Developer",     "code",    KUI_PALETTE_OFF_GREY },
 };
 
 /** @brief The glyphs kgui_list_group_glyph() has a picture for: the kit's seven, then kgui's own. */
@@ -541,7 +541,7 @@ void test_group_rgb_is_the_kit_palette(void)
     for ( uint8_t t = 0U; TABLE_N > t; ++t )
     {
         TEST_ASSERT_TRUE(kgui_group_rgb(s_want[t].key, &rgb));
-        TEST_ASSERT_EQUAL_HEX32(KUI_PALETTE_MEDIUM_GREY, rgb);
+        TEST_ASSERT_EQUAL_HEX32(KUI_PALETTE_OFF_GREY, rgb);
     }
     rgb = 0x123456U;
     TEST_ASSERT_FALSE(kgui_group_rgb("weather", &rgb));
