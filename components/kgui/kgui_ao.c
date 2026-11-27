@@ -50,6 +50,7 @@
 #include "kgui_rest.h"     /* the Lock at Rest: its numbers and the burn-in cycle */
 #include "kgui_off.h"      /* the face's red arc: how far a held bottom button has run it */
 #include "kgui_haptic.h"   /* the interface's buzz: four effects, one call */
+#include "kgui_vib.h"      /* the motor's level for the volume and the row, and apps' scale */
 #include "kgui_prefs.h"    /* the interface's two settings: keys, words, store */
 #include "kgui_scene_label.h" /* a scene's English words, for what the interface shows */
 #include "kgui_osrel.h"    /* kodeOS's own update: the service's answer and About's row */
@@ -1651,7 +1652,7 @@ static const GuiListPage s_list_pages[] = {
 
 /**
  * @brief The sequence numbers this AO puts on its requests of `vol`, of
- *        `off_after` and of `chan`.
+ *        `off_after`, of `chan` and of `haptic`.
  *
  * The console numbers its own from 1 and only takes the answer to the one in
  * flight; the top bit keeps these out of its way, and says in the answer
@@ -1663,6 +1664,9 @@ static const GuiListPage s_list_pages[] = {
 #define GUI_OFF_SEQ_SET    0x80000004U   /**< Set it and keep it. */
 #define GUI_CHAN_KEY       "chan"        /**< The Kode channel's switch, AO_Net's setting. */
 #define GUI_CHAN_SEQ_SET   0x80000005U   /**< Switch the Kode channel and keep it. */
+#define GUI_HAPTIC_KEY     "haptic"      /**< The scale on the buzzes apps ask for, AO_Haptic's setting. */
+#define GUI_HAPTIC_SEQ_SET 0x80000006U   /**< Set that scale and keep it. */
+#define GUI_VIB_SCALE_UNSENT 0xFFU       /**< No scale has been asked of AO_Haptic this boot: above every scale. */
 #define GUI_ZONE_SEQ_BASE  0x80000100U   /**< kgui's own `zone` requests start here: the top half, which the console's counter never reaches. */
 #define GUI_ZONE_SEQ_MASK  0x0000FFFFU   /**< How far they count before they wrap. */
 
@@ -3039,6 +3043,8 @@ typedef struct {
     int32_t  page_scroll[3]; /**< Where each page stood when a deeper one opened. */
     uint8_t  page_scroll_n;  /**< How many are kept. */
     kgui_haptic_level_t haptic_pref; /**< What the Vibration row chose; the volume's stops may ask otherwise. */
+    uint8_t  vib_scale;      /**< `haptic` for the motor's level in force (kgui_vib_scale()): what AO_Haptic is asked to keep. */
+    uint8_t  vib_scale_sent; /**< The one AO_Haptic was last asked to keep; GUI_VIB_SCALE_UNSENT before the first. */
     char     ble_name[GUI_BLE_NAME_MAX + 1U]; /**< The name chosen for Bluetooth; empty for the serial. */
     bool     first_hold;     /**< The glass stays black until the first screen may show (gui_first_hold_tick()). */
     lv_obj_t *cover;         /**< At boot: the black the first frame comes up from, over everything (gui_cover_tick()). */
@@ -3426,7 +3432,8 @@ static void gui_ble_name_send(Gui const * const me);
 static void gui_ble_name_config(Gui * const me, KodeConfigReqEvt const * const r);
 #endif
 static bool gui_row_cut(Gui const * const me, int32_t cy, kgui_rail_t const *edge);
-static void gui_vol_motor(Gui const * const me);
+static void gui_vol_motor(Gui * const me);
+static void gui_vib_scale_sync(Gui * const me);
 static void gui_first_hold_tick(Gui * const me);
 static void gui_cover_put(Gui * const me);
 static void gui_cover_tick(Gui * const me, bool drew);
@@ -23295,28 +23302,90 @@ static uint8_t gui_vol_speaker(Gui const * const me)
 }
 
 /**
- * @brief The motor follows the volume's stops: nothing at silence, on at the
- *        vibrate stop whatever the row says, and the row's choice above them.
+ * @brief Ask AO_Haptic to keep `haptic`, the scale on the buzzes apps ask for.
+ *
+ * The console's own door, `config key="haptic"`, spoken from here as the
+ * volume's is (gui_vol_send()): the owner applies and stores it, and an app
+ * reads it when its own AO_Haptic starts. Nothing of it is kept in kgui's
+ * namespace.
+ *
+ * @param pct The scale, 0 to 100.
+ * @return true when the request is posted.
+ */
+static bool gui_haptic_scale_send(uint8_t pct)
+{
+    KodeConfigReqEvt * const e = Q_NEW_X(KodeConfigReqEvt, 1U, CONFIG_REQ_SIG);
+
+    if ( NULL == e )
+    {
+        return false;
+    }
+    e->seq = GUI_HAPTIC_SEQ_SET;
+    e->set = true;
+    (void)snprintf(e->key, sizeof(e->key), "%s", GUI_HAPTIC_KEY);
+    e->i    = (int32_t)pct;
+    e->b    = false;
+    e->e    = 0U;
+    e->s[0] = '\0';
+    return kode_config_post(e, &l_gui.super);
+}
+
+/**
+ * @brief Have AO_Haptic keep the scale of the motor's level in force.
+ *
+ * Asked when it is not the one last asked for: with the motor off, by the
+ * Vibration row or by the volume at silence, a buzz an app asks for plays
+ * nothing. Called where a level is kept, never while a finger drags the
+ * volume: the store is NVS. A build whose AO_Haptic answers no `haptic` asks
+ * nothing, and a request that finds no room is asked again at the next call.
  *
  * @param me The AO.
  */
-static void gui_vol_motor(Gui const * const me)
+static void gui_vib_scale_sync(Gui * const me)
 {
-    kgui_haptic_level_t level = me->haptic_pref;
+    if ( (me->vib_scale_sent != me->vib_scale) && (kode_config_find(GUI_HAPTIC_KEY) != NULL) )
+    {
+        if ( gui_haptic_scale_send(me->vib_scale) )
+        {
+            me->vib_scale_sent = me->vib_scale;
+            KLOG_I(TAG, "vibration: the buzzes of apps are asked at %u%%", (unsigned)me->vib_scale);
+        }
+        else
+        {
+            KLOG_W(TAG, "vibration: no room to ask for the scale of apps' buzzes; asked again later");
+        }
+    }
+}
+
+/**
+ * @brief The motor follows the volume's stops: nothing at silence, on at the
+ *        vibrate stop whatever the row says, and the row's choice above them.
+ *
+ * The level is the interface's at once; the scale it gives the buzzes of apps
+ * waits for gui_vib_scale_sync().
+ *
+ * @param me The AO.
+ */
+static void gui_vol_motor(Gui * const me)
+{
+    kgui_vib_vol_t      vol = KGUI_VIB_VOL_SOUND;
+    kgui_haptic_level_t level;
 
     if ( 0U == me->vol )
     {
-        level = KGUI_HAPTIC_OFF;
+        vol = KGUI_VIB_VOL_SILENT;
     }
-    else if ( ((uint8_t)KGUI_VOL_VIBRATE_PCT == me->vol) && (KGUI_HAPTIC_OFF == level) )
+    else if ( (uint8_t)KGUI_VOL_VIBRATE_PCT == me->vol )
     {
-        level = KGUI_HAPTIC_LIGHT;
+        vol = KGUI_VIB_VOL_VIBRATE;
     }
     else
     {
-        /* The row's. */
+        /* Sound. */
     }
+    level = kgui_vib_level(vol, me->haptic_pref);
     kgui_haptic_set_level(level);
+    me->vib_scale = kgui_vib_scale(level);
 }
 
 /**
@@ -23335,6 +23404,9 @@ static void gui_vol_keep(Gui * const me)
     me->vol_dirty = !gui_vol_send(true, gui_vol_speaker(me));
     (void)khal_nvs_set_u8(GUI_NVS_NAMESPACE, GUI_NVS_KEY_VIB,
                           ((uint8_t)KGUI_VOL_VIBRATE_PCT == me->vol) ? 1U : 0U);
+    /* The motor follows the level kept, and the buzzes of apps with it. */
+    gui_vol_motor(me);
+    gui_vib_scale_sync(me);
 }
 
 /**
@@ -23437,6 +23509,7 @@ static void gui_vol_answer(Gui * const me, KodeConfigAnsEvt const * const a)
         }
     }
     gui_vol_motor(me);
+    gui_vib_scale_sync(me);
     kgui_screen_settings_volume(me->vol);
 }
 
@@ -34712,6 +34785,7 @@ static void gui_pref_haptic(Gui * const me, kgui_haptic_level_t level)
 {
     me->haptic_pref = level;
     gui_vol_motor(me);
+    gui_vib_scale_sync(me);
     gui_pref_kept(me, KGUI_PREFS_KEY_HAPTIC, (uint8_t)level,
                   kgui_haptic_words[level]);
 }
@@ -36812,6 +36886,9 @@ static QState Gui_initial(Gui * const me, void const * const par)
                kgui_haptic_words[prefs.haptic], gui_on_off(prefs.usb_awake));
         me->haptic_pref = prefs.haptic;
         kgui_haptic_set_level(prefs.haptic);
+        /* AO_Haptic is asked once the volume is known (gui_vol_answer()). */
+        me->vib_scale      = kgui_vib_scale(prefs.haptic);
+        me->vib_scale_sent = (uint8_t)GUI_VIB_SCALE_UNSENT;
         me->usb_awake      = prefs.usb_awake;
     }
     /* Whether this boot lands from Welcome: one read, and with no `pending` key

@@ -34,6 +34,7 @@ idf_component_register(
          "kgui_pack_fit.c"
          "kgui_prefs.c"
          "kgui_rest.c"
+         "kgui_vib.c"
          "kgui_kody_rest_data.c"
          "kgui_return.c"
          "kgui_ring.c"
