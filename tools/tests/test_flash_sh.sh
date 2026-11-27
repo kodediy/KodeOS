@@ -92,7 +92,7 @@ ran() {    # ran <name> - esptool was asked to write, so the checks below see a 
     [ -f "$work/$1.log" ] && grep -qx 'write-flash' "$work/$1.log"
 }
 sawfile() {  # sawfile <name> - the fake saw write_unchecked.py as an existing file
-    grep -A1 -x 'write_unchecked.py' "$work/$1.log" | grep -q '^file '
+    grep -q '^file ' <<<"$(grep -A1 -x 'write_unchecked.py' "$work/$1.log")"
 }
 
 # --- case 1: the default is the recovery flash, unchanged ---
@@ -119,7 +119,7 @@ else
     bad "--line does not make two calls: $(calls line)"
 fi
 if has_n line 1 "-m esptool --chip esp32p4 -p /dev/fake --after no-reset write-flash 0x2000 bootloader.bin 0x8000 partition-table.bin 0x1B000 ota_data_initial.bin 0xB000 nvs.bin 0xC20000 coredump.bin 0xC40000 apps.bin 0x1A00000 app_pending.bin 0x1FFF000 app_pending_intent.bin" \
-        && ! argv line 1 | grep -q 'kodeos.bin'; then
+        && ! grep -q 'kodeos.bin' <<<"$(argv line 1)"; then
     ok "--line's first call writes the three small images and the blanks, with no kodeos.bin"
 else
     bad "--line's first call is wrong: $(argv line 1)"
