@@ -3125,6 +3125,7 @@ typedef struct {
     kgui_fault_t fault;      /**< The fault notice: what is owed and whether it is due. */
     uint8_t  fault_face;     /**< kgui_fault_face_t: what the notice's card shows. */
     lv_obj_t *fault_kody;    /**< The card band's player: made the first time the card is filled, kept. */
+    kui_kody_anim_t fault_anim; /**< The band's file on the player's larger canvas: the player keeps a pointer to what it plays. */
     bool     fault_kody_live;/**< It plays, to be paused KGUI_FAULT_HOLD_MS after the play. */
     uint32_t fault_kody_ms;  /**< When the play began. */
 #if CONFIG_KODEOS_DUMP_HTTP
@@ -26971,13 +26972,27 @@ static void gui_fault_kody_tick(Gui * const me)
     }
 }
 
+#define GUI_FAULT_KODY_NUM 13U  /**< Kody on the fault card is drawn GUI_FAULT_KODY_NUM / GUI_FAULT_KODY_DEN of the size the pack draws him: as large as his rise stays under the band's top. */
+#define GUI_FAULT_KODY_DEN 10U  /**< ...the divisor. */
+#define GUI_FAULT_KODY_W   (((uint32_t)KGUI_SYS_BAND_W * GUI_FAULT_KODY_NUM) / GUI_FAULT_KODY_DEN) /**< The canvas his player draws the band's file on, across. */
+#define GUI_FAULT_KODY_H   (((uint32_t)KGUI_SYS_BAND_H * GUI_FAULT_KODY_NUM) / GUI_FAULT_KODY_DEN) /**< ...and down. */
+
+_Static_assert((GUI_FAULT_KODY_W * (uint32_t)KGUI_SYS_BAND_H) == (GUI_FAULT_KODY_H * (uint32_t)KGUI_SYS_BAND_W),
+               "Kody's canvas on the fault card keeps the band's shape");
+_Static_assert((GUI_FAULT_KODY_W >= (uint32_t)KGUI_SYS_BAND_W) && (GUI_FAULT_KODY_H >= (uint32_t)KGUI_SYS_BAND_H),
+               "Kody's canvas on the fault card covers the band");
+
 /**
  * @brief Play the pack's fault animation once in the card's band.
  *
- * The player is made the first time, on the band, and kept for the boot.
+ * The player is made the first time, on the band, and kept for the boot. It
+ * draws the band's file on a canvas GUI_FAULT_KODY_NUM / GUI_FAULT_KODY_DEN
+ * of the band's, set on the band's lower right corner, where the pack draws
+ * Kody: he stands larger on the glass's lower edge and the band cuts off the
+ * empty rest of the canvas.
  *
  * @param me   The AO.
- * @param anim The animation.
+ * @param anim The animation, drawn for the band.
  * @return true when it plays.
  */
 static bool gui_fault_kody_play(Gui * const me, const kui_kody_anim_t *anim)
@@ -26987,22 +27002,21 @@ static bool gui_fault_kody_play(Gui * const me, const kui_kody_anim_t *anim)
 
     if ( (NULL == me->fault_kody) && (NULL != band) )
     {
-        uint16_t w = 0U;
-        uint16_t h = 0U;
-
         /* kui_kody_create() says why when it cannot make one. */
-        kui_pack_role_canvas(KUI_PACK_ROLE_FAULT, &w, &h);
-        me->fault_kody = kui_kody_create(band, w, h);
+        me->fault_kody = kui_kody_create(band, (uint16_t)GUI_FAULT_KODY_W, (uint16_t)GUI_FAULT_KODY_H);
         if ( NULL != me->fault_kody )
         {
-            lv_obj_set_align(me->fault_kody, LV_ALIGN_CENTER);
+            lv_obj_set_align(me->fault_kody, LV_ALIGN_BOTTOM_RIGHT);
             lv_obj_set_clickable(me->fault_kody, false);
         }
     }
-    if ( NULL != me->fault_kody )
+    if ( (NULL != me->fault_kody) && (NULL != anim) )
     {
+        me->fault_anim   = *anim;
+        me->fault_anim.w = (uint16_t)GUI_FAULT_KODY_W;
+        me->fault_anim.h = (uint16_t)GUI_FAULT_KODY_H;
         /* kui_kody_play() says why when it cannot. */
-        plays = kui_kody_play(me->fault_kody, anim, false);
+        plays = kui_kody_play(me->fault_kody, &me->fault_anim, false);
     }
     me->fault_kody_live = plays;
     me->fault_kody_ms   = khal_time_ms();
